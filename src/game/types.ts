@@ -150,6 +150,10 @@ export interface GameState {
   gst: number;
   prop: number;
   duty: number;
+  tourism: number;
+  digital: number;
+  rd: number;
+  green: number;
   questDay: string;
   questIds: number[];
   rank: number;

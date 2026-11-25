@@ -306,10 +306,10 @@ h2, .tabs b {
 .city:before {
   content: "";
   position: absolute;
-  left: -112px;
-  top: -112px;
-  width: 224px;
-  height: 224px;
+  left: -124px;
+  top: -108px;
+  width: 248px;
+  height: 216px;
   border-radius: 30px;
   background:
     repeating-linear-gradient(90deg, #fff1 0 1px, transparent 1px 42px),

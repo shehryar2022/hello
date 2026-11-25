@@ -56,6 +56,23 @@ export function flagLargeUrl(c: unknown): string {
   return code ? `https://flagcdn.com/w160/${code.toLowerCase()}.png` : '';
 }
 
+export const POLICY_BOUNDS: Record<string, [number, number]> = {
+  tax: [5, 45],
+  fuel: [0, 50],
+  carbon: [0, 30],
+  luxury: [0, 25],
+  corp: [0, 30],
+  gst: [0, 25],
+  prop: [0, 15],
+  duty: [0, 30],
+  tourism: [0, 20],
+  digital: [0, 20],
+  wel: [0, 50],
+  edu: [0, 30],
+  rd: [0, 25],
+  green: [0, 25],
+};
+
 export function freshState(): GameState {
   const b: Record<string, number> = {};
   const lvl: Record<string, number> = {};
@@ -97,6 +114,10 @@ export function freshState(): GameState {
     gst: 0,
     prop: 0,
     duty: 0,
+    tourism: 0,
+    digital: 0,
+    rd: 0,
+    green: 0,
     questDay: '',
     questIds: [],
     rank: 0,
@@ -142,7 +163,7 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
   if (!s.b || typeof s.b !== 'object') s.b = { ...D.b };
   for (const d of BUILDINGS) {
     const v = Math.floor(Number(s.b[d.id]));
-    s.b[d.id] = Number.isFinite(v) && v >= 0 ? v : 0;
+    s.b[d.id] = Number.isFinite(v) && v >= 0 ? Math.min(10_000, v) : 0;
   }
 
   if (!s.set || typeof s.set !== 'object') {
@@ -163,26 +184,24 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
   const numFields: Array<keyof GameState> = [
     'cash', 'gems', 'taxPool', 'day', 'tax', 'wel', 'hap', 'appr', 'pop',
     'boost', 'ev', 'edu', 'streak', 'lastDaily', 'fuel', 'carbon', 'luxury',
-    'corp', 'gst', 'prop', 'duty', 'rank', 'govT',
+    'corp', 'gst', 'prop', 'duty', 'tourism', 'digital', 'rd', 'green', 'rank', 'govT',
   ];
   for (const k of numFields) {
     const v = Number(s[k]);
     (s as unknown as Record<string, number>)[k] = Number.isFinite(v) ? v : Number(D[k] || 0);
   }
-  s.cash = Math.max(0, s.cash);
-  s.gems = Math.max(0, Math.floor(s.gems));
-  s.taxPool = Math.max(0, s.taxPool);
+  s.cash = Math.min(1e13, Math.max(0, s.cash));
+  s.gems = Math.min(1e9, Math.max(0, Math.floor(s.gems)));
+  s.taxPool = Math.min(1e13, Math.max(0, s.taxPool));
+  s.boost = Math.max(0, Math.min(30, s.boost));
   s.rank = Math.max(0, Math.min(RANKS.length - 1, Math.floor(s.rank)));
   s.hap = Math.max(0, Math.min(100, s.hap));
   s.appr = Math.max(0, Math.min(100, s.appr));
-  s.pop = Math.max(1, s.pop);
+  s.pop = Math.max(1, Math.min(100_000, s.pop));
+  if (s.lastDaily > Date.now() + 60_000 || s.lastDaily < 0) s.lastDaily = 0;
+  if (s.govT > Date.now() + 60_000 || s.govT < 0) s.govT = 0;
 
-  const policyBounds: Record<string, [number, number]> = {
-    tax: [5, 45], fuel: [0, 50], carbon: [0, 30], luxury: [0, 25],
-    corp: [0, 30], gst: [0, 25], prop: [0, 15], duty: [0, 30],
-    wel: [0, 50], edu: [0, 30],
-  };
-  for (const [k, [mn, mx]] of Object.entries(policyBounds)) {
+  for (const [k, [mn, mx]] of Object.entries(POLICY_BOUNDS)) {
     const val = Number((s as unknown as Record<string, number>)[k]) || 0;
     (s as unknown as Record<string, number>)[k] = Math.round(Math.max(mn, Math.min(mx, val)));
   }
@@ -193,21 +212,29 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
   const legacyFx = s.activeFx as Record<string, number>;
   if (legacyFx.income3x && legacyFx.income3x > Date.now()) {
     s.activeFx = {
-      incomeBoostEnd: legacyFx.income3x,
+      incomeBoostEnd: Math.min(legacyFx.income3x, Date.now() + 250_000),
       incomeBoostMult: 1.75,
       incomeBoostId: 'boom_surge',
       taxSurge: legacyFx.tax2x ? 1 : 0,
     };
   } else if (legacyFx.income15 && legacyFx.income15 > Date.now()) {
     s.activeFx = {
-      incomeBoostEnd: legacyFx.income15,
+      incomeBoostEnd: Math.min(legacyFx.income15, Date.now() + 250_000),
       incomeBoostMult: 1.25,
       incomeBoostId: 'quick_profit',
       taxSurge: legacyFx.tax2x ? 1 : 0,
     };
-  } else if (legacyFx.tax2x) {
-    s.activeFx = { ...s.activeFx, taxSurge: 1 };
-    delete legacyFx.tax2x;
+  } else {
+    if (legacyFx.tax2x) {
+      s.activeFx = { ...s.activeFx, taxSurge: 1 };
+      delete legacyFx.tax2x;
+    }
+    if (s.activeFx.incomeBoostMult != null) {
+      s.activeFx.incomeBoostMult = Math.max(1, Math.min(1.75, Number(s.activeFx.incomeBoostMult) || 1));
+    }
+    if (s.activeFx.incomeBoostEnd != null) {
+      s.activeFx.incomeBoostEnd = Math.min(Number(s.activeFx.incomeBoostEnd) || 0, Date.now() + 250_000);
+    }
   }
 
   if (!s.boosterCd || typeof s.boosterCd !== 'object') s.boosterCd = {};
@@ -348,17 +375,22 @@ export function taxInfo(s: GameState) {
   const p = s.prop || 0;
   const d = s.duty || 0;
   const f = s.fuel || 0;
+  const tr = s.tourism || 0;
+  const dg = s.digital || 0;
 
   const raw =
     0.4 +
     t / 50 +
     c / 100 +
     l / 120 +
-    co / 150 +
+    (co / 150) * (1 + (s.b.stock || 0) * 0.05) +
     g / 70 +
     (p / 60) * Math.max(0.6, Math.min(2, (s.pop || 48) / 50)) +
-    (d / 90) * (1 + (s.b.port || 0) * 0.08);
-  const burden = t + co * 0.8 + g + p + d * 0.6 + c * 0.7 + l * 0.5 + f * 0.4;
+    (d / 90) * (1 + (s.b.port || 0) * 0.08) +
+    (tr / 85) * (1 + ((s.b.airport || 0) + (s.b.stadium || 0)) * 0.06) +
+    (dg / 90) * (1 + ((s.b.tech || 0) + (s.b.data || 0)) * 0.05);
+  const burden =
+    t + co * 0.8 + g + p + d * 0.6 + c * 0.7 + l * 0.5 + f * 0.4 + tr * 0.4 + dg * 0.5;
   const ev = Math.max(0, Math.min(0.75, (burden - 30) / 70 + Math.max(0, 50 - (s.appr || 50)) / 400));
   return { mult: raw * (1 - ev), raw, burden, ev };
 }
@@ -425,12 +457,17 @@ export function calculateIncome(
   const permMult = gxMultiplier(s) * evMult * gov.inc * subMult;
   const taxMult = taxInfo(s).mult;
 
+  const cleanGreenCount = (s.b.solar || 0) + (s.b.hydro || 0) + (s.b.fusion || 0);
+  const greenSynergy = 1 + Math.min(0.5, cleanGreenCount * (s.green || 0) * 0.002);
+
   const mult =
     taxMult *
     (1 + (s.hap - 50) / 200) *
-    (1 + (s.b.pow || 0) * 0.015) *
+    (1 + (s.b.pow || 0) * 0.015 + (s.b.fusion || 0) * 0.025) *
     tempMult *
     (1 + s.edu / 200) *
+    (1 + (s.rd || 0) / 140) *
+    greenSynergy *
     (1 + (s.fuel || 0) / 150) *
     (1 + tradeTier * 0.05) *
     (1 + stickerBonus(s)) *
@@ -438,10 +475,14 @@ export function calculateIncome(
     permMult;
 
   gross *= mult;
-  // Cap upkeep rate at 35% so building large cities remains profitable
+  // Cap upkeep rate at 35% and policy spending rate at 60% so large cities remain profitable
   const upkeepRate = Math.min(0.35, 0.03 + totalBuildings(s) * 0.0015);
   const upkeep = gross * upkeepRate;
-  const welfareCost = gross * ((s.wel + s.edu) / 100) * 0.7 * gov.wel;
+  const policySpendShare = Math.min(
+    0.6,
+    (((s.wel + s.edu) * 0.7 + (s.rd || 0) * 0.55 + (s.green || 0) * 0.45) / 100) * gov.wel,
+  );
+  const welfareCost = gross * policySpendShare;
   const net = gross - welfareCost - upkeep;
 
   return { gross, net, welfareCost, upkeep };
@@ -471,7 +512,8 @@ export function playerLevel(s: GameState): number {
 }
 
 export function targetHappiness(s: GameState): number {
-  const carbonPen = Math.max(0, (s.carbon || 0) - (s.b.solar || 0) * 3) * 0.5;
+  const carbonOffset = (s.b.solar || 0) * 3 + (s.b.hydro || 0) * 2 + (s.b.fusion || 0) * 5 + (s.green || 0) * 0.5;
+  const carbonPen = Math.max(0, (s.carbon || 0) - carbonOffset) * 0.5;
   return Math.max(
     5,
     Math.min(
@@ -479,7 +521,9 @@ export function targetHappiness(s: GameState): number {
       40 +
         gxHappinessMod(s) +
         s.wel * 1.5 +
-        s.edu * 0.6 -
+        s.edu * 0.6 +
+        (s.rd || 0) * 0.25 +
+        (s.green || 0) * 0.7 -
         (s.tax - 20) * 1.8 -
         (s.fuel || 0) * 0.6 -
         (s.carbon || 0) * 0.4 -
@@ -489,6 +533,8 @@ export function targetHappiness(s: GameState): number {
         (s.gst || 0) * 0.45 -
         (s.prop || 0) * 0.7 -
         (s.duty || 0) * 0.2 -
+        (s.tourism || 0) * 0.15 -
+        (s.digital || 0) * 0.25 -
         (s.b.fact || 0) * 1.5 +
         (s.b.farm || 0) * 0.8 +
         (s.b.hosp || 0) * 1.2 +
@@ -496,7 +542,9 @@ export function targetHappiness(s: GameState): number {
         (s.b.solar || 0) * 0.5 +
         (s.b.water || 0) * 0.7 +
         (s.b.univ || 0) * 0.4 +
-        (s.b.space || 0) * 0.8 -
+        (s.b.space || 0) * 0.8 +
+        (s.b.hydro || 0) * 0.6 +
+        (s.b.evplant || 0) * 0.2 -
         (s.b.data || 0) * 0.3,
     ),
   );
@@ -713,8 +761,22 @@ export function claimSubscriptionDaily(
   };
 }
 
+/**
+ * Unboosted building development scale (ignores tax sliders, world events, and temp boosters).
+ */
+export function gxBuildDevelopment(s: GameState): number {
+  let dev = 0;
+  for (const d of BUILDINGS) {
+    dev += d.inc * (s.b?.[d.id] || 0) * gxLevelMult(s, d.id);
+  }
+  return dev;
+}
+
+/**
+ * Government building & road renovation unit depends strictly on 20% of building development.
+ */
 export function gxRepairUnit(s: GameState): number {
-  return Math.max(25, calculateIncome(s).gross * 5);
+  return Math.max(2, gxBuildDevelopment(s) * 0.2);
 }
 
 export function gxRepairCost(s: GameState, key: string, full: boolean, nowMs = Date.now()): number {
@@ -722,8 +784,9 @@ export function gxRepairCost(s: GameState, key: string, full: boolean, nowMs = D
   if (!item) return 0;
   const c = s.gx.cond[key] ?? 100;
   const add = full ? 100 - c : Math.min(20, 100 - c);
+  if (add <= 0.01) return 0;
   const disc = getDevelopmentDiscount(s, nowMs);
-  return Math.max(add > 0 ? 1 : 0, Math.ceil(add * gxRepairUnit(s) * item[3] * (full ? 1.25 : 1) * (1 - disc)));
+  return Math.max(1, Math.ceil(add * gxRepairUnit(s) * item[3] * (1 - disc)));
 }
 
 export function gxUpgradeCost(s: GameState, buildingId: string, nowMs = Date.now()): number {
@@ -812,6 +875,10 @@ export const QUEST_POOL: QuestDef[] = [
   { id: 'rank6buy', t: 'Reach Cosmic Overlord', f: (s) => s.rank || 0, g: 6, r: 50 },
   { id: 'boost1', t: 'Use a booster', f: (s) => Object.keys(s.boosterCd || {}).length, g: 1, r: 5 },
   { id: 'boost3', t: 'Use 3 different boosters', f: (s) => Object.keys(s.boosterCd || {}).length, g: 3, r: 10 },
+  { id: 'hydro1', t: 'Build a Hydro Dam', f: (s) => s.b.hydro || 0, g: 1, r: 6 },
+  { id: 'stock1', t: 'Build a Stock Exchange', f: (s) => s.b.stock || 0, g: 1, r: 10 },
+  { id: 'evplant1', t: 'Build an EV Gigafactory', f: (s) => s.b.evplant || 0, g: 1, r: 14 },
+  { id: 'fusion1', t: 'Build a Fusion Reactor', f: (s) => s.b.fusion || 0, g: 1, r: 28 },
 ];
 
 export function selectDailyQuestIds(dateStr: string): number[] {

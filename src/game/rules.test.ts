@@ -285,3 +285,57 @@ test('subscriptions (5M daily, 50M weekly, 500M monthly) grant benefits & preven
   });
   assert.ok((migrated.sub?.exp || 0) <= Date.now() + 31 * 86_400_000 + 1000);
 });
+
+test('government renovation depends strictly on 20% of building development (unaffected by temp boosters)', () => {
+  const state = freshState();
+  state.b.tech = 5; // 5 * 22 = 110 raw building dev
+  state.gx.cond.parl = 60; // missing 40%
+  state.gx.cond.road = 60; // missing 40%
+
+  const baseParlFull = gxRepairCost(state, 'parl', true);
+  // 40 * (110 * 0.2) * 1.5 = 1320 (no 1.25x surcharge)
+  assert.equal(baseParlFull, 1320);
+
+  // Turning on gem x2 boost + highest tax must NOT inflate renovation cost
+  state.boost = 30;
+  state.tax = 45;
+  assert.equal(gxRepairCost(state, 'parl', true), baseParlFull);
+
+  // Full condition (>= 99.5) costs 0
+  state.gx.cond.parl = 100;
+  assert.equal(gxRepairCost(state, 'parl', true), 0);
+});
+
+test('new buildings (hydro, stock, evplant, fusion) and new policies (tourism, digital, rd, green) function cleanly', () => {
+  assert.equal(BUILDINGS.length, 20);
+  for (const id of ['hydro', 'stock', 'evplant', 'fusion']) {
+    assert.ok(BUILDINGS.some((b) => b.id === id), `Missing building ${id}`);
+  }
+
+  const base = freshState();
+  base.b.hydro = 2;
+  base.b.stock = 2;
+  base.b.evplant = 1;
+  base.b.fusion = 1;
+  base.b.airport = 2;
+  base.b.tech = 2;
+  const incBefore = calculateIncome(base).gross;
+
+  const boosted = migrateState({
+    ...base,
+    tourism: 15,
+    digital: 15,
+    rd: 20,
+    green: 20,
+    tax: 999, // Verify migration clamps out-of-range policies & boost
+    boost: 999,
+  });
+  assert.equal(boosted.tax, 45);
+  assert.equal(boosted.boost, 30);
+  assert.equal(boosted.tourism, 15);
+  assert.equal(boosted.digital, 15);
+  assert.equal(boosted.rd, 20);
+  assert.equal(boosted.green, 20);
+  assert.ok(calculateIncome(boosted).gross > incBefore);
+});
+

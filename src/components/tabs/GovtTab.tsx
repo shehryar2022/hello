@@ -143,6 +143,9 @@ export const GovtTab: React.FC<GovtTabProps> = ({
       </div>
 
       <div className="gxh">🏛️ Government Buildings</div>
+      <p className="dim" style={{ marginBottom: 8 }}>
+        Renovation costs depend only on <b>20% of your building development</b> (temporary boosters never inflate repairs).
+      </p>
       <div className="list g2">
         {GX_GOV_BUILDINGS.map(([key, name, emoji]) => {
           const cond = gx.cond[key] ?? 100;
@@ -170,7 +173,7 @@ export const GovtTab: React.FC<GovtTabProps> = ({
                   disabled={!needsFix || state.cash < c20}
                   onClick={() => onFixInfra(key, false)}
                 >
-                  +20% ₨ {formatNumber(c20)}
+                  {needsFix ? `+20% ₨ ${formatNumber(c20)}` : '+20%'}
                 </button>
                 <button
                   type="button"
@@ -178,7 +181,7 @@ export const GovtTab: React.FC<GovtTabProps> = ({
                   disabled={!needsFix || state.cash < cFull}
                   onClick={() => onFixInfra(key, true)}
                 >
-                  Renovate ₨ {formatNumber(cFull)}
+                  {needsFix ? `Renovate ₨ ${formatNumber(cFull)}` : 'Full ✓'}
                 </button>
               </div>
             </div>
@@ -214,7 +217,7 @@ export const GovtTab: React.FC<GovtTabProps> = ({
                   disabled={!needsFix || state.cash < c20}
                   onClick={() => onFixInfra(key, false)}
                 >
-                  +20% ₨ {formatNumber(c20)}
+                  {needsFix ? `+20% ₨ ${formatNumber(c20)}` : '+20%'}
                 </button>
                 <button
                   type="button"
@@ -222,7 +225,7 @@ export const GovtTab: React.FC<GovtTabProps> = ({
                   disabled={!needsFix || state.cash < cFull}
                   onClick={() => onFixInfra(key, true)}
                 >
-                  Repair all ₨ {formatNumber(cFull)}
+                  {needsFix ? `Repair all ₨ ${formatNumber(cFull)}` : 'Full ✓'}
                 </button>
               </div>
             </div>

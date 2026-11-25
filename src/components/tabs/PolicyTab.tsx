@@ -19,7 +19,7 @@ interface PolicyTabProps {
   onSaveCloudNow: () => void;
 }
 
-const SLIDERS: Array<{
+const TAX_SLIDERS: Array<{
   key: keyof GameState;
   label: string;
   min: number;
@@ -29,14 +29,28 @@ const SLIDERS: Array<{
 }> = [
   { key: 'tax', label: '💸 Income tax', min: 5, max: 45, desc: 'Higher tax = more cash, unhappy people.', color: 'var(--gold)' },
   { key: 'fuel', label: '⛽ Fuel tax', min: 0, max: 50, desc: 'Extra revenue from fuel — but the public hates it.', color: '#ff9a4d' },
-  { key: 'carbon', label: '🌱 Carbon tax', min: 0, max: 30, desc: 'Big revenue, hurts happiness — each Solar Farm offsets 3% penalty.', color: '#8bbd8b' },
+  { key: 'carbon', label: '🌱 Carbon tax', min: 0, max: 30, desc: 'Big revenue — Solar, Hydro, Fusion & Green Subsidies offset penalty.', color: '#8bbd8b' },
   { key: 'luxury', label: '💎 Luxury tax', min: 0, max: 25, desc: 'Taxes the rich. Good revenue, small happiness hit.', color: '#e0b81a' },
-  { key: 'corp', label: '🏢 Corporate tax', min: 0, max: 30, desc: 'Taxes businesses. Steady income, hurts approval.', color: '#c97a3d' },
+  { key: 'corp', label: '🏢 Corporate tax', min: 0, max: 30, desc: 'Taxes businesses; Stock Exchanges amplify revenue.', color: '#c97a3d' },
   { key: 'gst', label: '🛒 Sales tax (GST)', min: 0, max: 25, desc: 'Taxes every purchase. Mild public anger.', color: '#4cc9ff' },
   { key: 'prop', label: '📌 Property tax', min: 0, max: 15, desc: 'Scales with population. Biggest happiness hit.', color: '#ff6fa3' },
   { key: 'duty', label: '🚢 Import duty', min: 0, max: 30, desc: 'Customs on imports. Each Port boosts the revenue.', color: '#a07bff' },
+  { key: 'tourism', label: '🏖️ Tourism levy', min: 0, max: 20, desc: 'Visitor tax boosted by Airports & Stadiums; tiny happiness cost.', color: '#38bdf8' },
+  { key: 'digital', label: '💻 Digital economy tax', min: 0, max: 20, desc: 'Online commerce levy boosted by Tech Parks & Data Centers.', color: '#a78bfa' },
+];
+
+const SPENDING_SLIDERS: Array<{
+  key: keyof GameState;
+  label: string;
+  min: number;
+  max: number;
+  desc: string;
+  color: string;
+}> = [
   { key: 'wel', label: '🏥 Welfare spending', min: 0, max: 50, desc: 'Costs a share of income, raises happiness & approval.', color: 'var(--mint)' },
   { key: 'edu', label: '🎓 Education', min: 0, max: 30, desc: 'Long-term: raises income and happiness.', color: 'var(--cy)' },
+  { key: 'rd', label: '🔬 R&D innovation grant', min: 0, max: 25, desc: 'Funds science to lift national income & slight happiness.', color: '#60a5fa' },
+  { key: 'green', label: '🌿 Green energy subsidy', min: 0, max: 25, desc: 'Boosts happiness, cuts carbon penalty & powers Solar/Hydro/Fusion.', color: '#4ade80' },
 ];
 
 export const PolicyTab: React.FC<PolicyTabProps> = ({
@@ -54,30 +68,36 @@ export const PolicyTab: React.FC<PolicyTabProps> = ({
   const govCd = Math.max(0, (state.govT || 0) + GOV_CHANGE_CD_MS - nowSrv);
   const worldEv = currentWorldEvent(nowSrv);
 
+  const renderSlider = (s: (typeof TAX_SLIDERS)[number]) => {
+    const val = Number(state[s.key] || 0);
+    const pct = ((val - s.min) / (s.max - s.min)) * 100;
+    return (
+      <div key={s.key} className="sl" style={{ '--ac': s.color } as React.CSSProperties}>
+        <div>
+          <span>{s.label}</span>
+          <b className="f">{val}%</b>
+        </div>
+        <input
+          type="range"
+          min={s.min}
+          max={s.max}
+          value={val}
+          aria-label={s.label}
+          style={{ '--p': `${pct}%` } as React.CSSProperties}
+          onChange={(e) => onPolicyChange(s.key, Number(e.target.value))}
+        />
+        <p className="dim">{s.desc}</p>
+      </div>
+    );
+  };
+
   return (
     <div>
-      {SLIDERS.map((s) => {
-        const val = Number(state[s.key] || 0);
-        const pct = ((val - s.min) / (s.max - s.min)) * 100;
-        return (
-          <div key={s.key} className="sl" style={{ '--ac': s.color } as React.CSSProperties}>
-            <div>
-              <span>{s.label}</span>
-              <b className="f">{val}%</b>
-            </div>
-            <input
-              type="range"
-              min={s.min}
-              max={s.max}
-              value={val}
-              aria-label={s.label}
-              style={{ '--p': `${pct}%` } as React.CSSProperties}
-              onChange={(e) => onPolicyChange(s.key, Number(e.target.value))}
-            />
-            <p className="dim">{s.desc}</p>
-          </div>
-        );
-      })}
+      <div className="gxh" style={{ marginTop: 0 }}>💵 Tax Policies</div>
+      {TAX_SLIDERS.map(renderSlider)}
+
+      <div className="gxh">🏛️ National Spending &amp; Subsidies</div>
+      {SPENDING_SLIDERS.map(renderSlider)}
 
       <p className="dim" style={{ marginBottom: 12 }}>
         Target happiness: <b className="f" style={{ color: 'var(--mint)' }}>{Math.round(targetHappiness(state))}%</b> ·

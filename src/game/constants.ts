@@ -52,6 +52,10 @@ export const BUILDINGS: BuildingDef[] = [
   { id: 'rail', n: 'Railway Hubs', e: '🚄', c: '#ff8a5c', cost: 38000, inc: 60, d: 'Trade & population growth' },
   { id: 'data', n: 'Data Centers', e: '🖥️', c: '#5ce1e6', cost: 75000, inc: 120, d: 'Digital economy, big income, small happiness hit' },
   { id: 'space', n: 'Space Agency', e: '🚀', c: '#c084fc', cost: 400000, inc: 600, d: 'Prestige project, massive income, +happiness' },
+  { id: 'hydro', n: 'Hydro Dams', e: '🌊', c: '#2dd4bf', cost: 9500, inc: 14, d: 'Clean hydro power, +happiness & steady output' },
+  { id: 'stock', n: 'Stock Exchange', e: '📊', c: '#fbbf24', cost: 58000, inc: 95, d: 'Capital markets, boosts corporate & trade revenue' },
+  { id: 'evplant', n: 'EV Gigafactory', e: '🔋', c: '#4ade80', cost: 120000, inc: 195, d: 'Zero-smog clean manufacturing, +happiness' },
+  { id: 'fusion', n: 'Fusion Reactor', e: '⚛️', c: '#38bdf8', cost: 650000, inc: 980, d: 'Mega clean energy, +2.5% building output each' },
 ];
 
 export const RANKS: RankDef[] = [

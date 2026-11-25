@@ -1,16 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { BUILDINGS } from '../game/constants';
-import { totalBuildings } from '../game/rules';
+import { gxLevelMult, totalBuildings } from '../game/rules';
 import type { GameState } from '../game/types';
 
 const CSZ: Record<string, number> = {
   farm: 32, solar: 32, water: 28, stadium: 32, airport: 34, port: 30, rail: 30, mine: 28,
   hosp: 24, univ: 26, pow: 26, fact: 28, tech: 22, bank: 22, data: 22, space: 20,
+  hydro: 28, stock: 24, evplant: 28, fusion: 24,
 };
 
 const CHM: Record<string, number> = {
   farm: 0.5, solar: 0.38, water: 0.6, stadium: 0.62, airport: 0.32, port: 0.52, rail: 0.5,
   mine: 0.58, hosp: 0.88, univ: 0.8, pow: 0.9, fact: 0.92, tech: 1.12, bank: 1.2, data: 1.1, space: 1.5,
+  hydro: 0.65, stock: 1.15, evplant: 0.95, fusion: 1.45,
 };
 
 interface City3DProps {
@@ -155,8 +157,9 @@ export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuil
     onBuildingTap();
 
     const r = skyRef.current.getBoundingClientRect();
+    const mult = gxLevelMult(state, def.id);
     setTip({
-      text: `${def.e} ${def.n} · Lv ${lvl}${lvl ? ` · +${(def.inc * lvl).toFixed(1)}/s` : ' · not built'}`,
+      text: `${def.e} ${def.n} · Lv ${lvl}${lvl ? ` · +${(def.inc * lvl * mult).toFixed(1)}/s` : ' · not built'}`,
       x: Math.max(70, Math.min(r.width - 70, e.clientX - r.left)),
       y: e.clientY - r.top,
       open: true,
@@ -178,20 +181,20 @@ export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuil
       onPointerCancel={handlePointerEnd}
     >
       <div className="city" ref={cityRef}>
-        <i className="road" style={{ left: -112, top: -1, width: 224, height: 2 }} />
-        <i className="road" style={{ left: -112, top: -43, width: 224, height: 2 }} />
-        <i className="road" style={{ left: -112, top: 41, width: 224, height: 2 }} />
-        <i className="road" style={{ top: -112, left: 41, width: 2, height: 224 }} />
+        <i className="road" style={{ left: -124, top: -1, width: 248, height: 2 }} />
+        <i className="road" style={{ left: -124, top: -43, width: 248, height: 2 }} />
+        <i className="road" style={{ left: -124, top: 41, width: 248, height: 2 }} />
+        <i className="road" style={{ top: -108, left: 21, width: 2, height: 216 }} />
         <i className="car" style={{ left: 0, top: -2, animation: 'carx 5.5s linear infinite' }} />
         <i className="car cb" style={{ left: 0, top: -44, animation: 'carx 7.5s linear infinite reverse' }} />
-        <i className="car" style={{ left: 42, top: 0, width: 4, height: 8, animation: 'cary 6.5s linear infinite' }} />
+        <i className="car" style={{ left: 22, top: 0, width: 4, height: 8, animation: 'cary 6.5s linear infinite' }} />
 
         {BUILDINGS.map((d, i) => {
           const l = state.b[d.id] || 0;
-          const col = i % 4;
-          const row = Math.floor(i / 4);
+          const col = i % 5;
+          const row = Math.floor(i / 5);
           const sz = CSZ[d.id] || 26;
-          const cx = (col - 1.5) * gap;
+          const cx = (col - 2) * gap;
           const cy = (row - 1.5) * gap;
           const x = Math.round(cx - sz / 2);
           const y = Math.round(cy - sz / 2);

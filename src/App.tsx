@@ -107,6 +107,8 @@ import {
   gxRepairCost,
   gxUpgradeCost,
   migrateState,
+  playerLevel,
+  POLICY_BOUNDS,
   QUEST_POOL,
   selectDailyQuestIds,
   targetHappiness,
@@ -236,6 +238,8 @@ export default function App() {
   const projStartedLocalAtRef = useRef<Record<string, number>>({});
   const projLiveRef = useRef<Record<string, number>>({});
   const projLastSyncRef = useRef<Record<string, number>>({});
+  const projPrevTickMsRef = useRef<Record<string, number>>({});
+  const lastCityTapRef = useRef<number>(0);
   const settlingTradesRef = useRef<boolean>(false);
   const rankPositionRef = useRef<number>(1);
 
@@ -776,12 +780,20 @@ export default function App() {
                 if (startMs > 0) {
                   serverOffsetMsRef.current = startMs - Date.now();
                   serverTimeVerifiedRef.current = true;
+                  projPrevTickMsRef.current[ch.doc.id] = startMs;
                 }
               } else if (ch.type === 'modified' && raw.lastTickAt) {
                 const tickMs = timestampToMs(raw.lastTickAt);
-                if (tickMs > 0) {
+                const prevTick = projPrevTickMsRef.current[ch.doc.id] || 0;
+                if (tickMs > prevTick) {
+                  projPrevTickMsRef.current[ch.doc.id] = tickMs;
                   serverOffsetMsRef.current = tickMs - Date.now();
                   serverTimeVerifiedRef.current = true;
+                }
+              } else if (raw.lastTickAt) {
+                const tickMs = timestampToMs(raw.lastTickAt);
+                if (tickMs > (projPrevTickMsRef.current[ch.doc.id] || 0)) {
+                  projPrevTickMsRef.current[ch.doc.id] = tickMs;
                 }
               }
             }
@@ -1201,8 +1213,15 @@ export default function App() {
   };
 
   const handleCityBuildingTap = () => {
+    const now = Date.now();
+    if (now - lastCityTapRef.current < 600) return;
+    lastCityTapRef.current = now;
     const cur = stateRef.current;
-    const inc = calculateIncome(cur, { tradeTier, nowMs: Date.now() + serverOffsetMsRef.current });
+    const inc = calculateIncome(cur, {
+      tradeTier,
+      nowMs: now + serverOffsetMsRef.current,
+      ignoreTempBoosters: true,
+    });
     const bonus = Math.max(5, Math.floor(Math.max(1, inc.net) * 2));
     playSfx('tap', !!cur.set.sfx);
     setBurstKey((k) => k + 1);
@@ -1272,7 +1291,7 @@ export default function App() {
 
   const handleStartProject = async (type: ProjectType) => {
     if (!uid || projCreatingRef.current) return;
-    const activeCount = projects.filter((p) => p.status === 'active').length;
+    const activeCount = projectsRef.current.filter((p) => p.status === 'active').length;
     if (activeCount >= 3) {
       addToast('Max 3 active projects at once.');
       return;
@@ -1303,7 +1322,7 @@ export default function App() {
 
   const handlePayProjectStage = async (projectId: string) => {
     if (!uid || projPayBusyRef.current.has(projectId)) return;
-    const proj = projects.find((p) => p.id === projectId);
+    const proj = projectsRef.current.find((p) => p.id === projectId);
     if (!proj || proj.status !== 'active' || proj.paid >= PROJECT_STAGES) return;
     const stageCost = Math.ceil(proj.t.cost / PROJECT_STAGES);
     if (stateRef.current.cash < stageCost) {
@@ -1325,7 +1344,10 @@ export default function App() {
   };
 
   const handlePolicyChange = (key: keyof GameState, value: number) => {
-    updateState((prev) => ({ ...prev, [key]: value }), 2200);
+    const bounds = POLICY_BOUNDS[key as string];
+    if (!bounds || !Number.isFinite(value)) return;
+    const clamped = Math.round(Math.max(bounds[0], Math.min(bounds[1], value)));
+    updateState((prev) => ({ ...prev, [key]: clamped }), 2200);
   };
 
   const handleChangeGov = (govId: string) => {
@@ -1560,7 +1582,7 @@ export default function App() {
         gdp: calculateGdp(state),
         cash: state.cash,
         gems: state.gems,
-        level: 1,
+        level: playerLevel(state),
         rank: state.rank,
         stats: {
           buildings: Object.values(state.b).reduce((a, b) => a + b, 0),

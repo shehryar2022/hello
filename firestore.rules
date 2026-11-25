@@ -115,7 +115,15 @@ service cloud.firestore {
         && data.save.size() <= 60
         && (!('cash' in data.save) || (data.save.cash is number && data.save.cash >= 0 && data.save.cash <= 10000000000000))
         && (!('gems' in data.save) || (data.save.gems is number && data.save.gems >= 0 && data.save.gems <= 1000000000))
-        && (!('sub' in data.save) || data.save.sub is map);
+        && (!('taxPool' in data.save) || (data.save.taxPool is number && data.save.taxPool >= 0 && data.save.taxPool <= 10000000000000))
+        && (!('rank' in data.save) || (data.save.rank is int && data.save.rank >= 0 && data.save.rank <= 6))
+        && (!('boost' in data.save) || (data.save.boost is number && data.save.boost >= 0 && data.save.boost <= 30))
+        && (!('b' in data.save) || (data.save.b is map && data.save.b.size() <= 30))
+        && (!('tourism' in data.save) || (data.save.tourism is number && data.save.tourism >= 0 && data.save.tourism <= 20))
+        && (!('digital' in data.save) || (data.save.digital is number && data.save.digital >= 0 && data.save.digital <= 20))
+        && (!('rd' in data.save) || (data.save.rd is number && data.save.rd >= 0 && data.save.rd <= 25))
+        && (!('green' in data.save) || (data.save.green is number && data.save.green >= 0 && data.save.green <= 25))
+        && (!('sub' in data.save) || (data.save.sub is map && data.save.sub.size() <= 5 && (!('tier' in data.save.sub) || data.save.sub.tier in ['daily', 'weekly', 'monthly'])));
     }
 
     function isValidNotification(data) {
@@ -323,8 +331,8 @@ service cloud.firestore {
           && (
             (existing().status == 'active' && affectedOnly(['progressMs', 'lastTickAt']) && incoming().progressMs >= existing().progressMs && incoming().lastTickAt == request.time) ||
             (existing().status == 'active' && affectedOnly(['paid']) && incoming().paid == existing().paid + 1 && incoming().paid <= 3) ||
-            (existing().status == 'active' && affectedOnly(['status', 'resolvedAt']) && incoming().status in ['done', 'failed'] && incoming().resolvedAt == request.time) ||
-            (existing().status == 'active' && affectedOnly(['progressMs', 'lastTickAt', 'status', 'resolvedAt']) && incoming().progressMs >= existing().progressMs && incoming().status in ['done', 'failed'] && incoming().lastTickAt == request.time && incoming().resolvedAt == request.time) ||
+            (existing().status == 'active' && affectedOnly(['status', 'resolvedAt']) && incoming().status in ['done', 'failed'] && (incoming().status == 'failed' || existing().paid == 3) && incoming().resolvedAt == request.time) ||
+            (existing().status == 'active' && affectedOnly(['progressMs', 'lastTickAt', 'status', 'resolvedAt']) && incoming().progressMs >= existing().progressMs && incoming().status in ['done', 'failed'] && (incoming().status == 'failed' || existing().paid == 3) && incoming().lastTickAt == request.time && incoming().resolvedAt == request.time) ||
             (existing().status in ['done', 'failed'] && existing().claimed == false && affectedOnly(['claimed']) && incoming().claimed == true)
           );
         allow delete: if false;
@@ -370,7 +378,7 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().expiresAt == existing().expiresAt
         && (
-          (existing().status == 'pending' && request.auth.uid == existing().to && affectedOnly(['status', 'resolvedAt']) && incoming().status in ['accepted', 'rejected'] && incoming().resolvedAt == request.time) ||
+          (existing().status == 'pending' && request.auth.uid == existing().to && affectedOnly(['status', 'resolvedAt']) && incoming().status in ['accepted', 'rejected'] && (incoming().status == 'rejected' || request.time < existing().expiresAt) && incoming().resolvedAt == request.time) ||
           (existing().status == 'pending' && request.auth.uid == existing().from && affectedOnly(['status', 'resolvedAt', 'refunded']) && incoming().status in ['cancelled', 'expired'] && incoming().refunded == true && incoming().resolvedAt == request.time) ||
           (existing().status in ['rejected', 'expired'] && existing().refunded == false && request.auth.uid == existing().from && affectedOnly(['refunded']) && incoming().refunded == true)
         );
