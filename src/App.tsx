@@ -258,6 +258,7 @@ export default function App() {
   const pendingDirtyRef = useRef<boolean>(false);
   const localSaveTimerRef = useRef<number | null>(null);
   const permWarnShownRef = useRef<boolean>(false);
+  const cloudSyncPermDeniedRef = useRef<boolean>(false);
   const pubProfileRef = useRef<PlayerProfile | null>(null);
   pubProfileRef.current = pubProfile;
   const uidRef = useRef<string | null>(null);
@@ -450,6 +451,8 @@ export default function App() {
     async (immediate = false) => {
       const currentUid = uidRef.current;
       if (!currentUid || !cloudReady || kickedRef.current || needsOnboarding) return;
+      if (!immediate && cloudSyncPermDeniedRef.current) return;
+      if (immediate) cloudSyncPermDeniedRef.current = false;
       if (syncRetryTimerRef.current) {
         window.clearTimeout(syncRetryTimerRef.current);
         syncRetryTimerRef.current = null;
@@ -473,6 +476,7 @@ export default function App() {
         });
         walletRevRef.current = res.wallet.rev;
         syncRetryCountRef.current = 0;
+        cloudSyncPermDeniedRef.current = false;
         lastSyncedAtRef.current = Date.now();
         if (!res.accepted) {
           setState((prev) => {
@@ -495,6 +499,18 @@ export default function App() {
         const msg = err instanceof Error ? err.message : String(err || '');
         if (code === 'aborted' && msg.includes('Another session')) {
           setCloudStatus({ cls: 'bad', text: 'Session displaced' });
+        } else if (
+          code === 'permission-denied' ||
+          /permission-denied|Missing or insufficient permissions/i.test(`${code} ${msg}`)
+        ) {
+          cloudSyncPermDeniedRef.current = true;
+          cloudDirtyRef.current = false;
+          syncRetryCountRef.current = 0;
+          setCloudStatus({ cls: 'bad', text: 'Rules blocked sync' });
+          if (!permWarnShownRef.current || immediate) {
+            permWarnShownRef.current = true;
+            addToast(formatFirebaseError(err));
+          }
         } else if (
           code === 'aborted' ||
           code === 'unavailable' ||
@@ -533,7 +549,15 @@ export default function App() {
   const scheduleCloudSync = useCallback(
     (delayMs = 2000) => {
       pendingDirtyRef.current = true;
-      if (!uidRef.current || !cloudReady || kickedRef.current || needsOnboarding) return;
+      if (
+        !uidRef.current ||
+        !cloudReady ||
+        kickedRef.current ||
+        needsOnboarding ||
+        cloudSyncPermDeniedRef.current
+      ) {
+        return;
+      }
       if (cloudSyncTimerRef.current) window.clearTimeout(cloudSyncTimerRef.current);
       cloudSyncTimerRef.current = window.setTimeout(() => {
         cloudSyncTimerRef.current = null;
@@ -661,6 +685,8 @@ export default function App() {
         serverOffsetMsRef.current = 0;
         setServerOffsetMs(0);
         pendingDirtyRef.current = false;
+        cloudSyncPermDeniedRef.current = false;
+        permWarnShownRef.current = false;
         setCloudReady(false);
         setNeedsOnboarding(false);
         setPubProfile(null);
@@ -671,6 +697,8 @@ export default function App() {
         return;
       }
 
+      cloudSyncPermDeniedRef.current = false;
+      permWarnShownRef.current = false;
       setGateOpen(false);
       setAuthMsg('');
       try {
@@ -1335,6 +1363,7 @@ export default function App() {
       if (
         tickCountRef.current % 24 === 0 &&
         uidRef.current &&
+        !cloudSyncPermDeniedRef.current &&
         (pendingDirtyRef.current ||
           (now - lastSyncedAtRef.current >= 24_000 &&
             (isUserActive || calculateIncome(curSnap, { tradeTier, nowMs: nowSrv }).net !== 0)))
@@ -1973,7 +2002,11 @@ export default function App() {
     } catch (err) {
       const code = (err as { code?: string })?.code || '';
       if (code === 'auth/popup-blocked') {
-        await signInWithRedirect(auth, new GoogleAuthProvider());
+        try {
+          await signInWithRedirect(auth, new GoogleAuthProvider());
+        } catch (redirectErr) {
+          setAuthMsg(formatFirebaseError(redirectErr));
+        }
       } else {
         setAuthMsg(formatFirebaseError(err));
       }
@@ -2586,6 +2619,8 @@ export default function App() {
         onSubmitProfile={async (username, cc) => {
           try {
             await createPlayerProfile(username, cc, stateRef.current, sidRef.current, handleKicked);
+            walletRevRef.current = 1;
+            cloudSyncPermDeniedRef.current = false;
             const p = await fetchPlayerProfile(uid!);
             if (p) setPubProfile(p);
             const chosen = COUNTRIES.find((c) => c[0] === cc) || COUNTRIES[0];

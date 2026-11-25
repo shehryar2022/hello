@@ -194,11 +194,18 @@ export function cleanTechMap(raw: unknown): Record<string, number> {
 
 export function migrateState(raw: Partial<GameState> & Record<string, unknown>): GameState {
   const D = freshState();
-  const s = Object.assign(D, raw || {}) as GameState & { loan?: unknown; deals?: unknown };
+  const s = Object.assign(D, raw || {}) as GameState & {
+    loan?: unknown;
+    deals?: unknown;
+    avHist?: unknown;
+    avs?: unknown;
+  };
 
-  // Remove deprecated Bank loan & deals fields
+  // Remove deprecated Bank loan, deals & legacy avatar fields
   delete s.loan;
   delete s.deals;
+  delete s.avHist;
+  delete s.avs;
 
   if (!s.b || typeof s.b !== 'object') s.b = { ...D.b };
   for (const d of BUILDINGS) {
@@ -428,6 +435,8 @@ export function cleanSavePayload(s: GameState): Record<string, unknown> {
   delete raw.country;
   delete raw.deals;
   delete raw.loan;
+  delete raw.avHist;
+  delete raw.avs;
   delete raw._lastBal;
   return raw;
 }

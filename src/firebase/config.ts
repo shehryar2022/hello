@@ -1,14 +1,20 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, type Auth } from 'firebase/auth';
 import { doc, getDocFromServer, getFirestore, type Firestore } from 'firebase/firestore';
+import firebaseAppletConfig from '../../firebase-applet-config.json';
 
 const env = (import.meta as { env?: Record<string, string | undefined> }).env ?? {};
 
 export const FIREBASE_CONFIG = {
-  apiKey: env.VITE_FIREBASE_API_KEY || '',
-  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || '',
-  projectId: env.VITE_FIREBASE_PROJECT_ID || '',
-  appId: env.VITE_FIREBASE_APP_ID || '',
+  apiKey: env.VITE_FIREBASE_API_KEY?.trim() || firebaseAppletConfig.apiKey || '',
+  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN?.trim() || firebaseAppletConfig.authDomain || '',
+  databaseURL: env.VITE_FIREBASE_DATABASE_URL?.trim() || firebaseAppletConfig.databaseURL || '',
+  projectId: env.VITE_FIREBASE_PROJECT_ID?.trim() || firebaseAppletConfig.projectId || '',
+  storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET?.trim() || firebaseAppletConfig.storageBucket || '',
+  messagingSenderId:
+    env.VITE_FIREBASE_MESSAGING_SENDER_ID?.trim() || firebaseAppletConfig.messagingSenderId || '',
+  appId: env.VITE_FIREBASE_APP_ID?.trim() || firebaseAppletConfig.appId || '',
+  measurementId: env.VITE_FIREBASE_MEASUREMENT_ID?.trim() || firebaseAppletConfig.measurementId || '',
 };
 
 export const isFirebaseConfigured = Boolean(
@@ -85,6 +91,34 @@ export function handleFirestoreError(
 export function formatFirebaseError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err || '');
   const code = (err as { code?: string })?.code || '';
+  const combined = `${code} ${raw}`;
+  if (/auth\/popup-closed-by-user|auth\/cancelled-popup-request/i.test(combined)) {
+    return 'Sign-in cancelled — popup was closed.';
+  }
+  if (/auth\/popup-blocked/i.test(combined)) {
+    return 'Sign-in popup was blocked by your browser — please allow popups for this site.';
+  }
+  if (/auth\/unauthorized-domain/i.test(combined)) {
+    return 'Add this domain to Firebase Console → Authentication → Settings → Authorized domains.';
+  }
+  if (/auth\/operation-not-allowed/i.test(combined)) {
+    return 'Enable this sign-in method in Firebase Console → Authentication → Sign-in method.';
+  }
+  if (/auth\/invalid-credential|auth\/user-not-found|auth\/wrong-password/i.test(combined)) {
+    return 'Invalid email or password.';
+  }
+  if (/auth\/email-already-in-use/i.test(combined)) {
+    return 'An account with this email already exists.';
+  }
+  if (/auth\/weak-password/i.test(combined)) {
+    return 'Password should be at least 6 characters.';
+  }
+  if (/auth\/invalid-email/i.test(combined)) {
+    return 'Please enter a valid email address.';
+  }
+  if (/auth\/too-many-requests/i.test(combined)) {
+    return 'Too many attempts — please wait a moment and try again.';
+  }
   if (/unavailable|network|offline/i.test(code + raw)) {
     return '📡 Network problem — check your connection.';
   }

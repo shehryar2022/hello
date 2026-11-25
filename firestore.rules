@@ -299,15 +299,22 @@ service cloud.firestore {
         && existsAfter(/databases/$(database)/documents/players/$(uid)/private/wallet);
       allow update: if isOwner(uid)
         && isValidId(uid)
-        && incoming().username == existing().username
-        && incoming().usernameLower == existing().usernameLower
+        && (!('username' in existing()) || incoming().username == existing().username)
+        && (!('usernameLower' in existing()) || incoming().usernameLower == existing().usernameLower)
         && (!('createdAt' in existing()) || ('createdAt' in incoming() && incoming().createdAt == existing().createdAt))
         && incoming().lastSeen == request.time
         && (
           affectedOnly(['lastSeen']) ||
           (
-            isValidPlayerProfile(incoming()) &&
             affectedOnly(['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp'])
+            && incoming().gdp is number && incoming().gdp >= 0 && incoming().gdp <= 10000000000000
+            && incoming().cash is number && incoming().cash >= 0 && incoming().cash <= 10000000000000
+            && incoming().gems is number && incoming().gems >= 0 && incoming().gems <= 1000000000
+            && incoming().level is int && incoming().level >= 1 && incoming().level <= 10000000
+            && incoming().rank is int && incoming().rank >= 0 && incoming().rank <= 10
+            && (!('subTier' in incoming()) || incoming().subTier in ['', 'daily', 'weekly', 'monthly'])
+            && (!('subExp' in incoming()) || (incoming().subExp is number && incoming().subExp >= 0 && incoming().subExp <= 10000000000000))
+            && isValidPlayerStats(incoming().stats)
           )
         );
       allow delete: if false;
@@ -324,8 +331,7 @@ service cloud.firestore {
           && isValidId(uid)
           && isValidWallet(incoming())
           && incoming().t == request.time
-          && (!('rev' in existing()) || incoming().rev >= existing().rev)
-          && affectedOnly(['cash', 'gems', 'stk', 'rev', 'sid', 't', 'tradeId']);
+          && (!('rev' in existing()) || incoming().rev >= existing().rev);
         allow delete: if false;
       }
 
@@ -411,7 +417,7 @@ service cloud.firestore {
       allow get: if isOwner(uid) && isValidId(uid);
       allow list: if false;
       allow create: if isOwner(uid) && isValidId(uid) && isValidSave(incoming());
-      allow update: if isOwner(uid) && isValidId(uid) && isValidSave(incoming()) && affectedOnly(['save']);
+      allow update: if isOwner(uid) && isValidId(uid) && isValidSave(incoming());
       allow delete: if false;
     }
 

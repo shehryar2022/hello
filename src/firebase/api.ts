@@ -390,11 +390,11 @@ export async function createGiftOffer(params: {
     const toData = toSnap.data();
     const prevRev = Number(wd.rev) || 1;
 
-    tx.update(wRef, {
+    tx.set(wRef, {
       cash: wCash - oc,
       gems: wGems - og,
       stk: nextStk,
-      rev: prevRev + 1,
+      rev: Math.min(1e9, prevRev + 1),
       sid: params.sid,
       t: serverTimestamp(),
     });
@@ -481,11 +481,11 @@ export async function acceptGiftOffer(
     const newCash = Math.min(1e13, capValue(w.cash, 1e13) + capValue(t.offerCash, 1e12));
     const newGems = Math.min(1e9, capValue(w.gems, 1e9) + capValue(t.offerGems, 1e9));
 
-    tx.update(wRef, {
+    tx.set(wRef, {
       cash: newCash,
       gems: newGems,
       stk: mStk,
-      rev: (Number(w.rev) || 1) + 1,
+      rev: Math.min(1e9, (Number(w.rev) || 1) + 1),
       sid,
       t: serverTimestamp(),
       tradeId,
@@ -575,11 +575,11 @@ export async function endSenderOffer(
       refundStk[k] = (refundStk[k] || 0) + Math.max(0, Math.floor(Number(v) || 0));
     }
     tx.update(tRef, { status: want, resolvedAt: serverTimestamp(), refunded: true });
-    tx.update(wRef, {
+    tx.set(wRef, {
       cash: Math.min(1e13, capValue(w.cash, 1e13) + capValue(t.offerCash, 1e12)),
       gems: Math.min(1e9, capValue(w.gems, 1e9) + capValue(t.offerGems, 1e9)),
       stk: refundStk,
-      rev: (Number(w.rev) || 1) + 1,
+      rev: Math.min(1e9, (Number(w.rev) || 1) + 1),
       sid,
       t: serverTimestamp(),
       tradeId,
@@ -626,11 +626,11 @@ export async function reclaimUnrefundedOffer(
       refundStk[k] = (refundStk[k] || 0) + Math.max(0, Math.floor(Number(v) || 0));
     }
     tx.update(tRef, { refunded: true });
-    tx.update(wRef, {
+    tx.set(wRef, {
       cash: Math.min(1e13, capValue(w.cash, 1e13) + capValue(t.offerCash, 1e12)),
       gems: Math.min(1e9, capValue(w.gems, 1e9) + capValue(t.offerGems, 1e9)),
       stk: refundStk,
-      rev: (Number(w.rev) || 1) + 1,
+      rev: Math.min(1e9, (Number(w.rev) || 1) + 1),
       sid,
       t: serverTimestamp(),
       tradeId,

@@ -668,9 +668,13 @@ test('cleanSavePayload strips undefined/country fields and clamps all values wit
     taxSurge: 1,
   };
   dirty.boosterCd = Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`b_${i}`, 123]));
+  dirty.avHist = [1.2, 2.3];
+  dirty.avs = { n: 0, b: 0, w: 0, r: 0 };
   const cleaned = cleanSavePayload(dirty as never);
 
   assert.equal('country' in cleaned, false);
+  assert.equal('avHist' in cleaned, false);
+  assert.equal('avs' in cleaned, false);
   assert.equal(cleaned.cash, 1e13);
   assert.equal(cleaned.gems, 1e9);
   assert.equal(cleaned.taxPool, 1e13);
