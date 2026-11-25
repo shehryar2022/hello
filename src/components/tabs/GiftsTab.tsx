@@ -54,10 +54,10 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
   if (!uid) {
     return (
       <div className="empty">
-        <div className="big">🎁</div>
+        <div className="big">💱</div>
         <p className="dim">Sign in to send and receive gifts with other players.</p>
         <button type="button" className="btn gold" onClick={onOpenLogin}>
-          Sign in
+          🔐 Sign in
         </button>
       </div>
     );
@@ -111,10 +111,10 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
           📤 Sent ({outgoing.length})
         </button>
         <button type="button" className={subTab === 'hist' ? 'on' : ''} onClick={() => onChangeSubTab('hist')}>
-          📜 History
+          📆 History
         </button>
         <button type="button" className={subTab === 'find' ? 'on' : ''} onClick={() => onChangeSubTab('find')}>
-          🔍 Send Gift
+          💸 Send Gift
         </button>
       </div>
 
@@ -179,7 +179,7 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
             </div>
           ) : (
             <div className="empty">
-              <div className="big">📭</div>
+              <div className="big">📪</div>
               <p className="dim">No incoming gifts right now.</p>
             </div>
           )}
@@ -274,7 +274,7 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
             </div>
           ) : (
             <div className="empty">
-              <div className="big">📜</div>
+              <div className="big">📪</div>
               <p className="dim">No past gifts yet.</p>
             </div>
           )}
@@ -315,7 +315,7 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
                     disabled={sentToday >= DAILY_GIFT_MAX}
                     onClick={() => onOpenGiftCompose(p)}
                   >
-                    🎁 Gift
+                    💱 Gift
                   </button>
                 </div>
               ))}

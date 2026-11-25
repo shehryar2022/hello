@@ -52,8 +52,8 @@ export const LoginGate: React.FC<LoginGateProps> = ({
           <h1>Country Economy Tycoon</h1>
           <p>Build your nation&apos;s economy, govern policies, and climb the live GDP leaderboard.</p>
           <ul className="g-feat">
-            <li>🏆 Live leaderboard</li>
-            <li>🎁 Player gifting</li>
+            <li>💲 Live leaderboard</li>
+            <li>💱 Player gifting</li>
             <li>☁️ Cloud save</li>
           </ul>
           <div className="g-sky" aria-hidden="true">

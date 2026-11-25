@@ -33,7 +33,7 @@ const SLIDERS: Array<{
   { key: 'luxury', label: '💎 Luxury tax', min: 0, max: 25, desc: 'Taxes the rich. Good revenue, small happiness hit.', color: '#e0b81a' },
   { key: 'corp', label: '🏢 Corporate tax', min: 0, max: 30, desc: 'Taxes businesses. Steady income, hurts approval.', color: '#c97a3d' },
   { key: 'gst', label: '🛒 Sales tax (GST)', min: 0, max: 25, desc: 'Taxes every purchase. Mild public anger.', color: '#4cc9ff' },
-  { key: 'prop', label: '🏠 Property tax', min: 0, max: 15, desc: 'Scales with population. Biggest happiness hit.', color: '#ff6fa3' },
+  { key: 'prop', label: '📌 Property tax', min: 0, max: 15, desc: 'Scales with population. Biggest happiness hit.', color: '#ff6fa3' },
   { key: 'duty', label: '🚢 Import duty', min: 0, max: 30, desc: 'Customs on imports. Each Port boosts the revenue.', color: '#a07bff' },
   { key: 'wel', label: '🏥 Welfare spending', min: 0, max: 50, desc: 'Costs a share of income, raises happiness & approval.', color: 'var(--mint)' },
   { key: 'edu', label: '🎓 Education', min: 0, max: 30, desc: 'Long-term: raises income and happiness.', color: 'var(--cy)' },
@@ -116,7 +116,7 @@ export const PolicyTab: React.FC<PolicyTabProps> = ({
       </div>
 
       <div className="gxc" style={{ marginBottom: 12 }}>
-        <h2>🌍 World Events</h2>
+        <h2>📢 World Events</h2>
         <p className="dim" style={{ marginTop: 4 }}>
           {worldEv ? (
             <>

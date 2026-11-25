@@ -35,7 +35,7 @@ export const QuestsTab: React.FC<QuestsTabProps> = ({
 
         return (
           <div key={q.id} className="row" style={{ '--c': '#ffc93c' } as React.CSSProperties}>
-            <div className="em">{isClaimed ? '✅' : '🎯'}</div>
+            <div className="em">{isClaimed ? '✅' : '📌'}</div>
             <div style={{ minWidth: 0 }}>
               <h2>
                 {q.t}

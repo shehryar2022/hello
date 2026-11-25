@@ -80,9 +80,15 @@ test('Dirty Dozen security invariants are enforced in firestore.rules', () => {
   assert.match(rules, /incoming\(\)\.createdAt == request\.time/);
   assert.match(rules, /incoming\(\)\.lastSeen == request\.time/);
 
-  // 8. Legacy player updates, heartbeat-only updates, and atomic project completion
+  // 8. Legacy player updates, heartbeat-only updates, and atomic project completion/failure
   assert.match(rules, /'createdAt' in incoming\(\)/);
   assert.match(rules, /affectedOnly\(\['lastSeen'\]\)/);
-  assert.match(rules, /affectedOnly\(\['progressMs', 'lastTickAt', 'status', 'resolvedAt'\]\)/);
+  assert.match(rules, /affectedOnly\(\['progressMs', 'lastTickAt', 'status', 'resolvedAt'\]\)[\s\S]*incoming\(\)\.status in \['done', 'failed'\]/);
   assert.match(rules, /\(!\('rev' in existing\(\)\) \|\| incoming\(\)\.rev >= existing\(\)\.rev\)/);
+
+  // 9. Save balance bounds, non-whitespace text guards, and nullable trade resolvedAt
+  assert.match(rules, /data\.save\.cash >= 0/);
+  assert.match(rules, /data\.save\.gems >= 0/);
+  assert.match(rules, /data\.text\.matches\('\(\?s\)\.\*\\\\S\.\*'\)/);
+  assert.match(rules, /'resolvedAt' in data\) \|\| data\.resolvedAt == null \|\| data\.resolvedAt is timestamp/);
 });

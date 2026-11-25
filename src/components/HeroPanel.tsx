@@ -5,6 +5,7 @@ import {
   calculateIncome,
   formatNumber,
   getActiveShopIncomeBooster,
+  getActiveSubscription,
 } from '../game/rules';
 import type { GameState } from '../game/types';
 import { City3D } from './City3D';
@@ -12,6 +13,7 @@ import { City3D } from './City3D';
 interface HeroPanelProps {
   state: GameState;
   tradeTier: number;
+  serverOffsetMs?: number;
   showCity: boolean;
   burstKey: number;
   onCollectTax: (e: React.MouseEvent<HTMLButtonElement>) => void;
@@ -22,43 +24,50 @@ interface HeroPanelProps {
 export const HeroPanel: React.FC<HeroPanelProps> = ({
   state,
   tradeTier,
+  serverOffsetMs = 0,
   showCity,
   burstKey,
   onCollectTax,
   onActivateGemBoost,
   onCityBuildingTap,
 }) => {
-  const now = Date.now();
+  const now = Date.now() + serverOffsetMs;
   const inc = calculateIncome(state, { tradeTier, nowMs: now });
   const perMin = inc.net * 60;
   const shopBoost = getActiveShopIncomeBooster(state, now);
+  const activeSub = getActiveSubscription(state, now);
   const pGdp = calculateGdp(state);
 
   const statItems = [
     { icon: '🙂', label: 'Happiness', pct: state.hap, color: '#37e6a0', text: `${Math.round(state.hap)}%` },
     { icon: '🗳️', label: 'Approval', pct: state.appr, color: '#3fd2ff', text: `${Math.round(state.appr)}%` },
     { icon: '👥', label: 'Population', pct: Math.min(100, state.pop), color: '#a56bff', text: `${state.pop.toFixed(1)}M` },
-    { icon: '📈', label: 'GDP', pct: Math.min(100, (pGdp / GDP_TARGET) * 100), color: '#ffc93c', text: `₨ ${formatNumber(pGdp)}` },
+    { icon: '💲', label: 'GDP', pct: Math.min(100, (pGdp / GDP_TARGET) * 100), color: '#ffc93c', text: `₨ ${formatNumber(pGdp)}` },
   ];
 
   return (
     <div className="list">
       <div className="card hero">
         <div className="inc">
-          <span className="lab">Income per minute</span>
+          <span className="lab">💸 Income per minute</span>
           <div className="num">
             <span data-testid="income-per-min">{perMin < 100 ? perMin.toFixed(1) : formatNumber(perMin)}</span>
             <em>/min</em>
           </div>
           <small id="net">
-            <span>Tax Pool: ₨ {formatNumber(state.taxPool || 0)}</span>
+            <span>🪙 Tax Pool: ₨ {formatNumber(state.taxPool || 0)}</span>
+            {activeSub && (
+              <span className="boost">
+                {activeSub.def.e} {activeSub.def.periodLabel} (+{Math.round((activeSub.def.incomeMult - 1) * 100)}% inc · {Math.round(activeSub.def.discountRate * 100)}% off)
+              </span>
+            )}
             {state.boost > 0 && <span className="boost">⚡ ×2 {Math.ceil(state.boost)}s</span>}
             {shopBoost.active && (
               <span className="boost">
                 🔥 ×{shopBoost.mult} {shopBoost.leftSec}s
               </span>
             )}
-            {!!state.activeFx?.taxSurge && <span className="boost">💰 Tax Surge Ready</span>}
+            {!!state.activeFx?.taxSurge && <span className="boost">💵 Tax Surge Ready</span>}
           </small>
         </div>
 
@@ -66,10 +75,7 @@ export const HeroPanel: React.FC<HeroPanelProps> = ({
 
         <div className="hero-acts">
           <button type="button" className="btn gold collect" id="col" onClick={onCollectTax}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="9" />
-              <path d="M14.5 9.2c-.6-.8-1.5-1.2-2.5-1.2-1.4 0-2.5.8-2.5 2s1 1.7 2.5 2 2.5.8 2.5 2-1.1 2-2.5 2c-1 0-1.9-.4-2.5-1.2M12 6v2M12 16v2" />
-            </svg>
+            <span aria-hidden="true" style={{ fontSize: 19, lineHeight: 1 }}>🪙</span>
             Collect tax (₨ {formatNumber(Math.floor(state.taxPool || 0))})
           </button>
           <button

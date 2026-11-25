@@ -83,11 +83,13 @@ import {
   RANKS,
   SAVE_KEY,
   STICKERS,
+  SUBSCRIPTIONS,
   TAB_META,
 } from './game/constants';
 import {
   applyBuyBooster,
   applyBuyRank,
+  applyBuySubscription,
   applyOfflineEarnings,
   buildingCost,
   calculateGdp,
@@ -95,13 +97,17 @@ import {
   calculateOfflineRank,
   calculateOnlineRank,
   calculateTaxCollect,
+  claimSubscriptionDaily,
   cleanStickersMap,
   formatNumber,
   freshState,
   fuseSticker,
+  getDevelopmentDiscount,
+  getSubscriptionProjectSpeedMult,
   gxRepairCost,
   gxUpgradeCost,
   migrateState,
+  QUEST_POOL,
   selectDailyQuestIds,
   targetHappiness,
   tierOfCompletedTrades,
@@ -119,6 +125,7 @@ import type {
   PlayersSubTab,
   ProjectType,
   ShopSubTab,
+  SubscriptionTierId,
   TabId,
   TradeOffer,
 } from './game/types';
@@ -210,6 +217,7 @@ export default function App() {
   const sidRef = useRef<string>(`${Date.now()}_${Math.random().toString(36).slice(2, 10)}`);
   const walletRevRef = useRef<number>(0);
   const serverOffsetMsRef = useRef<number>(0);
+  const serverTimeVerifiedRef = useRef<boolean>(false);
   const lastActivityRef = useRef<number>(Date.now());
   const cloudSyncTimerRef = useRef<number | null>(null);
   const cloudSyncBusyRef = useRef<boolean>(false);
@@ -229,6 +237,7 @@ export default function App() {
   const projLiveRef = useRef<Record<string, number>>({});
   const projLastSyncRef = useRef<Record<string, number>>({});
   const settlingTradesRef = useRef<boolean>(false);
+  const rankPositionRef = useRef<number>(1);
 
   const addToast = useCallback((text: string) => {
     const id = Date.now() + Math.random();
@@ -283,8 +292,18 @@ export default function App() {
     };
   }, []);
 
-  // Single-tab localStorage lock (matches original tab lock)
+  // Single-tab localStorage lock (matches original tab lock, releases cleanly on reload)
   useEffect(() => {
+    const releaseOwnLock = () => {
+      try {
+        const cur = localStorage.getItem(TAB_LOCK_KEY);
+        if (cur && JSON.parse(cur).id === sidRef.current) {
+          localStorage.removeItem(TAB_LOCK_KEY);
+        }
+      } catch {
+        // ignore
+      }
+    };
     const claimTab = () => {
       const cur = localStorage.getItem(TAB_LOCK_KEY);
       if (cur && cur !== sidRef.current) {
@@ -320,17 +339,14 @@ export default function App() {
       }
     };
     window.addEventListener('storage', onStorage);
+    window.addEventListener('pagehide', releaseOwnLock);
+    window.addEventListener('beforeunload', releaseOwnLock);
     return () => {
       window.clearInterval(iv);
       window.removeEventListener('storage', onStorage);
-      try {
-        const cur = localStorage.getItem(TAB_LOCK_KEY);
-        if (cur && JSON.parse(cur).id === sidRef.current) {
-          localStorage.removeItem(TAB_LOCK_KEY);
-        }
-      } catch {
-        // ignore
-      }
+      window.removeEventListener('pagehide', releaseOwnLock);
+      window.removeEventListener('beforeunload', releaseOwnLock);
+      releaseOwnLock();
     };
   }, [otherTabLocked]);
 
@@ -402,8 +418,8 @@ export default function App() {
 
   // Daily check & offline earnings trigger
   const runDailyAndOfflineChecks = useCallback(
-    (baseState: GameState, tradeTier: number) => {
-      const now = Date.now();
+    (baseState: GameState, tradeTier: number, nowOverride?: number) => {
+      const now = nowOverride ?? Date.now() + serverOffsetMsRef.current;
       let working = { ...baseState };
       const todayKey = dayKeyFor(now);
 
@@ -494,6 +510,8 @@ export default function App() {
       setUser(u);
       setUid(u?.uid || null);
       if (!u) {
+        serverTimeVerifiedRef.current = false;
+        serverOffsetMsRef.current = 0;
         setCloudReady(false);
         setNeedsOnboarding(false);
         setPubProfile(null);
@@ -513,13 +531,14 @@ export default function App() {
           t: serverTimestamp(),
         });
 
-        // Estimate server clock offset via session doc from server
-        const sesSnap = await getDocFromServer(doc(db, 'players', u.uid, 'private', 'session')).catch(() =>
-          getDoc(doc(db, 'players', u.uid, 'private', 'session')),
-        );
-        if (sesSnap.exists()) {
+        // Estimate server clock offset strictly from server (never fall back to stale cache)
+        const sesSnap = await getDocFromServer(doc(db, 'players', u.uid, 'private', 'session')).catch(() => null);
+        if (sesSnap && sesSnap.exists()) {
           const srvMs = timestampToMs(sesSnap.data()?.t);
-          if (srvMs > 0) serverOffsetMsRef.current = srvMs - Date.now();
+          if (srvMs > 0) {
+            serverOffsetMsRef.current = srvMs - Date.now();
+            serverTimeVerifiedRef.current = true;
+          }
         }
 
         const pSnap = await getDoc(doc(db, 'players', u.uid));
@@ -560,7 +579,7 @@ export default function App() {
 
         const tier = tierOfCompletedTrades(pData.stats?.completedTrades);
         completedTradesRef.current = pData.stats?.completedTrades || 0;
-        const checked = runDailyAndOfflineChecks(loaded, tier);
+        const checked = runDailyAndOfflineChecks(loaded, tier, Date.now() + serverOffsetMsRef.current);
         setState(checked);
         saveLocal(checked);
         setNeedsOnboarding(false);
@@ -707,7 +726,7 @@ export default function App() {
     );
 
     // 6. Daily gift limit listener
-    const dlKey = `${uid}_${dayKeyFor(Date.now())}`;
+    const dlKey = `${uid}_${dayKeyFor(Date.now() + serverOffsetMsRef.current)}`;
     unsubs.push(
       onSnapshot(
         doc(db, 'dailyLimits', dlKey),
@@ -754,10 +773,16 @@ export default function App() {
               if (justCreatedProjIdsRef.current.has(ch.doc.id) && raw.startedAt) {
                 justCreatedProjIdsRef.current.delete(ch.doc.id);
                 const startMs = timestampToMs(raw.startedAt);
-                if (startMs > 0) serverOffsetMsRef.current = startMs - Date.now();
+                if (startMs > 0) {
+                  serverOffsetMsRef.current = startMs - Date.now();
+                  serverTimeVerifiedRef.current = true;
+                }
               } else if (ch.type === 'modified' && raw.lastTickAt) {
                 const tickMs = timestampToMs(raw.lastTickAt);
-                if (tickMs > 0) serverOffsetMsRef.current = tickMs - Date.now();
+                if (tickMs > 0) {
+                  serverOffsetMsRef.current = tickMs - Date.now();
+                  serverTimeVerifiedRef.current = true;
+                }
               }
             }
           }
@@ -1006,9 +1031,12 @@ export default function App() {
       const curUid = uidRef.current;
       if (curUid && projectsRef.current.length > 0) {
         let liveDirty = false;
+        const speedMult = getSubscriptionProjectSpeedMult(stateRef.current, nowSrv);
+        const stepMs = Math.max(1000, Math.floor(1000 * speedMult));
         for (const p of projectsRef.current) {
           if (p.status === 'active') {
             if (
+              serverTimeVerifiedRef.current &&
               !p.pending &&
               p.st > 0 &&
               nowSrv >= p.dl &&
@@ -1024,7 +1052,7 @@ export default function App() {
               const capMs = Math.floor((p.t.dur * p.paid) / PROJECT_STAGES);
               const curLive = Math.max(p.progressMs, projLiveRef.current[p.id] || 0);
               if (curLive < capMs) {
-                const nextMs = Math.min(capMs, curLive + 1000);
+                const nextMs = Math.min(capMs, curLive + stepMs);
                 projLiveRef.current[p.id] = nextMs;
                 liveDirty = true;
                 if (nextMs >= p.t.dur && p.paid >= PROJECT_STAGES && !projBusyRef.current.has(p.id)) {
@@ -1081,14 +1109,14 @@ export default function App() {
                     addToast(`🏗️ ${p.t.n} finished! +₨ ${formatNumber(cashReward)}`);
                     scheduleCloudSync(500);
                   } else if (resStatus === 'failed') {
-                    const refund = Math.ceil((p.t.cost / PROJECT_STAGES) * p.paid * 0.4);
+                    const refund = Math.ceil((p.t.cost / PROJECT_STAGES) * p.paid * 0.75);
                     setState((s) => {
                       const next = {
                         ...s,
                         cash: s.cash + refund,
                         gx: {
                           ...s.gx,
-                          log: [`❌ ${p.t.n} missed deadline (40% refunded)`, ...s.gx.log].slice(0, 8),
+                          log: [`❌ ${p.t.n} missed deadline (75% refunded)`, ...s.gx.log].slice(0, 8),
                         },
                       };
                       saveLocal(next);
@@ -1174,7 +1202,7 @@ export default function App() {
 
   const handleCityBuildingTap = () => {
     const cur = stateRef.current;
-    const inc = calculateIncome(cur, { tradeTier });
+    const inc = calculateIncome(cur, { tradeTier, nowMs: Date.now() + serverOffsetMsRef.current });
     const bonus = Math.max(5, Math.floor(Math.max(1, inc.net) * 2));
     playSfx('tap', !!cur.set.sfx);
     setBurstKey((k) => k + 1);
@@ -1186,8 +1214,9 @@ export default function App() {
     const def = BUILDINGS.find((b) => b.id === id);
     if (!def) return;
     const cur = stateRef.current;
+    const nowSrv = Date.now() + serverOffsetMsRef.current;
     const count = cur.b[id] || 0;
-    const cost = buildingCost(def, count);
+    const cost = buildingCost(def, count, getDevelopmentDiscount(cur, nowSrv));
     if (cur.cash < cost) return;
 
     playSfx('buy', !!cur.set.sfx);
@@ -1205,7 +1234,8 @@ export default function App() {
 
   const handleFixInfra = (key: string, full: boolean) => {
     const cur = stateRef.current;
-    const cost = gxRepairCost(cur, key, full);
+    const nowSrv = Date.now() + serverOffsetMsRef.current;
+    const cost = gxRepairCost(cur, key, full, nowSrv);
     if (cur.cash < cost || cost <= 0) return;
     playSfx('buy', !!cur.set.sfx);
     updateState((prev) => ({
@@ -1224,7 +1254,8 @@ export default function App() {
 
   const handleUpgradeBuilding = (id: string) => {
     const cur = stateRef.current;
-    const cost = gxUpgradeCost(cur, id);
+    const nowSrv = Date.now() + serverOffsetMsRef.current;
+    const cost = gxUpgradeCost(cur, id, nowSrv);
     const lvl = cur.gx.lvl[id] || 1;
     if (cur.cash < cost || cost <= 0 || lvl >= 5) return;
     playSfx('buy', !!cur.set.sfx);
@@ -1253,15 +1284,17 @@ export default function App() {
       return;
     }
     projCreatingRef.current = true;
+    // Deduct optimistically so the same cash cannot be concurrently spent while awaiting Firestore
+    updateState((prev) => ({ ...prev, cash: Math.max(0, prev.cash - stageCost) }), 800);
     try {
       await createGovProject(uid, type, (newId) => {
         justCreatedProjIdsRef.current.add(newId);
         projStartedLocalAtRef.current[newId] = Date.now();
       });
-      updateState((prev) => ({ ...prev, cash: Math.max(0, prev.cash - stageCost) }), 500);
       playSfx('buy', !!stateRef.current.set.sfx);
       addToast(`🏗️ Started ${def.n}!`);
     } catch (err) {
+      updateState((prev) => ({ ...prev, cash: prev.cash + stageCost }), 500);
       addToast(formatFirebaseError(err));
     } finally {
       projCreatingRef.current = false;
@@ -1278,12 +1311,13 @@ export default function App() {
       return;
     }
     projPayBusyRef.current.add(projectId);
+    updateState((prev) => ({ ...prev, cash: Math.max(0, prev.cash - stageCost) }), 800);
     try {
       await payGovProjectStage(uid, projectId, proj.paid);
-      updateState((prev) => ({ ...prev, cash: Math.max(0, prev.cash - stageCost) }), 500);
       playSfx('buy', !!stateRef.current.set.sfx);
       addToast(`💳 Paid stage ${proj.paid + 1}/${PROJECT_STAGES}`);
     } catch (err) {
+      updateState((prev) => ({ ...prev, cash: prev.cash + stageCost }), 500);
       addToast(formatFirebaseError(err));
     } finally {
       projPayBusyRef.current.delete(projectId);
@@ -1338,18 +1372,26 @@ export default function App() {
 
   const handleClaimQuest = (
     questId: string,
-    rewardGems: number,
+    _rewardGems: number,
     e: React.MouseEvent<HTMLButtonElement>,
   ) => {
     const cur = stateRef.current;
     if (cur.claimed?.[questId]) return;
+    const today = dayKeyFor(Date.now() + serverOffsetMsRef.current);
+    const activeIds = cur.questIds?.length === 3 && cur.questDay === today ? cur.questIds : selectDailyQuestIds(today);
+    const qIndex = QUEST_POOL.findIndex((q) => q.id === questId);
+    if (qIndex < 0 || !activeIds.includes(qIndex)) return;
+    const q = QUEST_POOL[qIndex];
+    if (q.f(cur, { rank: rankPositionRef.current }) < q.g) return;
+
+    const verifiedGems = q.r;
     playSfx('win', !!cur.set.sfx);
     triggerBuzz(16, !!cur.set.vib);
     const rect = e.currentTarget.getBoundingClientRect();
-    spawnFloat(`+${rewardGems} 💎`, rect.left + rect.width / 2, rect.top, '#5ccbff');
+    spawnFloat(`+${verifiedGems} 💎`, rect.left + rect.width / 2, rect.top, '#5ccbff');
     updateState((prev) => ({
       ...prev,
-      gems: prev.gems + rewardGems,
+      gems: prev.gems + verifiedGems,
       claimed: { ...prev.claimed, [questId]: 1 },
     }), 1000);
   };
@@ -1369,10 +1411,50 @@ export default function App() {
     addToast(`🏅 Promoted to ${rk.n}!`);
   };
 
+  const handleBuySubscription = (tierId: SubscriptionTierId, e: React.MouseEvent<HTMLButtonElement>) => {
+    const subDef = SUBSCRIPTIONS.find((x) => x.id === tierId);
+    if (!subDef) return;
+    const nowSrv = Date.now() + serverOffsetMsRef.current;
+    const res = applyBuySubscription(stateRef.current, subDef, nowSrv);
+    if (!res.ok) {
+      if (res.reason) addToast(res.reason);
+      return;
+    }
+    playSfx('win', !!stateRef.current.set.sfx);
+    triggerBuzz(20, !!stateRef.current.set.vib);
+    const rect = e.currentTarget.getBoundingClientRect();
+    spawnFloat(`${subDef.e} ${subDef.n}`, rect.left + rect.width / 2, rect.top, '#ffc23d');
+    updateState(() => res.state, 600);
+    addToast(`${subDef.e} ${subDef.n} activated!`);
+  };
+
+  const handleClaimSubDaily = (e: React.MouseEvent<HTMLButtonElement>) => {
+    const nowSrv = Date.now() + serverOffsetMsRef.current;
+    const today = dayKeyFor(nowSrv);
+    const res = claimSubscriptionDaily(stateRef.current, today, nowSrv);
+    if (!res.ok) {
+      if (res.reason) addToast(res.reason);
+      return;
+    }
+    playSfx('coin', !!stateRef.current.set.sfx);
+    triggerBuzz(16, !!stateRef.current.set.vib);
+    const rect = e.currentTarget.getBoundingClientRect();
+    spawnFloat(
+      `+₨ ${formatNumber(res.cashAdded)}${res.gemsAdded > 0 ? ` +${res.gemsAdded}💎` : ''}`,
+      rect.left + rect.width / 2,
+      rect.top,
+      '#3fe0b0',
+    );
+    updateState(() => res.state, 600);
+    addToast(
+      `💵 Subscription stipend: +₨ ${formatNumber(res.cashAdded)}${res.gemsAdded > 0 ? ` + ${res.gemsAdded}💎` : ''}`,
+    );
+  };
+
   const handleBuyBooster = (boosterId: string, e: React.MouseEvent<HTMLButtonElement>) => {
     const b = BOOSTERS.find((x) => x.id === boosterId);
     if (!b) return;
-    const res = applyBuyBooster(stateRef.current, b, Date.now());
+    const res = applyBuyBooster(stateRef.current, b, Date.now() + serverOffsetMsRef.current);
     if (!res.ok) {
       if (res.reason) addToast(res.reason);
       return;
@@ -1452,6 +1534,7 @@ export default function App() {
     }
     return calculateOfflineRank(state);
   }, [uid, lbLoaded, leaderboard, state]);
+  rankPositionRef.current = rankPosition;
 
   const pendingIncomingGifts = useMemo(() => {
     if (!uid) return 0;
@@ -1519,7 +1602,7 @@ export default function App() {
   };
 
   const currentTabMeta = TAB_META[tab];
-  const dayKey = dayKeyFor(Date.now());
+  const dayKey = dayKeyFor(Date.now() + serverOffsetMsRef.current);
 
   if (otherTabLocked || kicked) {
     return (
@@ -1608,6 +1691,7 @@ export default function App() {
             <HeroPanel
               state={state}
               tradeTier={tradeTier}
+              serverOffsetMs={serverOffsetMsRef.current}
               showCity={!isMobile || tab === 'build'}
               burstKey={burstKey}
               onCollectTax={handleCollectTax}
@@ -1625,7 +1709,13 @@ export default function App() {
               </div>
             </div>
 
-            {tab === 'build' && <BuildTab state={state} onBuyBuilding={handleBuyBuilding} />}
+            {tab === 'build' && (
+              <BuildTab
+                state={state}
+                serverOffsetMs={serverOffsetMsRef.current}
+                onBuyBuilding={handleBuyBuilding}
+              />
+            )}
             {tab === 'gov' && (
               <GovtTab
                 state={state}
@@ -1767,8 +1857,12 @@ export default function App() {
               <ShopTab
                 state={state}
                 subTab={shopSubTab}
+                dayKey={dayKey}
+                serverOffsetMs={serverOffsetMsRef.current}
                 onChangeSubTab={setShopSubTab}
                 onBuyRank={handleBuyRank}
+                onBuySubscription={handleBuySubscription}
+                onClaimSubDaily={handleClaimSubDaily}
                 onBuyBooster={handleBuyBooster}
               />
             )}

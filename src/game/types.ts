@@ -10,7 +10,7 @@ export type TabId =
 
 export type PlayersSubTab = 'lb' | 'chat' | 'dm';
 export type GiftsSubTab = 'in' | 'out' | 'hist' | 'find';
-export type ShopSubTab = 'rank' | 'boost';
+export type ShopSubTab = 'rank' | 'sub' | 'boost';
 
 export type CountryTuple = [code: string, name: string, realGdp?: number];
 
@@ -92,6 +92,29 @@ export interface ActiveEffects {
   taxSurge?: number;
 }
 
+export type SubscriptionTierId = 'daily' | 'weekly' | 'monthly';
+
+export interface SubscriptionDef {
+  id: SubscriptionTierId;
+  n: string;
+  e: string;
+  periodLabel: 'Daily' | 'Weekly' | 'Monthly';
+  cost: number;
+  durMs: number;
+  incomeMult: number;
+  discountRate: number;
+  projectSpeedMult: number;
+  dailyCash: number;
+  dailyGems: number;
+  d: string;
+}
+
+export interface SubscriptionState {
+  tier?: SubscriptionTierId;
+  exp?: number;
+  lastClaimDay?: string;
+}
+
 export interface SettingsState {
   sfx: number;
   vib: number;
@@ -136,6 +159,7 @@ export interface GameState {
   gov: string;
   govT: number;
   gx: GovExtensionState;
+  sub?: SubscriptionState;
 }
 
 export interface PlayerStats {

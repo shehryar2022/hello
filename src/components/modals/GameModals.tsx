@@ -84,10 +84,10 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
           {!isMe && uid && (
             <>
               <button type="button" className="btn mint" onClick={() => onGift(profile)}>
-                🎁 Send Gift
+                💱 Send Gift
               </button>
               <button type="button" className="btn" onClick={() => onMessage(profile)}>
-                💬 Private Message
+                📫 Private Message
               </button>
             </>
           )}
@@ -162,7 +162,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         <div className="acts" style={{ marginTop: 14 }}>
           <button type="button" className="btn" onClick={onOpenAuth}>
-            {uid ? '☁️ Account' : '🔑 Sign in / Link Cloud'}
+            {uid ? '☁️ Account' : '🔐 Sign in / Link Cloud'}
           </button>
           {!uid && (
             <button type="button" className="btn red" onClick={onRequestReset}>
@@ -194,8 +194,8 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
   if (!open) return null;
 
   const iconFor = (t: NotificationItem['type']) => {
-    if (t === 'dm') return '💬';
-    if (t === 'new_offer') return '🎁';
+    if (t === 'dm') return '📫';
+    if (t === 'new_offer') return '📥';
     if (t === 'accepted') return '✅';
     if (t === 'rejected') return '❌';
     return '⏳';

@@ -5,19 +5,28 @@ import {
   BUILDINGS,
   RANKS,
   STICKERS,
+  SUBSCRIPTIONS,
   TAB_META,
 } from './constants';
 import {
   applyBuyBooster,
   applyBuyRank,
+  applyBuySubscription,
   applyOfflineEarnings,
   buildingCost,
   calculateGdp,
   calculateIncome,
   calculateTaxCollect,
   canBuyBooster,
+  canBuySubscription,
+  claimSubscriptionDaily,
   freshState,
   fuseSticker,
+  getActiveSubscription,
+  getDevelopmentDiscount,
+  getSubscriptionProjectSpeedMult,
+  gxRepairCost,
+  gxUpgradeCost,
   migrateState,
   sanitizeStats,
   selectDailyQuestIds,
@@ -209,4 +218,70 @@ test('normalizeProject never sets a 1970 deadline when startedAt is null/pending
   assert.equal(pendingProj.pending, true);
   assert.equal(pendingProj.st, fallbackNow);
   assert.ok(pendingProj.dl > fallbackNow);
+});
+
+test('subscriptions (5M daily, 50M weekly, 500M monthly) grant benefits & prevent same-day double-claim on upgrade', () => {
+  const now = 1_750_000_000_000;
+  const daily = SUBSCRIPTIONS.find((s) => s.id === 'daily')!;
+  const weekly = SUBSCRIPTIONS.find((s) => s.id === 'weekly')!;
+  const monthly = SUBSCRIPTIONS.find((s) => s.id === 'monthly')!;
+
+  assert.equal(daily.cost, 5_000_000);
+  assert.equal(weekly.cost, 50_000_000);
+  assert.equal(monthly.cost, 500_000_000);
+
+  let state = freshState();
+  state.cash = 600_000_000;
+  state.b.farm = 10;
+  state.gx.cond.parl = 50;
+
+  const baseInc = calculateIncome(state, { nowMs: now }).net;
+  const farmDef = BUILDINGS.find((b) => b.id === 'farm')!;
+  const baseFarmCost = buildingCost(farmDef, 10);
+  const baseRepair = gxRepairCost(state, 'parl', false, now);
+  const baseUpgrade = gxUpgradeCost(state, 'farm', now);
+
+  // Buy Daily Pass (5M)
+  const sub1 = applyBuySubscription(state, daily, now);
+  assert.equal(sub1.ok, true);
+  state = sub1.state;
+  assert.equal(state.cash, 595_000_000);
+  assert.equal(getDevelopmentDiscount(state, now), 0.1);
+  assert.equal(getSubscriptionProjectSpeedMult(state, now), 1.1);
+  assert.ok(calculateIncome(state, { nowMs: now }).net > baseInc * 1.14);
+  assert.ok(buildingCost(farmDef, 10, getDevelopmentDiscount(state, now)) < baseFarmCost);
+  assert.ok(gxRepairCost(state, 'parl', false, now) < baseRepair);
+  assert.ok(gxUpgradeCost(state, 'farm', now) < baseUpgrade);
+
+  // Cannot re-buy same or lower tier while active
+  assert.equal(canBuySubscription(state, daily, now + 1000).ok, false);
+
+  // Claim daily stipend
+  const c1 = claimSubscriptionDaily(state, '2026-11-25', now + 2000);
+  assert.equal(c1.ok, true);
+  assert.equal(c1.cashAdded, 500_000);
+  state = c1.state;
+
+  // Cannot claim twice on same day
+  assert.equal(claimSubscriptionDaily(state, '2026-11-25', now + 3000).ok, false);
+
+  // Upgrade to Weekly Charter (50M) on same day -> preserves lastClaimDay so cannot double-claim
+  const sub2 = applyBuySubscription(state, weekly, now + 4000);
+  assert.equal(sub2.ok, true);
+  state = sub2.state;
+  assert.equal(getActiveSubscription(state, now + 5000)?.def.id, 'weekly');
+  assert.equal(claimSubscriptionDaily(state, '2026-11-25', now + 5000).ok, false);
+
+  // Next day claim works with Weekly stipend (2M + 1 gem)
+  const c2 = claimSubscriptionDaily(state, '2026-11-26', now + 86_400_000);
+  assert.equal(c2.ok, true);
+  assert.equal(c2.cashAdded, 2_000_000);
+  assert.equal(c2.gemsAdded, 1);
+
+  // Migration clamps absurd future subscription expiry
+  const migrated = migrateState({
+    ...c2.state,
+    sub: { tier: 'monthly', exp: Date.now() + 999 * 86_400_000, lastClaimDay: '2026-11-26' },
+  });
+  assert.ok((migrated.sub?.exp || 0) <= Date.now() + 31 * 86_400_000 + 1000);
 });

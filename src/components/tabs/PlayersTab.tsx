@@ -101,13 +101,13 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
     <div>
       <div className="subtabs">
         <button type="button" className={subTab === 'lb' ? 'on' : ''} onClick={() => onChangeSubTab('lb')}>
-          🏆 Active
+          💲 Active
         </button>
         <button type="button" className={subTab === 'chat' ? 'on' : ''} onClick={() => onChangeSubTab('chat')}>
-          🌍 Chat
+          📢 Chat
         </button>
         <button type="button" className={subTab === 'dm' ? 'on' : ''} onClick={() => onChangeSubTab('dm')}>
-          💌 Private
+          📫 Private
         </button>
       </div>
 
@@ -157,7 +157,7 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
                           aria-label={`View ${p.username} profile`}
                           onClick={() => onOpenProfile(p.id)}
                         >
-                          👤
+                          🪪
                         </button>
                         {!me && (
                           <>
@@ -169,7 +169,7 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
                               aria-label={`Gift ${p.username}`}
                               onClick={() => onStartGift(p.id)}
                             >
-                              🎁
+                              💱
                             </button>
                             <button
                               type="button"
@@ -179,7 +179,7 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
                               aria-label={`Message ${p.username}`}
                               onClick={() => onOpenDm(p.id, p.username, p.countryCode)}
                             >
-                              💬
+                              📫
                             </button>
                           </>
                         )}
@@ -273,7 +273,7 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
             </div>
           ) : (
             <div className="empty">
-              <div className="big">💌</div>
+              <div className="big">📪</div>
               <p className="dim">No private chats yet.</p>
             </div>
           )}

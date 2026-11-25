@@ -112,7 +112,10 @@ service cloud.firestore {
       return data.keys().hasAll(['save'])
         && data.keys().hasOnly(['save'])
         && data.save is map
-        && data.save.size() <= 60;
+        && data.save.size() <= 60
+        && (!('cash' in data.save) || (data.save.cash is number && data.save.cash >= 0 && data.save.cash <= 10000000000000))
+        && (!('gems' in data.save) || (data.save.gems is number && data.save.gems >= 0 && data.save.gems <= 1000000000))
+        && (!('sub' in data.save) || data.save.sub is map);
     }
 
     function isValidNotification(data) {
@@ -120,6 +123,7 @@ service cloud.firestore {
         && data.keys().hasOnly(['type', 'text', 'tradeId', 'read', 'from', 'fromName', 'fromCc', 'createdAt'])
         && data.type in ['dm', 'new_offer', 'accepted', 'rejected', 'cancelled', 'expired']
         && data.text is string && data.text.size() >= 1 && data.text.size() <= 200
+        && data.text.matches('(?s).*\\S.*')
         && data.read is bool
         && isValidId(data.from)
         && data.createdAt is timestamp
@@ -172,7 +176,7 @@ service cloud.firestore {
         && data.refunded is bool
         && data.createdAt is timestamp
         && data.expiresAt is timestamp
-        && (!('resolvedAt' in data) || data.resolvedAt is timestamp);
+        && (!('resolvedAt' in data) || data.resolvedAt == null || data.resolvedAt is timestamp);
     }
 
     function isValidDailyLimit(data) {
@@ -190,6 +194,7 @@ service cloud.firestore {
         && data.cc is string && data.cc.size() <= 3
         && data.rank is int && data.rank >= 0 && data.rank <= 6
         && data.text is string && data.text.size() >= 1 && data.text.size() <= 200
+        && data.text.matches('(?s).*\\S.*')
         && data.createdAt is timestamp;
     }
 
@@ -198,6 +203,7 @@ service cloud.firestore {
         && data.keys().hasOnly(['from', 'text', 'createdAt'])
         && isValidId(data.from)
         && data.text is string && data.text.size() >= 1 && data.text.size() <= 300
+        && data.text.matches('(?s).*\\S.*')
         && data.createdAt is timestamp;
     }
 
@@ -318,7 +324,7 @@ service cloud.firestore {
             (existing().status == 'active' && affectedOnly(['progressMs', 'lastTickAt']) && incoming().progressMs >= existing().progressMs && incoming().lastTickAt == request.time) ||
             (existing().status == 'active' && affectedOnly(['paid']) && incoming().paid == existing().paid + 1 && incoming().paid <= 3) ||
             (existing().status == 'active' && affectedOnly(['status', 'resolvedAt']) && incoming().status in ['done', 'failed'] && incoming().resolvedAt == request.time) ||
-            (existing().status == 'active' && affectedOnly(['progressMs', 'lastTickAt', 'status', 'resolvedAt']) && incoming().progressMs >= existing().progressMs && incoming().status == 'done' && incoming().lastTickAt == request.time && incoming().resolvedAt == request.time) ||
+            (existing().status == 'active' && affectedOnly(['progressMs', 'lastTickAt', 'status', 'resolvedAt']) && incoming().progressMs >= existing().progressMs && incoming().status in ['done', 'failed'] && incoming().lastTickAt == request.time && incoming().resolvedAt == request.time) ||
             (existing().status in ['done', 'failed'] && existing().claimed == false && affectedOnly(['claimed']) && incoming().claimed == true)
           );
         allow delete: if false;

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   BUILDINGS,
   GOV_DAY_SEC,
@@ -10,6 +10,8 @@ import {
 } from '../../game/constants';
 import {
   formatNumber,
+  getDevelopmentDiscount,
+  getSubscriptionProjectSpeedMult,
   gxAverageCondition,
   gxRepairCost,
   gxUpgradeCost,
@@ -64,12 +66,58 @@ export const GovtTab: React.FC<GovtTabProps> = ({
   const builtBuildings = BUILDINGS.filter((d) => (state.b[d.id] || 0) > 0);
   const nowSrv = Date.now() + serverOffsetMs;
   const activeCount = projects.filter((p) => p.status === 'active').length;
+  const disc = getDevelopmentDiscount(state, nowSrv);
+  const projSpeed = getSubscriptionProjectSpeedMult(state, nowSrv);
+
+  const dismissStorageKey = `cet_cleared_proj_${uid || 'offline'}`;
+  const [hiddenPastIds, setHiddenPastIds] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(dismissStorageKey);
+      return raw ? (JSON.parse(raw) as string[]) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(dismissStorageKey);
+      setHiddenPastIds(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch {
+      setHiddenPastIds([]);
+    }
+  }, [dismissStorageKey]);
+
+  const pastProjects = projects.filter(
+    (p) => p.status !== 'active' && !hiddenPastIds.includes(p.id),
+  );
+
+  const handleClearPast = () => {
+    const nextIds = Array.from(
+      new Set([...hiddenPastIds, ...projects.filter((p) => p.status !== 'active').map((p) => p.id)]),
+    );
+    setHiddenPastIds(nextIds);
+    try {
+      localStorage.setItem(dismissStorageKey, JSON.stringify(nextIds.slice(-80)));
+    } catch {
+      // Ignore storage quota errors
+    }
+  };
 
   return (
     <div>
+      {(disc > 0 || projSpeed > 1) && (
+        <div className="tradelim">
+          <span>💳 Subscription Perks Active</span>
+          <b className="ok">
+            −{Math.round(disc * 100)}% repair/upgrade · ×{projSpeed.toFixed(2)} project speed
+          </b>
+        </div>
+      )}
+
       <div className="gxc">
         <p>
-          <b>🧾 Daily Government Expenses</b>{' '}
+          <b>💸 Daily Government Expenses</b>{' '}
           <span className="dim">
             · next in <b>{Math.max(0, GOV_DAY_SEC - Math.floor(gx.acc))}s</b> of active play
           </span>
@@ -99,8 +147,8 @@ export const GovtTab: React.FC<GovtTabProps> = ({
         {GX_GOV_BUILDINGS.map(([key, name, emoji]) => {
           const cond = gx.cond[key] ?? 100;
           const col = conditionColor(cond);
-          const c20 = gxRepairCost(state, key, false);
-          const cFull = gxRepairCost(state, key, true);
+          const c20 = gxRepairCost(state, key, false, nowSrv);
+          const cFull = gxRepairCost(state, key, true, nowSrv);
           const needsFix = cond < 99.5;
           return (
             <div key={key} className="row" style={{ '--c': col } as React.CSSProperties}>
@@ -143,8 +191,8 @@ export const GovtTab: React.FC<GovtTabProps> = ({
         {GX_ROADS.map(([key, name, emoji]) => {
           const cond = gx.cond[key] ?? 100;
           const col = conditionColor(cond);
-          const c20 = gxRepairCost(state, key, false);
-          const cFull = gxRepairCost(state, key, true);
+          const c20 = gxRepairCost(state, key, false, nowSrv);
+          const cFull = gxRepairCost(state, key, true, nowSrv);
           const needsFix = cond < 99.5;
           return (
             <div key={key} className="row" style={{ '--c': col } as React.CSSProperties}>
@@ -187,7 +235,7 @@ export const GovtTab: React.FC<GovtTabProps> = ({
         <div className="list g2">
           {builtBuildings.map((d) => {
             const lvl = gx.lvl[d.id] || 1;
-            const upCost = gxUpgradeCost(state, d.id);
+            const upCost = gxUpgradeCost(state, d.id, nowSrv);
             return (
               <div key={d.id} className="row" style={{ '--c': d.c } as React.CSSProperties}>
                 <div className="em">{d.e}</div>
@@ -226,12 +274,11 @@ export const GovtTab: React.FC<GovtTabProps> = ({
 
       <div className="gxh">🏗️ Government Projects</div>
       <p className="dim" style={{ marginBottom: 10 }}>
-        Pay in {PROJECT_STAGES} stages. Construction advances while you are online &amp; active; the real-world deadline
-        keeps ticking. Max 3 active.
+        Pay in {PROJECT_STAGES} stages. Construction advances while you are online &amp; active (24h–96h deadlines; 75% refund if missed). Max 3 active.
       </p>
 
       {!uid ? (
-        <p className="dim">🔒 Sign in to start government projects.</p>
+        <p className="dim">🔐 Sign in to start government projects.</p>
       ) : (
         <>
           {projects
@@ -277,7 +324,7 @@ export const GovtTab: React.FC<GovtTabProps> = ({
                       disabled={state.cash < stageCost}
                       onClick={() => onPayProjectStage(p.id)}
                     >
-                      Invest stage {p.paid + 1} · ₨ {formatNumber(stageCost)}
+                      💳 Invest stage {p.paid + 1} · ₨ {formatNumber(stageCost)}
                     </button>
                   )}
                 </div>
@@ -315,14 +362,18 @@ export const GovtTab: React.FC<GovtTabProps> = ({
             })}
           </div>
 
-          {projects.some((p) => p.status !== 'active') && (
+          {pastProjects.length > 0 && (
             <details style={{ marginTop: 10 }}>
               <summary className="dim" style={{ cursor: 'pointer', fontSize: 13 }}>
-                📋 Past projects ({projects.filter((p) => p.status !== 'active').length})
+                📌 Past projects ({pastProjects.length})
               </summary>
               <div style={{ marginTop: 8 }}>
-                {projects
-                  .filter((p) => p.status !== 'active')
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+                  <button type="button" className="btn sm" onClick={handleClearPast}>
+                    Clear past
+                  </button>
+                </div>
+                {pastProjects
                   .slice()
                   .sort((a, b) => b.st - a.st)
                   .slice(0, 8)
@@ -352,7 +403,7 @@ export const GovtTab: React.FC<GovtTabProps> = ({
 
       {gx.log.length > 0 && (
         <>
-          <div className="gxh">📣 Recent notices</div>
+          <div className="gxh">📢 Recent notices</div>
           <div className="gxc">
             {gx.log.map((m, idx) => (
               <p key={idx} className="dim">

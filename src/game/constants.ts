@@ -7,6 +7,7 @@ import type {
   ProjectTypeDef,
   RankDef,
   StickerDef,
+  SubscriptionDef,
 } from './types';
 
 export const SAVE_KEY = 'cet_save_v1';
@@ -130,6 +131,51 @@ export const BOOSTERS: BoosterDef[] = [
   },
 ];
 
+export const SUBSCRIPTIONS: SubscriptionDef[] = [
+  {
+    id: 'daily',
+    n: 'Daily Pass',
+    e: '📅',
+    periodLabel: 'Daily',
+    cost: 5_000_000,
+    durMs: 86_400_000,
+    incomeMult: 1.15,
+    discountRate: 0.1,
+    projectSpeedMult: 1.1,
+    dailyCash: 500_000,
+    dailyGems: 0,
+    d: '+15% income, 10% build/upgrade discount, +10% project speed, ₨ 500K/day',
+  },
+  {
+    id: 'weekly',
+    n: 'Weekly Charter',
+    e: '📆',
+    periodLabel: 'Weekly',
+    cost: 50_000_000,
+    durMs: 7 * 86_400_000,
+    incomeMult: 1.3,
+    discountRate: 0.2,
+    projectSpeedMult: 1.2,
+    dailyCash: 2_000_000,
+    dailyGems: 1,
+    d: '+30% income, 20% build/upgrade discount, +20% project speed, ₨ 2M + 1💎/day',
+  },
+  {
+    id: 'monthly',
+    n: 'Monthly Sovereignty',
+    e: '💳',
+    periodLabel: 'Monthly',
+    cost: 500_000_000,
+    durMs: 30 * 86_400_000,
+    incomeMult: 1.5,
+    discountRate: 0.35,
+    projectSpeedMult: 1.35,
+    dailyCash: 10_000_000,
+    dailyGems: 5,
+    d: '+50% income, 35% build/upgrade discount, +35% project speed, ₨ 10M + 5💎/day',
+  },
+];
+
 export const COUNTRIES: CountryTuple[] = [
   ['PK', 'Pakistan', 350], ['US', 'United States', 32642], ['GB', 'United Kingdom', 4270],
   ['CA', 'Canada', 2300], ['IN', 'India', 4060], ['BD', 'Bangladesh', 370],
@@ -229,10 +275,10 @@ export const GX_LEVEL_MULTS = [1, 1.3, 1.7, 2.2, 3];
 export const GX_UPGRADE_MULTS = [1, 2, 4, 8];
 
 export const GX_PROJECT_TYPES: Record<ProjectType, ProjectTypeDef> = {
-  school: { n: 'School Complex', e: '🏫', cost: 12000, dur: 600000, dl: 120, pb: 0.01, ph: 1 },
-  hospital: { n: 'General Hospital', e: '🏥', cost: 60000, dur: 1200000, dl: 360, pb: 0.02, ph: 2 },
-  bridge: { n: 'River Bridge', e: '🌉', cost: 250000, dur: 2400000, dl: 720, pb: 0.03, ph: 1 },
-  highway: { n: 'National Highway', e: '🛣️', cost: 1000000, dur: 4500000, dl: 1440, pb: 0.05, ph: 1.5 },
+  school: { n: 'School Complex', e: '🏫', cost: 12000, dur: 300000, dl: 1440, pb: 0.01, ph: 1 },
+  hospital: { n: 'General Hospital', e: '🏥', cost: 60000, dur: 600000, dl: 2880, pb: 0.02, ph: 2 },
+  bridge: { n: 'River Bridge', e: '🌉', cost: 250000, dur: 1200000, dl: 4320, pb: 0.03, ph: 1 },
+  highway: { n: 'National Highway', e: '🛣️', cost: 1000000, dur: 2400000, dl: 5760, pb: 0.05, ph: 1.5 },
 };
 
 export const TAB_META: Record<
@@ -241,10 +287,10 @@ export const TAB_META: Record<
 > = {
   build: { emoji: '🏗️', label: 'Build', subtitle: 'Grow your economy' },
   gov: { emoji: '🏛️', label: 'Govt', subtitle: 'Infrastructure, upgrades & projects' },
-  policy: { emoji: '📜', label: 'Policy', subtitle: 'Taxes, welfare and government' },
-  rivals: { emoji: '🏆', label: 'Players', subtitle: 'Live GDP rankings & chat' },
-  stickers: { emoji: '🃏', label: 'Stickers', subtitle: 'Collect, fuse and gift' },
-  trade: { emoji: '🎁', label: 'Gifts', subtitle: 'Send and receive gifts' },
-  quest: { emoji: '🎯', label: 'Quests', subtitle: "Today's objectives" },
-  shop: { emoji: '🏪', label: 'Shop', subtitle: 'Ranks and limited boosters' },
+  policy: { emoji: '📌', label: 'Policy', subtitle: 'Taxes, welfare and government' },
+  rivals: { emoji: '📢', label: 'Players', subtitle: 'Live GDP rankings & chat' },
+  stickers: { emoji: '🪪', label: 'Stickers', subtitle: 'Collect, fuse and gift' },
+  trade: { emoji: '💱', label: 'Gifts', subtitle: 'Send and receive gifts' },
+  quest: { emoji: '📅', label: 'Quests', subtitle: "Today's objectives" },
+  shop: { emoji: '💳', label: 'Shop', subtitle: 'Ranks, subscriptions & boosters' },
 };

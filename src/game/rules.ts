@@ -15,6 +15,7 @@ import {
   RANKS,
   REAL_GDP_SCALED,
   STICKERS,
+  SUBSCRIPTIONS,
   WORLD_EVENTS,
 } from './constants';
 import type {
@@ -25,6 +26,7 @@ import type {
   PlayerStats,
   QuestDef,
   StickerDef,
+  SubscriptionDef,
 } from './types';
 
 export function formatNumber(n: number): string {
@@ -113,6 +115,7 @@ export function freshState(): GameState {
       log: [],
       exp: null,
     },
+    sub: {},
   };
 }
 
@@ -241,6 +244,22 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
     exp: gx.exp && typeof gx.exp === 'object' ? gx.exp : null,
   };
 
+  // Subscription migration & sanitization
+  const rawSub = s.sub && typeof s.sub === 'object' ? s.sub : {};
+  const subDef = SUBSCRIPTIONS.find((x) => x.id === rawSub.tier);
+  const subExp = Number(rawSub.exp);
+  if (subDef && Number.isFinite(subExp) && subExp > 0) {
+    // Clamp absurd future expiry (max 31 days ahead)
+    const clampedExp = Math.min(subExp, Date.now() + 31 * 86_400_000);
+    s.sub = {
+      tier: subDef.id,
+      exp: clampedExp,
+      lastClaimDay: typeof rawSub.lastClaimDay === 'string' ? rawSub.lastClaimDay.slice(0, 16) : '',
+    };
+  } else {
+    s.sub = {};
+  }
+
   return s;
 }
 
@@ -257,8 +276,10 @@ export function totalBuildings(s: GameState): number {
   return Object.values(s.b || {}).reduce((acc, v) => acc + (Number(v) || 0), 0);
 }
 
-export function buildingCost(def: BuildingDef, level: number): number {
-  return Math.ceil(def.cost * Math.pow(1.25, Math.max(0, level)));
+export function buildingCost(def: BuildingDef, level: number, discountRate = 0): number {
+  const raw = def.cost * Math.pow(1.25, Math.max(0, level));
+  const clampedDisc = Math.max(0, Math.min(0.5, discountRate));
+  return Math.max(1, Math.ceil(raw * (1 - clampedDisc)));
 }
 
 export function gxLevelMult(s: GameState, id: string): number {
@@ -342,6 +363,29 @@ export function taxInfo(s: GameState) {
   return { mult: raw * (1 - ev), raw, burden, ev };
 }
 
+export function getActiveSubscription(s: GameState, nowMs = Date.now()) {
+  const sub = s.sub;
+  if (!sub?.tier || !sub.exp || sub.exp <= nowMs) return null;
+  const def = SUBSCRIPTIONS.find((x) => x.id === sub.tier);
+  if (!def) return null;
+  return {
+    def,
+    exp: sub.exp,
+    leftMs: Math.max(0, sub.exp - nowMs),
+    lastClaimDay: sub.lastClaimDay || '',
+  };
+}
+
+export function getDevelopmentDiscount(s: GameState, nowMs = Date.now()): number {
+  const active = getActiveSubscription(s, nowMs);
+  return active ? active.def.discountRate : 0;
+}
+
+export function getSubscriptionProjectSpeedMult(s: GameState, nowMs = Date.now()): number {
+  const active = getActiveSubscription(s, nowMs);
+  return active ? active.def.projectSpeedMult : 1;
+}
+
 export function getActiveShopIncomeBooster(s: GameState, nowMs = Date.now()) {
   const fx = s.activeFx || {};
   if (fx.incomeBoostEnd && fx.incomeBoostEnd > nowMs && fx.incomeBoostMult && fx.incomeBoostMult > 1) {
@@ -371,13 +415,14 @@ export function calculateIncome(
   const worldEv = currentWorldEvent(nowMs);
   const evMult = worldEv ? worldEv.ev.m : 1;
   const gov = getGovDefinition(s);
+  const subMult = getActiveSubscription(s, nowMs)?.def.incomeMult ?? 1;
 
   const shopBoost = ignoreTemp ? 1 : getActiveShopIncomeBooster(s, nowMs).mult;
   const gemBoost = ignoreTemp ? 1 : s.boost > 0 ? 2 : 1;
   // Cap combined temporary shop + gem boost multiplier to 2.5x so cash stays balanced
   const tempMult = Math.min(2.5, shopBoost * gemBoost);
 
-  const permMult = gxMultiplier(s) * evMult * gov.inc;
+  const permMult = gxMultiplier(s) * evMult * gov.inc * subMult;
   const taxMult = taxInfo(s).mult;
 
   const mult =
@@ -594,24 +639,100 @@ export function applyOfflineEarnings(
   };
 }
 
+export function canBuySubscription(
+  s: GameState,
+  subDef: SubscriptionDef,
+  nowMs = Date.now(),
+): { ok: boolean; reason?: string } {
+  const active = getActiveSubscription(s, nowMs);
+  if (active) {
+    const curIdx = SUBSCRIPTIONS.findIndex((x) => x.id === active.def.id);
+    const nextIdx = SUBSCRIPTIONS.findIndex((x) => x.id === subDef.id);
+    if (nextIdx <= curIdx) {
+      return {
+        ok: false,
+        reason: `${active.def.n} is already active`,
+      };
+    }
+  }
+  if (s.cash < subDef.cost) {
+    return { ok: false, reason: 'Not enough cash' };
+  }
+  return { ok: true };
+}
+
+export function applyBuySubscription(
+  s: GameState,
+  subDef: SubscriptionDef,
+  nowMs = Date.now(),
+): { ok: boolean; state: GameState; reason?: string } {
+  const check = canBuySubscription(s, subDef, nowMs);
+  if (!check.ok) return { ok: false, state: s, reason: check.reason };
+  return {
+    ok: true,
+    state: {
+      ...s,
+      cash: s.cash - subDef.cost,
+      sub: {
+        tier: subDef.id,
+        exp: nowMs + subDef.durMs,
+        // Preserve lastClaimDay so upgrading tiers cannot double-claim on the same day
+        lastClaimDay: s.sub?.lastClaimDay || '',
+      },
+    },
+  };
+}
+
+export function claimSubscriptionDaily(
+  s: GameState,
+  dayKey: string,
+  nowMs = Date.now(),
+): { ok: boolean; state: GameState; cashAdded: number; gemsAdded: number; reason?: string } {
+  const active = getActiveSubscription(s, nowMs);
+  if (!active) {
+    return { ok: false, state: s, cashAdded: 0, gemsAdded: 0, reason: 'No active subscription' };
+  }
+  if (active.lastClaimDay === dayKey) {
+    return { ok: false, state: s, cashAdded: 0, gemsAdded: 0, reason: 'Already claimed today' };
+  }
+  return {
+    ok: true,
+    cashAdded: active.def.dailyCash,
+    gemsAdded: active.def.dailyGems,
+    state: {
+      ...s,
+      cash: s.cash + active.def.dailyCash,
+      gems: s.gems + active.def.dailyGems,
+      sub: {
+        ...s.sub,
+        tier: active.def.id,
+        exp: active.exp,
+        lastClaimDay: dayKey,
+      },
+    },
+  };
+}
+
 export function gxRepairUnit(s: GameState): number {
   return Math.max(25, calculateIncome(s).gross * 5);
 }
 
-export function gxRepairCost(s: GameState, key: string, full: boolean): number {
+export function gxRepairCost(s: GameState, key: string, full: boolean, nowMs = Date.now()): number {
   const item = [...GX_GOV_BUILDINGS, ...GX_ROADS].find((x) => x[0] === key);
   if (!item) return 0;
   const c = s.gx.cond[key] ?? 100;
   const add = full ? 100 - c : Math.min(20, 100 - c);
-  return Math.ceil(add * gxRepairUnit(s) * item[3] * (full ? 1.25 : 1));
+  const disc = getDevelopmentDiscount(s, nowMs);
+  return Math.max(add > 0 ? 1 : 0, Math.ceil(add * gxRepairUnit(s) * item[3] * (full ? 1.25 : 1) * (1 - disc)));
 }
 
-export function gxUpgradeCost(s: GameState, buildingId: string): number {
+export function gxUpgradeCost(s: GameState, buildingId: string, nowMs = Date.now()): number {
   const def = BUILDINGS.find((b) => b.id === buildingId);
   const count = s.b[buildingId] || 0;
   const lvl = s.gx.lvl[buildingId] || 1;
   if (!def || count < 1 || lvl >= 5) return 0;
-  return Math.ceil(def.cost * count * GX_UPGRADE_MULTS[lvl - 1]);
+  const disc = getDevelopmentDiscount(s, nowMs);
+  return Math.max(1, Math.ceil(def.cost * count * GX_UPGRADE_MULTS[lvl - 1] * (1 - disc)));
 }
 
 export function fuseSticker(

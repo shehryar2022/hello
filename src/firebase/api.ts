@@ -249,6 +249,7 @@ export async function syncSaveToCloud(params: {
         lastSeen: serverTimestamp(),
         stats: mergedStats,
       });
+      tx.set(doc(db, 'saves', uid), { save: cleanSavePayload(state) });
       result = {
         accepted: true,
         wallet: { cash, gems, stk, rev: nextRev },
@@ -268,7 +269,6 @@ export async function syncSaveToCloud(params: {
         },
       };
     }
-    tx.set(doc(db, 'saves', uid), { save: cleanSavePayload(state) });
   });
 
   return result;
@@ -291,6 +291,9 @@ export async function createGiftOffer(params: {
   const offerStk = cleanStickersMap(params.offerStk);
   const stkTotal = Object.values(offerStk).reduce((a, b) => a + b, 0);
 
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(params.toUid)) {
+    throw makeError('invalid', 'Invalid recipient');
+  }
   if (params.toUid === uid) throw makeError('invalid', "You can't send to yourself");
   if (oc + og + stkTotal <= 0) throw makeError('invalid', 'Add something to send first');
 
