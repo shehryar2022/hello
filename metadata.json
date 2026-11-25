@@ -1,0 +1,6 @@
+{
+  "name": "Country Economy Tycoon",
+  "description": "Build your nation's economy, manage policies and government projects, collect stickers, and compete on the live GDP leaderboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

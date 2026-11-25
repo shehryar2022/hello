@@ -1,0 +1,208 @@
+{
+  "entities": {
+    "UsernameReservation": {
+      "title": "UsernameReservation",
+      "description": "Maps lowercase unique username to owning player UID.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "required": ["uid"]
+    },
+    "PlayerProfile": {
+      "title": "PlayerProfile",
+      "description": "Public player profile and live GDP leaderboard entry.",
+      "type": "object",
+      "properties": {
+        "username": { "type": "string", "minLength": 3, "maxLength": 16, "pattern": "^[A-Za-z0-9_]{3,16}$" },
+        "usernameLower": { "type": "string", "minLength": 3, "maxLength": 16, "pattern": "^[a-z0-9_]{3,16}$" },
+        "countryCode": { "type": "string", "minLength": 2, "maxLength": 3, "pattern": "^[A-Za-z]{2,3}$" },
+        "countryName": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "gdp": { "type": "number" },
+        "cash": { "type": "number" },
+        "gems": { "type": "number" },
+        "level": { "type": "integer" },
+        "rank": { "type": "integer" },
+        "lastSeen": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "stats": { "type": "object" }
+      },
+      "required": ["username", "usernameLower", "countryCode", "countryName", "gdp", "cash", "gems", "level", "rank", "lastSeen", "stats", "createdAt"]
+    },
+    "PlayerWallet": {
+      "title": "PlayerWallet",
+      "description": "Private authoritative wallet holding cash, gems, stickers, and optimistic revision.",
+      "type": "object",
+      "properties": {
+        "cash": { "type": "number" },
+        "gems": { "type": "integer" },
+        "stk": { "type": "object" },
+        "rev": { "type": "integer" },
+        "sid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "t": { "type": "string", "format": "date-time" },
+        "tradeId": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["cash", "gems", "stk", "rev", "sid", "t"]
+    },
+    "PlayerSession": {
+      "title": "PlayerSession",
+      "description": "Single-active-session lock token for a player.",
+      "type": "object",
+      "properties": {
+        "sid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "t": { "type": "string", "format": "date-time" }
+      },
+      "required": ["sid", "t"]
+    },
+    "PlayerSave": {
+      "title": "PlayerSave",
+      "description": "Owner-only full game save snapshot.",
+      "type": "object",
+      "properties": {
+        "save": { "type": "object" }
+      },
+      "required": ["save"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Real-time notification delivered to a player for gifts and DMs.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["dm", "new_offer", "accepted", "rejected", "cancelled", "expired"] },
+        "text": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "tradeId": { "type": "string", "maxLength": 128 },
+        "read": { "type": "boolean" },
+        "from": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "fromName": { "type": "string", "maxLength": 16 },
+        "fromCc": { "type": "string", "maxLength": 3 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["type", "text", "read", "from", "createdAt"]
+    },
+    "GovProject": {
+      "title": "GovProject",
+      "description": "Online-only timed government infrastructure construction project.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "type": { "type": "string", "enum": ["school", "hospital", "bridge", "highway"] },
+        "paid": { "type": "integer" },
+        "progressMs": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "done", "failed"] },
+        "claimed": { "type": "boolean" },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "lastTickAt": { "type": "string", "format": "date-time" },
+        "resolvedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "type", "paid", "progressMs", "status", "claimed", "startedAt", "lastTickAt"]
+    },
+    "TradeOffer": {
+      "title": "TradeOffer",
+      "description": "Player-to-player gift offer with 2-minute expiration.",
+      "type": "object",
+      "properties": {
+        "from": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "to": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "fromName": { "type": "string", "minLength": 1, "maxLength": 16 },
+        "toName": { "type": "string", "minLength": 1, "maxLength": 16 },
+        "fromCountry": { "type": "string", "maxLength": 3 },
+        "toCountry": { "type": "string", "maxLength": 3 },
+        "participants": { "type": "array" },
+        "offerCash": { "type": "number" },
+        "offerGems": { "type": "integer" },
+        "offerStk": { "type": "object" },
+        "reqCash": { "type": "number" },
+        "reqGems": { "type": "integer" },
+        "reqStk": { "type": "object" },
+        "message": { "type": "string", "maxLength": 140 },
+        "status": { "type": "string", "enum": ["pending", "accepted", "rejected", "cancelled", "expired"] },
+        "refunded": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "resolvedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["from", "to", "fromName", "toName", "fromCountry", "toCountry", "participants", "offerCash", "offerGems", "offerStk", "reqCash", "reqGems", "reqStk", "message", "status", "refunded", "createdAt", "expiresAt"]
+    },
+    "DailyLimit": {
+      "title": "DailyLimit",
+      "description": "Per-user daily gift limit tracker.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "count": { "type": "integer" }
+      },
+      "required": ["uid", "count"]
+    },
+    "GlobalChatMessage": {
+      "title": "GlobalChatMessage",
+      "description": "Public global chat message.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 16 },
+        "cc": { "type": "string", "maxLength": 3 },
+        "rank": { "type": "integer" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "name", "cc", "rank", "text", "createdAt"]
+    },
+    "DirectMessage": {
+      "title": "DirectMessage",
+      "description": "Private 1-on-1 message between two players.",
+      "type": "object",
+      "properties": {
+        "from": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "text": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["from", "text", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/usernames/{usernameLower}": {
+      "schema": { "$ref": "#/entities/UsernameReservation" },
+      "description": "Unique username lookup and reservation."
+    },
+    "/players/{uid}": {
+      "schema": { "$ref": "#/entities/PlayerProfile" },
+      "description": "Public player profile and leaderboard data."
+    },
+    "/players/{uid}/private/wallet": {
+      "schema": { "$ref": "#/entities/PlayerWallet" },
+      "description": "Private player wallet (owner-only)."
+    },
+    "/players/{uid}/private/session": {
+      "schema": { "$ref": "#/entities/PlayerSession" },
+      "description": "Single active session lock (owner-only)."
+    },
+    "/players/{uid}/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/Notification" },
+      "description": "Player inbox notifications."
+    },
+    "/players/{uid}/projects/{projectId}": {
+      "schema": { "$ref": "#/entities/GovProject" },
+      "description": "Player government construction projects."
+    },
+    "/saves/{uid}": {
+      "schema": { "$ref": "#/entities/PlayerSave" },
+      "description": "Owner-only full game state save."
+    },
+    "/trades/{tradeId}": {
+      "schema": { "$ref": "#/entities/TradeOffer" },
+      "description": "Player-to-player gift offers."
+    },
+    "/dailyLimits/{limitId}": {
+      "schema": { "$ref": "#/entities/DailyLimit" },
+      "description": "Daily gift limit counter per user per day."
+    },
+    "/globalChat/{messageId}": {
+      "schema": { "$ref": "#/entities/GlobalChatMessage" },
+      "description": "Global chat feed."
+    },
+    "/dms/{pairId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/DirectMessage" },
+      "description": "Direct messages between two players."
+    }
+  }
+}

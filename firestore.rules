@@ -1,0 +1,414 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ==================== PRIMITIVES ====================
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function affectedOnly(fields) {
+      return incoming().diff(existing()).affectedKeys().hasOnly(fields);
+    }
+
+    function isDmMember(pairId) {
+      return isSignedIn()
+        && pairId is string
+        && pairId.size() >= 3
+        && pairId.size() <= 260
+        && (
+          pairId.matches('^' + request.auth.uid + '_[A-Za-z0-9\\-]+$')
+          || pairId.matches('^[A-Za-z0-9\\-]+_' + request.auth.uid + '$')
+        );
+    }
+
+    // ==================== VALIDATION BLUEPRINTS ====================
+    function isValidUsernameDoc(data) {
+      return data.keys().hasAll(['uid'])
+        && data.keys().hasOnly(['uid'])
+        && isValidId(data.uid);
+    }
+
+    function isValidPlayerStats(stats) {
+      return stats is map
+        && stats.keys().hasAll(['buildings', 'completedTrades', 'tradesSent', 'tradesReceived', 'cashTraded', 'gemsTraded'])
+        && stats.keys().hasOnly(['buildings', 'completedTrades', 'tradesSent', 'tradesReceived', 'cashTraded', 'gemsTraded'])
+        && stats.buildings is number && stats.buildings >= 0 && stats.buildings <= 1000000
+        && stats.completedTrades is number && stats.completedTrades >= 0 && stats.completedTrades <= 1000000
+        && stats.tradesSent is number && stats.tradesSent >= 0 && stats.tradesSent <= 1000000
+        && stats.tradesReceived is number && stats.tradesReceived >= 0 && stats.tradesReceived <= 1000000
+        && stats.cashTraded is number && stats.cashTraded >= 0 && stats.cashTraded <= 100000000000000
+        && stats.gemsTraded is number && stats.gemsTraded >= 0 && stats.gemsTraded <= 1000000000000;
+    }
+
+    function isValidPlayerProfile(data) {
+      return data.keys().hasAll([
+          'username', 'usernameLower', 'countryCode', 'countryName',
+          'gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'username', 'usernameLower', 'countryCode', 'countryName',
+          'gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'createdAt'
+        ])
+        && data.username is string && data.username.size() >= 3 && data.username.size() <= 16
+        && data.username.matches('^[A-Za-z0-9_]{3,16}$')
+        && data.usernameLower is string && data.usernameLower.size() >= 3 && data.usernameLower.size() <= 16
+        && data.usernameLower.matches('^[a-z0-9_]{3,16}$')
+        && data.username.lower() == data.usernameLower
+        && data.countryCode is string && data.countryCode.size() >= 2 && data.countryCode.size() <= 3
+        && data.countryCode.matches('^[A-Za-z]{2,3}$')
+        && data.countryName is string && data.countryName.size() >= 1 && data.countryName.size() <= 64
+        && data.gdp is number && data.gdp >= 0 && data.gdp <= 10000000000000
+        && data.cash is number && data.cash >= 0 && data.cash <= 10000000000000
+        && data.gems is number && data.gems >= 0 && data.gems <= 1000000000
+        && data.level is int && data.level >= 1 && data.level <= 10000000
+        && data.rank is int && data.rank >= 0 && data.rank <= 6
+        && data.lastSeen is timestamp
+        && data.createdAt is timestamp
+        && isValidPlayerStats(data.stats);
+    }
+
+    function isValidWallet(data) {
+      return data.keys().hasAll(['cash', 'gems', 'stk', 'rev', 'sid', 't'])
+        && data.keys().hasOnly(['cash', 'gems', 'stk', 'rev', 'sid', 't', 'tradeId'])
+        && data.cash is number && data.cash >= 0 && data.cash <= 10000000000000
+        && data.gems is int && data.gems >= 0 && data.gems <= 1000000000
+        && data.stk is map && data.stk.size() <= 40
+        && data.rev is int && data.rev >= 1 && data.rev <= 1000000000
+        && data.sid is string && data.sid.size() >= 1 && data.sid.size() <= 128
+        && data.t is timestamp
+        && (!('tradeId' in data) || isValidId(data.tradeId));
+    }
+
+    function isValidSession(data) {
+      return data.keys().hasAll(['sid', 't'])
+        && data.keys().hasOnly(['sid', 't'])
+        && data.sid is string && data.sid.size() >= 1 && data.sid.size() <= 128
+        && data.t is timestamp;
+    }
+
+    function isValidSave(data) {
+      return data.keys().hasAll(['save'])
+        && data.keys().hasOnly(['save'])
+        && data.save is map
+        && data.save.size() <= 60;
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['type', 'text', 'read', 'from', 'createdAt'])
+        && data.keys().hasOnly(['type', 'text', 'tradeId', 'read', 'from', 'fromName', 'fromCc', 'createdAt'])
+        && data.type in ['dm', 'new_offer', 'accepted', 'rejected', 'cancelled', 'expired']
+        && data.text is string && data.text.size() >= 1 && data.text.size() <= 200
+        && data.read is bool
+        && isValidId(data.from)
+        && data.createdAt is timestamp
+        && (!('tradeId' in data) || data.tradeId == null || isValidId(data.tradeId))
+        && (!('fromName' in data) || (data.fromName is string && data.fromName.size() <= 16))
+        && (!('fromCc' in data) || (data.fromCc is string && data.fromCc.size() <= 3));
+    }
+
+    function isValidProject(data) {
+      return data.keys().hasAll(['uid', 'type', 'paid', 'progressMs', 'status', 'claimed', 'startedAt', 'lastTickAt'])
+        && data.keys().hasOnly(['uid', 'type', 'paid', 'progressMs', 'status', 'claimed', 'startedAt', 'lastTickAt', 'resolvedAt'])
+        && isValidId(data.uid)
+        && data.type in ['school', 'hospital', 'bridge', 'highway']
+        && data.paid is int && data.paid >= 1 && data.paid <= 3
+        && data.progressMs is number && data.progressMs >= 0 && data.progressMs <= 10000000
+        && data.status in ['active', 'done', 'failed']
+        && data.claimed is bool
+        && data.startedAt is timestamp
+        && data.lastTickAt is timestamp
+        && (!('resolvedAt' in data) || data.resolvedAt is timestamp);
+    }
+
+    function isValidTrade(data) {
+      return data.keys().hasAll([
+          'from', 'to', 'fromName', 'toName', 'fromCountry', 'toCountry',
+          'participants', 'offerCash', 'offerGems', 'offerStk',
+          'reqCash', 'reqGems', 'reqStk', 'message', 'status', 'refunded', 'createdAt', 'expiresAt'
+        ])
+        && data.keys().hasOnly([
+          'from', 'to', 'fromName', 'toName', 'fromCountry', 'toCountry',
+          'participants', 'offerCash', 'offerGems', 'offerStk',
+          'reqCash', 'reqGems', 'reqStk', 'message', 'status', 'refunded', 'createdAt', 'expiresAt', 'resolvedAt'
+        ])
+        && isValidId(data.from)
+        && isValidId(data.to)
+        && data.fromName is string && data.fromName.size() >= 1 && data.fromName.size() <= 16
+        && data.toName is string && data.toName.size() >= 1 && data.toName.size() <= 16
+        && data.fromCountry is string && data.fromCountry.size() <= 3
+        && data.toCountry is string && data.toCountry.size() <= 3
+        && data.participants is list && data.participants.size() == 2
+        && data.participants[0] is string && data.participants[1] is string
+        && data.offerCash is number && data.offerCash >= 0 && data.offerCash <= 1000000000000
+        && data.offerGems is int && data.offerGems >= 0 && data.offerGems <= 1000000000
+        && data.offerStk is map && data.offerStk.size() <= 40
+        && data.reqCash is number && data.reqCash == 0
+        && data.reqGems is int && data.reqGems == 0
+        && data.reqStk is map && data.reqStk.size() == 0
+        && data.message is string && data.message.size() <= 140
+        && data.status in ['pending', 'accepted', 'rejected', 'cancelled', 'expired']
+        && data.refunded is bool
+        && data.createdAt is timestamp
+        && data.expiresAt is timestamp
+        && (!('resolvedAt' in data) || data.resolvedAt is timestamp);
+    }
+
+    function isValidDailyLimit(data) {
+      return data.keys().hasAll(['uid', 'count'])
+        && data.keys().hasOnly(['uid', 'count'])
+        && isValidId(data.uid)
+        && data.count is int && data.count >= 1 && data.count <= 15;
+    }
+
+    function isValidGlobalChat(data) {
+      return data.keys().hasAll(['uid', 'name', 'cc', 'rank', 'text', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'name', 'cc', 'rank', 'text', 'createdAt'])
+        && isValidId(data.uid)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 16
+        && data.cc is string && data.cc.size() <= 3
+        && data.rank is int && data.rank >= 0 && data.rank <= 6
+        && data.text is string && data.text.size() >= 1 && data.text.size() <= 200
+        && data.createdAt is timestamp;
+    }
+
+    function isValidDmMessage(data) {
+      return data.keys().hasAll(['from', 'text', 'createdAt'])
+        && data.keys().hasOnly(['from', 'text', 'createdAt'])
+        && isValidId(data.from)
+        && data.text is string && data.text.size() >= 1 && data.text.size() <= 300
+        && data.createdAt is timestamp;
+    }
+
+    // ==================== COLLECTION RULES ====================
+    match /usernames/{usernameLower} {
+      allow get: if isSignedIn() && isValidId(usernameLower);
+      allow list: if false;
+      allow create: if isSignedIn()
+        && usernameLower is string
+        && usernameLower.matches('^[a-z0-9_]{3,16}$')
+        && isValidUsernameDoc(incoming())
+        && incoming().uid == request.auth.uid
+        && existsAfter(/databases/$(database)/documents/players/$(request.auth.uid));
+      allow update, delete: if false;
+    }
+
+    match /players/{uid} {
+      allow get: if isSignedIn() && isValidId(uid);
+      allow list: if isSignedIn() && request.query.limit <= 100;
+      allow create: if isOwner(uid)
+        && isValidId(uid)
+        && isValidPlayerProfile(incoming())
+        && incoming().createdAt == request.time
+        && incoming().lastSeen == request.time
+        && existsAfter(/databases/$(database)/documents/usernames/$(incoming().usernameLower))
+        && existsAfter(/databases/$(database)/documents/players/$(uid)/private/wallet);
+      allow update: if isOwner(uid)
+        && isValidId(uid)
+        && isValidPlayerProfile(incoming())
+        && incoming().username == existing().username
+        && incoming().usernameLower == existing().usernameLower
+        && incoming().createdAt == existing().createdAt
+        && incoming().lastSeen == request.time
+        && (
+          affectedOnly(['lastSeen']) ||
+          affectedOnly(['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats'])
+        );
+      allow delete: if false;
+
+      match /private/wallet {
+        allow get: if isOwner(uid) && isValidId(uid);
+        allow list: if false;
+        allow create: if isOwner(uid)
+          && isValidId(uid)
+          && isValidWallet(incoming())
+          && incoming().t == request.time
+          && incoming().rev == 1;
+        allow update: if isOwner(uid)
+          && isValidId(uid)
+          && isValidWallet(incoming())
+          && incoming().t == request.time
+          && incoming().rev >= existing().rev
+          && affectedOnly(['cash', 'gems', 'stk', 'rev', 'sid', 't', 'tradeId']);
+        allow delete: if false;
+      }
+
+      match /private/session {
+        allow get: if isOwner(uid) && isValidId(uid);
+        allow list: if false;
+        allow create: if isOwner(uid)
+          && isValidId(uid)
+          && isValidSession(incoming())
+          && incoming().t == request.time;
+        allow update: if isOwner(uid)
+          && isValidId(uid)
+          && isValidSession(incoming())
+          && incoming().t == request.time
+          && affectedOnly(['sid', 't']);
+        allow delete: if false;
+      }
+
+      match /notifications/{notificationId} {
+        allow get: if isOwner(uid) && isValidId(uid) && isValidId(notificationId);
+        allow list: if isOwner(uid);
+        allow create: if isSignedIn()
+          && isValidId(uid)
+          && isValidId(notificationId)
+          && isValidNotification(incoming())
+          && incoming().from == request.auth.uid
+          && incoming().read == false
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/players/$(uid));
+        allow update: if isOwner(uid)
+          && isValidId(uid)
+          && isValidId(notificationId)
+          && isValidNotification(incoming())
+          && affectedOnly(['read'])
+          && existing().read == false
+          && incoming().read == true;
+        allow delete: if isOwner(uid) && isValidId(uid) && isValidId(notificationId);
+      }
+
+      match /projects/{projectId} {
+        allow get: if isOwner(uid) && isValidId(uid) && isValidId(projectId);
+        allow list: if isOwner(uid);
+        allow create: if isOwner(uid)
+          && isValidId(uid)
+          && isValidId(projectId)
+          && isValidProject(incoming())
+          && incoming().uid == uid
+          && incoming().paid == 1
+          && incoming().progressMs == 0
+          && incoming().status == 'active'
+          && incoming().claimed == false
+          && incoming().startedAt == request.time
+          && incoming().lastTickAt == request.time;
+        allow update: if isOwner(uid)
+          && isValidId(uid)
+          && isValidId(projectId)
+          && isValidProject(incoming())
+          && incoming().uid == existing().uid
+          && incoming().type == existing().type
+          && incoming().startedAt == existing().startedAt
+          && (
+            (existing().status == 'active' && affectedOnly(['progressMs', 'lastTickAt']) && incoming().progressMs >= existing().progressMs && incoming().lastTickAt == request.time) ||
+            (existing().status == 'active' && affectedOnly(['paid']) && incoming().paid == existing().paid + 1 && incoming().paid <= 3) ||
+            (existing().status == 'active' && affectedOnly(['status', 'resolvedAt']) && incoming().status in ['done', 'failed'] && incoming().resolvedAt == request.time) ||
+            (existing().status in ['done', 'failed'] && existing().claimed == false && affectedOnly(['claimed']) && incoming().claimed == true)
+          );
+        allow delete: if false;
+      }
+    }
+
+    match /saves/{uid} {
+      allow get: if isOwner(uid) && isValidId(uid);
+      allow list: if false;
+      allow create: if isOwner(uid) && isValidId(uid) && isValidSave(incoming());
+      allow update: if isOwner(uid) && isValidId(uid) && isValidSave(incoming()) && affectedOnly(['save']);
+      allow delete: if false;
+    }
+
+    match /trades/{tradeId} {
+      allow get: if isSignedIn() && isValidId(tradeId) && request.auth.uid in existing().participants;
+      allow list: if isSignedIn() && request.auth.uid in resource.data.participants;
+      allow create: if isSignedIn()
+        && isValidId(tradeId)
+        && isValidTrade(incoming())
+        && incoming().from == request.auth.uid
+        && incoming().to != request.auth.uid
+        && incoming().participants == [incoming().from, incoming().to]
+        && (incoming().offerCash > 0 || incoming().offerGems > 0 || incoming().offerStk.size() > 0)
+        && incoming().status == 'pending'
+        && incoming().refunded == false
+        && incoming().createdAt == request.time
+        && incoming().expiresAt > request.time
+        && incoming().expiresAt <= request.time + duration.value(10, 'm')
+        && exists(/databases/$(database)/documents/players/$(incoming().to));
+      allow update: if isSignedIn()
+        && isValidId(tradeId)
+        && isValidTrade(incoming())
+        && incoming().from == existing().from
+        && incoming().to == existing().to
+        && incoming().participants == existing().participants
+        && incoming().offerCash == existing().offerCash
+        && incoming().offerGems == existing().offerGems
+        && incoming().offerStk == existing().offerStk
+        && incoming().reqCash == existing().reqCash
+        && incoming().reqGems == existing().reqGems
+        && incoming().reqStk == existing().reqStk
+        && incoming().createdAt == existing().createdAt
+        && incoming().expiresAt == existing().expiresAt
+        && (
+          (existing().status == 'pending' && request.auth.uid == existing().to && affectedOnly(['status', 'resolvedAt']) && incoming().status in ['accepted', 'rejected'] && incoming().resolvedAt == request.time) ||
+          (existing().status == 'pending' && request.auth.uid == existing().from && affectedOnly(['status', 'resolvedAt', 'refunded']) && incoming().status in ['cancelled', 'expired'] && incoming().refunded == true && incoming().resolvedAt == request.time) ||
+          (existing().status in ['rejected', 'expired'] && existing().refunded == false && request.auth.uid == existing().from && affectedOnly(['refunded']) && incoming().refunded == true)
+        );
+      allow delete: if false;
+    }
+
+    match /dailyLimits/{limitId} {
+      allow get: if isSignedIn()
+        && isValidId(limitId)
+        && limitId.matches('^' + request.auth.uid + '_[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+      allow list: if false;
+      allow create: if isSignedIn()
+        && isValidId(limitId)
+        && limitId.matches('^' + request.auth.uid + '_[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && isValidDailyLimit(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().count == 1;
+      allow update: if isSignedIn()
+        && isValidId(limitId)
+        && limitId.matches('^' + request.auth.uid + '_[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && isValidDailyLimit(incoming())
+        && incoming().uid == existing().uid
+        && affectedOnly(['count', 'uid'])
+        && incoming().count == existing().count + 1
+        && incoming().count <= 15;
+      allow delete: if false;
+    }
+
+    match /globalChat/{messageId} {
+      allow get: if isSignedIn() && isValidId(messageId);
+      allow list: if isSignedIn() && request.query.limit <= 60;
+      allow create: if isSignedIn()
+        && isValidId(messageId)
+        && isValidGlobalChat(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /dms/{pairId}/messages/{messageId} {
+      allow get: if isDmMember(pairId) && isValidId(messageId);
+      allow list: if isDmMember(pairId) && request.query.limit <= 60;
+      allow create: if isDmMember(pairId)
+        && isValidId(messageId)
+        && isValidDmMessage(incoming())
+        && incoming().from == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+  }
+}
