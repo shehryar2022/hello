@@ -9,6 +9,17 @@ import {
   getActiveSubscription,
 } from '../../game/rules';
 import type { GameState, ShopSubTab, SubscriptionTierId } from '../../game/types';
+import {
+  Award,
+  BoosterIcon,
+  Calendar,
+  CashCoinIcon,
+  Coins,
+  GemDiamondIcon,
+  RankEmblem,
+  SubIcon,
+  Zap,
+} from '../GameIcons';
 
 function formatSubRemaining(ms: number): string {
   if (ms <= 0) return 'Expired';
@@ -54,13 +65,16 @@ export const ShopTab: React.FC<ShopTabProps> = ({
     <div>
       <div className="subtabs">
         <button type="button" className={subTab === 'rank' ? 'on' : ''} onClick={() => onChangeSubTab('rank')}>
-          🪪 Ranks
+          <Award size={14} />
+          <span>Ranks</span>
         </button>
         <button type="button" className={subTab === 'sub' ? 'on' : ''} onClick={() => onChangeSubTab('sub')}>
-          💳 Subscriptions
+          <Calendar size={14} />
+          <span>Subscriptions</span>
         </button>
         <button type="button" className={subTab === 'boost' ? 'on' : ''} onClick={() => onChangeSubTab('boost')}>
-          🪙 Boosters
+          <Zap size={14} />
+          <span>Boosters</span>
         </button>
       </div>
 
@@ -68,10 +82,12 @@ export const ShopTab: React.FC<ShopTabProps> = ({
         <div>
           <div className="tradelim">
             <span>
-              Current Rank: <b>{currentRank.e ? `${currentRank.e} ` : ''}{currentRank.n}</b>
+              Current Rank:
+              {currentRank.id > 0 && <RankEmblem rank={currentRank.id} size={18} />}
+              <b>{currentRank.n}</b>
             </span>
             <span>
-              Bonus <b className="ok">+{(state.rank || 0) * 2}%</b> income
+              Bonus <b className="ok">+{state.rank || 0}%</b> income (+1% per tier)
             </span>
           </div>
 
@@ -82,18 +98,20 @@ export const ShopTab: React.FC<ShopTabProps> = ({
               const isNext = r.id === (state.rank || 0) + 1;
 
               return (
-                <div key={r.id} className="row" style={{ '--c': r.c } as React.CSSProperties}>
-                  <div className="em">{r.e}</div>
-                  <div>
+                <div key={r.id} className="row rank-row" style={{ '--c': r.c } as React.CSSProperties}>
+                  <div className="em">
+                    <RankEmblem rank={r.id} size={28} />
+                  </div>
+                  <div style={{ minWidth: 0 }}>
                     <h2>
-                      {r.n}
-                      <span className="lv">+{r.id * 2}% inc</span>
+                      <span>{r.n}</span>
+                      <span className="lv">+{r.id}%</span>
                     </h2>
-                    <p>Prestige title &amp; permanent +2% boost per tier</p>
+                    <p>Prestige tier {r.id} · Permanent +1% income boost</p>
                   </div>
                   {owned ? (
                     <span className="lv" style={{ background: 'var(--mint)', color: '#04332a' }}>
-                      Owned ✓
+                      Owned
                     </span>
                   ) : (
                     <button
@@ -113,17 +131,18 @@ export const ShopTab: React.FC<ShopTabProps> = ({
       ) : subTab === 'sub' ? (
         <div>
           <div className="gxc" style={{ marginBottom: 10 }}>
-            <p>
-              <b>💳 National Subscriptions (5M – 500M)</b>
+            <p style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Calendar size={15} color="#5ccbff" />
+              <b>Balanced National Subscriptions</b>
             </p>
             <p className="dim">
-              Boost national income, get a development discount on buildings, upgrades &amp; repairs, speed up
-              Government Projects, and claim a daily treasury stipend.
+              Modest convenience perks (+4% to +12% income, 3%–10% build discount, +5%–15% project speed, and a daily treasury stipend) that keep core economy &amp; policy choices primary.
             </p>
             {activeSub ? (
               <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
-                <span className="ok">
-                  {activeSub.def.e} Active: <b>{activeSub.def.n}</b> · {formatSubRemaining(activeSub.leftMs)} left
+                <span className="ok" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <SubIcon tier={activeSub.def.id} size={15} />
+                  Active: <b>{activeSub.def.n}</b> · {formatSubRemaining(activeSub.leftMs)} left
                 </span>
                 <button
                   type="button"
@@ -131,9 +150,21 @@ export const ShopTab: React.FC<ShopTabProps> = ({
                   disabled={!canClaimDaily}
                   onClick={onClaimSubDaily}
                 >
-                  {canClaimDaily
-                    ? `💵 Claim Daily (₨ ${formatNumber(activeSub.def.dailyCash)}${activeSub.def.dailyGems > 0 ? ` + ${activeSub.def.dailyGems}💎` : ''})`
-                    : 'Claimed today ✓'}
+                  {canClaimDaily ? (
+                    <>
+                      <CashCoinIcon size={14} />
+                      <span>Claim Daily (₨ {formatNumber(activeSub.def.dailyCash)}</span>
+                      {activeSub.def.dailyGems > 0 && (
+                        <>
+                          <span>+ {activeSub.def.dailyGems}</span>
+                          <GemDiamondIcon size={13} />
+                        </>
+                      )}
+                      <span>)</span>
+                    </>
+                  ) : (
+                    'Claimed today'
+                  )}
                 </button>
               </div>
             ) : (
@@ -158,7 +189,9 @@ export const ShopTab: React.FC<ShopTabProps> = ({
                   className={`row ${isCurrent ? 'me' : ''}`}
                   style={{ '--c': sub.id === 'monthly' ? '#ffc23d' : sub.id === 'weekly' ? '#3fe0b0' : '#5ccbff' } as React.CSSProperties}
                 >
-                  <div className="em">{sub.e}</div>
+                  <div className="em">
+                    <SubIcon tier={sub.id} size={23} />
+                  </div>
                   <div>
                     <h2>
                       {sub.n}
@@ -168,7 +201,7 @@ export const ShopTab: React.FC<ShopTabProps> = ({
                   </div>
                   {isCurrent ? (
                     <span className="lv" style={{ background: 'var(--mint)', color: '#04332a' }}>
-                      Active ✓
+                      Active
                     </span>
                   ) : (
                     <button
@@ -191,8 +224,9 @@ export const ShopTab: React.FC<ShopTabProps> = ({
       ) : (
         <div>
           <div className="gxc" style={{ marginBottom: 10 }}>
-            <p>
-              <b>🪙 Balanced Shop Boosters</b>
+            <p style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Coins size={15} color="#ffc23d" />
+              <b>Balanced Shop Boosters</b>
             </p>
             <p className="dim">
               Only <b>1 income multiplier booster</b> can be active at a time (no stacking). Combined temporary
@@ -205,7 +239,7 @@ export const ShopTab: React.FC<ShopTabProps> = ({
             )}
             {!!state.activeFx?.taxSurge && (
               <p className="ok" style={{ marginTop: 4 }}>
-                💵 Tax Surge Ready: +35% bonus on your next Collect tax (capped at 2m base income)
+                Tax Surge Ready: +35% bonus on your next Collect tax (capped at 2m base income)
               </p>
             )}
           </div>
@@ -227,7 +261,9 @@ export const ShopTab: React.FC<ShopTabProps> = ({
                   className="row"
                   style={{ '--c': b.tier === 'rare' ? '#ffc23d' : '#5ccbff' } as React.CSSProperties}
                 >
-                  <div className="em">{b.e}</div>
+                  <div className="em">
+                    <BoosterIcon id={b.id} size={23} />
+                  </div>
                   <div>
                     <h2>
                       {b.n}

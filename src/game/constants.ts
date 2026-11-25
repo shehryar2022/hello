@@ -2,6 +2,7 @@ import type {
   BoosterDef,
   BuildingDef,
   CountryTuple,
+  GameState,
   GovDef,
   ProjectType,
   ProjectTypeDef,
@@ -21,6 +22,10 @@ export const GOV_DAY_SEC = 300;
 export const GOV_CHANGE_CD_MS = 86_400_000; // 24 hours
 export const PROJECT_STAGES = 3;
 
+export const CRATE_COST_CASH = 150_000;
+export const CRATE_CD_MS = 300_000; // 5 minutes
+export const CRATE_COST_GEMS = 5;
+
 export const REAL_GDP: Record<string, number> = {
   US: 32642, CN: 21546, DE: 5471, JP: 4342, GB: 4270, IN: 4060, FR: 3550, IT: 2700,
   BR: 2650, CA: 2300, KR: 2200, MX: 2150, AU: 2100, ES: 2050, ID: 1480, SA: 1340,
@@ -36,37 +41,43 @@ export const REAL_GDP_SCALED: Record<string, number> = Object.fromEntries(
 );
 
 export const BUILDINGS: BuildingDef[] = [
-  { id: 'farm', n: 'Farms', e: '🌾', c: '#37e6a0', cost: 250, inc: 0.35, d: 'Feeds people, tiny cash' },
-  { id: 'fact', n: 'Factories', e: '🏭', c: '#ff9a1f', cost: 1200, inc: 1.8, d: 'Big income, hurts happiness' },
-  { id: 'pow', n: 'Power Plants', e: '⚡', c: '#ffc93c', cost: 4200, inc: 6, d: '+1.5% building output each' },
-  { id: 'tech', n: 'Tech Parks', e: '💻', c: '#3fd2ff', cost: 14000, inc: 22, d: 'High income, lifts approval' },
-  { id: 'port', n: 'Trade Ports', e: '🚢', c: '#a56bff', cost: 48000, inc: 75, d: 'Exports bring gems (rarely)' },
-  { id: 'bank', n: 'Central Bank', e: '🏦', c: '#ff4fa3', cost: 180000, inc: 260, d: 'Top-tier income, huge cost' },
-  { id: 'mine', n: 'Mines', e: '⛏️', c: '#c9a06a', cost: 2600, inc: 4.5, d: 'Extracts resources, steady cash' },
-  { id: 'hosp', n: 'Hospitals', e: '🏥', c: '#7cf0a0', cost: 7000, inc: 8, d: 'Better healthcare, +happiness' },
-  { id: 'stadium', n: 'Stadiums', e: '🏟️', c: '#ff6bd6', cost: 16000, inc: 18, d: 'Entertainment, +happiness' },
-  { id: 'airport', n: 'Airports', e: '✈️', c: '#7ec8ff', cost: 32000, inc: 52, d: 'Tourism & trade, lifts approval' },
-  { id: 'solar', n: 'Solar Farms', e: '☀️', c: '#ffe066', cost: 3500, inc: 5.5, d: 'Clean power, +happiness, offsets carbon tax' },
-  { id: 'water', n: 'Water Works', e: '💧', c: '#4cc9ff', cost: 5200, inc: 6.5, d: 'Clean water, +happiness & population growth' },
-  { id: 'univ', n: 'Universities', e: '🎓', c: '#b39dff', cost: 22000, inc: 30, d: 'Education hub, +happiness' },
-  { id: 'rail', n: 'Railway Hubs', e: '🚄', c: '#ff8a5c', cost: 38000, inc: 60, d: 'Trade & population growth' },
-  { id: 'data', n: 'Data Centers', e: '🖥️', c: '#5ce1e6', cost: 75000, inc: 120, d: 'Digital economy, big income, small happiness hit' },
-  { id: 'space', n: 'Space Agency', e: '🚀', c: '#c084fc', cost: 400000, inc: 600, d: 'Prestige project, massive income, +happiness' },
-  { id: 'hydro', n: 'Hydro Dams', e: '🌊', c: '#2dd4bf', cost: 9500, inc: 14, d: 'Clean hydro power, +happiness & steady output' },
-  { id: 'stock', n: 'Stock Exchange', e: '📊', c: '#fbbf24', cost: 58000, inc: 95, d: 'Capital markets, boosts corporate & trade revenue' },
-  { id: 'evplant', n: 'EV Gigafactory', e: '🔋', c: '#4ade80', cost: 120000, inc: 195, d: 'Zero-smog clean manufacturing, +happiness' },
-  { id: 'fusion', n: 'Fusion Reactor', e: '⚛️', c: '#38bdf8', cost: 650000, inc: 980, d: 'Mega clean energy, +2.5% building output each' },
+  { id: 'farm', n: 'Farms', e: '🌾', c: '#37e6a0', cat: 'civic', cost: 250, inc: 0.35, d: 'Feeds people, tiny cash' },
+  { id: 'fact', n: 'Factories', e: '🏭', c: '#ff9a1f', cat: 'industry', cost: 1200, inc: 1.8, d: 'Big income, hurts happiness' },
+  { id: 'pow', n: 'Power Plants', e: '⚡', c: '#ffc93c', cat: 'industry', cost: 4200, inc: 6, d: '+1.5% building output each' },
+  { id: 'tech', n: 'Tech Parks', e: '💻', c: '#3fd2ff', cat: 'tech', cost: 14000, inc: 22, d: 'High income, lifts approval' },
+  { id: 'port', n: 'Trade Ports', e: '🚢', c: '#a56bff', cat: 'industry', cost: 48000, inc: 75, d: 'Exports bring gems & stickers' },
+  { id: 'bank', n: 'Central Bank', e: '🏦', c: '#ff4fa3', cat: 'tech', cost: 180000, inc: 260, d: 'Top-tier income, huge cost' },
+  { id: 'mine', n: 'Mines', e: '⛏️', c: '#c9a06a', cat: 'industry', cost: 2600, inc: 4.5, d: 'Extracts resources, steady cash' },
+  { id: 'hosp', n: 'Hospitals', e: '🏥', c: '#7cf0a0', cat: 'civic', cost: 7000, inc: 8, d: 'Better healthcare, +happiness' },
+  { id: 'stadium', n: 'Stadiums', e: '🏟️', c: '#ff6bd6', cat: 'civic', cost: 16000, inc: 18, d: 'Entertainment, +happiness' },
+  { id: 'airport', n: 'Airports', e: '✈️', c: '#7ec8ff', cat: 'industry', cost: 32000, inc: 52, d: 'Tourism & trade, lifts approval' },
+  { id: 'solar', n: 'Solar Farms', e: '☀️', c: '#ffe066', cat: 'civic', cost: 3500, inc: 5.5, d: 'Clean power, +happiness, offsets carbon tax' },
+  { id: 'water', n: 'Water Works', e: '💧', c: '#4cc9ff', cat: 'civic', cost: 5200, inc: 6.5, d: 'Clean water, +happiness & population growth' },
+  { id: 'univ', n: 'Universities', e: '🎓', c: '#b39dff', cat: 'civic', cost: 22000, inc: 30, d: 'Education hub, +happiness' },
+  { id: 'rail', n: 'Railway Hubs', e: '🚄', c: '#ff8a5c', cat: 'industry', cost: 38000, inc: 60, d: 'Trade & population growth' },
+  { id: 'data', n: 'Data Centers', e: '🖥️', c: '#5ce1e6', cat: 'tech', cost: 75000, inc: 120, d: 'Digital economy, big income, small happiness hit' },
+  { id: 'space', n: 'Space Agency', e: '🚀', c: '#c084fc', cat: 'tech', cost: 400000, inc: 600, d: 'Prestige project, massive income, +happiness' },
+  { id: 'hydro', n: 'Hydro Dams', e: '🌊', c: '#2dd4bf', cat: 'civic', cost: 9500, inc: 14, d: 'Clean hydro power, +happiness & steady output' },
+  { id: 'stock', n: 'Stock Exchange', e: '📊', c: '#fbbf24', cat: 'tech', cost: 58000, inc: 95, d: 'Capital markets, boosts corporate & trade revenue' },
+  { id: 'evplant', n: 'EV Gigafactory', e: '🔋', c: '#4ade80', cat: 'industry', cost: 120000, inc: 195, d: 'Zero-smog clean manufacturing, +happiness' },
+  { id: 'fusion', n: 'Fusion Reactor', e: '⚛️', c: '#38bdf8', cat: 'tech', cost: 650000, inc: 980, d: 'Mega clean energy, +2.5% building output each' },
 ];
 
 export const RANKS: RankDef[] = [
   { id: 0, n: 'No Rank', e: '', c: '#a79fd0', cost: 0 },
-  { id: 1, n: 'Bronze Baron', e: '🥉', c: '#cd7f32', cost: 500_000 },
-  { id: 2, n: 'Silver Sovereign', e: '🥈', c: '#c0c0c0', cost: 1_000_000 },
-  { id: 3, n: 'Gold Emperor', e: '🥇', c: '#ffd700', cost: 2_500_000 },
-  { id: 4, n: 'Platinum King', e: '💍', c: '#e5e4e2', cost: 5_000_000 },
-  { id: 5, n: 'Diamond Deity', e: '💎', c: '#b9f2ff', cost: 10_000_000 },
-  { id: 6, n: 'Cosmic Overlord', e: '🌌', c: '#ff4fa3', cost: 25_000_000 },
+  { id: 1, n: 'Bronze Baron', e: '🥉', c: '#cd7f32', cost: 250_000 },
+  { id: 2, n: 'Silver Sovereign', e: '🥈', c: '#c0c8d8', cost: 600_000 },
+  { id: 3, n: 'Gold Emperor', e: '🥇', c: '#ffd700', cost: 1_500_000 },
+  { id: 4, n: 'Platinum King', e: '💍', c: '#e2e8f0', cost: 3_500_000 },
+  { id: 5, n: 'Diamond Deity', e: '💎', c: '#67e8f9', cost: 8_000_000 },
+  { id: 6, n: 'Cosmic Overlord', e: '🌌', c: '#e879f9', cost: 18_000_000 },
+  { id: 7, n: 'Astral Viceroy', e: '🌠', c: '#818cf8', cost: 45_000_000 },
+  { id: 8, n: 'Imperial Titan', e: '🛡️', c: '#fb923c', cost: 100_000_000 },
+  { id: 9, n: 'Grand Chancellor', e: '⚜️', c: '#34d399', cost: 250_000_000 },
+  { id: 10, n: 'Global Hegemon', e: '👑', c: '#f43f5e', cost: 600_000_000 },
 ];
+
+export const MAX_RANK = RANKS.length - 1;
 
 /**
  * Balanced, limited shop boosters:
@@ -135,6 +146,10 @@ export const BOOSTERS: BoosterDef[] = [
   },
 ];
 
+/**
+ * Economy-balanced national subscriptions:
+ * Modest convenience perks so core building & policy choices remain primary.
+ */
 export const SUBSCRIPTIONS: SubscriptionDef[] = [
   {
     id: 'daily',
@@ -143,12 +158,12 @@ export const SUBSCRIPTIONS: SubscriptionDef[] = [
     periodLabel: 'Daily',
     cost: 5_000_000,
     durMs: 86_400_000,
-    incomeMult: 1.15,
-    discountRate: 0.1,
-    projectSpeedMult: 1.1,
-    dailyCash: 500_000,
+    incomeMult: 1.04,
+    discountRate: 0.03,
+    projectSpeedMult: 1.05,
+    dailyCash: 150_000,
     dailyGems: 0,
-    d: '+15% income, 10% build/upgrade discount, +10% project speed, ₨ 500K/day',
+    d: '+4% income, 3% build/upgrade discount, +5% project speed, ₨ 150K/day',
   },
   {
     id: 'weekly',
@@ -157,12 +172,12 @@ export const SUBSCRIPTIONS: SubscriptionDef[] = [
     periodLabel: 'Weekly',
     cost: 50_000_000,
     durMs: 7 * 86_400_000,
-    incomeMult: 1.3,
-    discountRate: 0.2,
-    projectSpeedMult: 1.2,
-    dailyCash: 2_000_000,
+    incomeMult: 1.08,
+    discountRate: 0.06,
+    projectSpeedMult: 1.1,
+    dailyCash: 600_000,
     dailyGems: 1,
-    d: '+30% income, 20% build/upgrade discount, +20% project speed, ₨ 2M + 1💎/day',
+    d: '+8% income, 6% build/upgrade discount, +10% project speed, ₨ 600K + 1 gem/day',
   },
   {
     id: 'monthly',
@@ -171,12 +186,12 @@ export const SUBSCRIPTIONS: SubscriptionDef[] = [
     periodLabel: 'Monthly',
     cost: 500_000_000,
     durMs: 30 * 86_400_000,
-    incomeMult: 1.5,
-    discountRate: 0.35,
-    projectSpeedMult: 1.35,
-    dailyCash: 10_000_000,
-    dailyGems: 5,
-    d: '+50% income, 35% build/upgrade discount, +35% project speed, ₨ 10M + 5💎/day',
+    incomeMult: 1.12,
+    discountRate: 0.1,
+    projectSpeedMult: 1.15,
+    dailyCash: 2_500_000,
+    dailyGems: 2,
+    d: '+12% income, 10% build/upgrade discount, +15% project speed, ₨ 2.5M + 2 gems/day',
   },
 ];
 
@@ -223,7 +238,7 @@ export const STICKERS: StickerDef[] = [
   { id: 'fox', n: 'Crafty Fox', e: '🦊', r: 2 },
   { id: 'gor', n: 'Bank Gorilla', e: '🦍', r: 2 },
   { id: 'dragon', n: 'GDP Dragon', e: '🐉', r: 3 },
-  { id: 'phoenix', n: 'Phoenix Economy', e: '🐦‍🔥', r: 3 },
+  { id: 'phoenix', n: 'Phoenix Economy', e: '🔥', r: 3 },
   { id: 'uni', n: 'Unicorn Startup', e: '🦄', r: 3 },
   { id: 'crown', n: 'Crown Reserve', e: '👑', r: 3 },
   { id: 'rocket', n: 'Rocket Growth', e: '🚀', r: 3 },
@@ -231,7 +246,7 @@ export const STICKERS: StickerDef[] = [
 ];
 
 export const RARITY_META: Record<number, [string, string]> = {
-  1: ['Common', '#8b83c9'],
+  1: ['Common', '#9d95dc'],
   2: ['Rare', '#3fd2ff'],
   3: ['Ultra Rare', '#ffc93c'],
 };
@@ -285,6 +300,43 @@ export const GX_PROJECT_TYPES: Record<ProjectType, ProjectTypeDef> = {
   highway: { n: 'National Highway', e: '🛣️', cost: 1000000, dur: 2400000, dl: 5760, pb: 0.05, ph: 1.5 },
 };
 
+export interface PolicyPreset {
+  id: 'balanced' | 'revenue' | 'welfare';
+  label: string;
+  desc: string;
+  values: Partial<Record<keyof GameState, number>>;
+}
+
+export const POLICY_PRESETS: PolicyPreset[] = [
+  {
+    id: 'balanced',
+    label: 'Balanced Growth',
+    desc: 'Zero tax evasion with steady revenue and upbeat citizens',
+    values: {
+      tax: 15, fuel: 0, carbon: 2, luxury: 4, corp: 5, gst: 2,
+      prop: 0, duty: 3, tourism: 3, digital: 4, wel: 18, edu: 12, rd: 8, green: 6,
+    },
+  },
+  {
+    id: 'revenue',
+    label: 'High Revenue',
+    desc: 'Pushes tax yield near peak before evasion drags it down',
+    values: {
+      tax: 22, fuel: 3, carbon: 0, luxury: 3, corp: 0, gst: 0,
+      prop: 0, duty: 5, tourism: 6, digital: 6, wel: 10, edu: 10, rd: 10, green: 2,
+    },
+  },
+  {
+    id: 'welfare',
+    label: 'Citizen Bliss',
+    desc: 'High happiness, approval & green subsidies for long-term stability',
+    values: {
+      tax: 12, fuel: 0, carbon: 2, luxury: 4, corp: 5, gst: 2,
+      prop: 0, duty: 3, tourism: 3, digital: 3, wel: 32, edu: 20, rd: 15, green: 20,
+    },
+  },
+];
+
 export const TAB_META: Record<
   import('./types').TabId,
   { emoji: string; label: string; subtitle: string }
@@ -293,8 +345,8 @@ export const TAB_META: Record<
   gov: { emoji: '🏛️', label: 'Govt', subtitle: 'Infrastructure, upgrades & projects' },
   policy: { emoji: '📌', label: 'Policy', subtitle: 'Taxes, welfare and government' },
   rivals: { emoji: '📢', label: 'Players', subtitle: 'Live GDP rankings & chat' },
-  stickers: { emoji: '🪪', label: 'Stickers', subtitle: 'Collect, fuse and gift' },
+  stickers: { emoji: '🪪', label: 'Stickers', subtitle: 'Collect, fuse, crates & gift' },
   trade: { emoji: '💱', label: 'Gifts', subtitle: 'Send and receive gifts' },
-  quest: { emoji: '📅', label: 'Quests', subtitle: "Today's objectives" },
+  quest: { emoji: '📅', label: 'Quests', subtitle: "Daily goals & milestones" },
   shop: { emoji: '💳', label: 'Shop', subtitle: 'Ranks, subscriptions & boosters' },
 };

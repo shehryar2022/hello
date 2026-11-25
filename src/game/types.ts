@@ -14,11 +14,14 @@ export type ShopSubTab = 'rank' | 'sub' | 'boost';
 
 export type CountryTuple = [code: string, name: string, realGdp?: number];
 
+export type BuildingCategory = 'all' | 'industry' | 'civic' | 'tech';
+
 export interface BuildingDef {
   id: string;
   n: string;
   e: string;
   c: string;
+  cat: Exclude<BuildingCategory, 'all'>;
   cost: number;
   inc: number;
   d: string;
@@ -134,6 +137,8 @@ export interface GameState {
   pop: number;
   boost: number;
   claimed: Record<string, number>;
+  milestones?: Record<string, number>;
+  crateCd?: number;
   t: number;
   ev: number;
   edu: number;

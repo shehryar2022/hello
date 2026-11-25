@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { formatNumber } from '../game/rules';
+import { TrendingUp } from './GameIcons';
 
 interface GdpChartProps {
   history: number[];
@@ -10,6 +11,7 @@ export const GdpChart: React.FC<GdpChartProps> = ({ history, currentGdp }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [rangeIdx, setRangeIdx] = useState<0 | 1 | 2>(2);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [layoutTick, setLayoutTick] = useState(0);
 
   const slices = [12, 36, 60] as const;
   const h = history.slice(-slices[rangeIdx]);
@@ -17,6 +19,18 @@ export const GdpChart: React.FC<GdpChartProps> = ({ history, currentGdp }) => {
   const first = hasData ? h[0] : currentGdp;
   const last = hasData ? h[h.length - 1] : currentGdp;
   const pct = first ? ((last - first) / first) * 100 : 0;
+
+  useEffect(() => {
+    setHoverIdx(null);
+  }, [rangeIdx]);
+
+  useEffect(() => {
+    const c = canvasRef.current;
+    if (!c || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setLayoutTick((x) => x + 1));
+    ro.observe(c);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     const c = canvasRef.current;
@@ -107,7 +121,7 @@ export const GdpChart: React.FC<GdpChartProps> = ({ history, currentGdp }) => {
     ctx.stroke();
 
     const label = `₨ ${formatNumber(h[s])}`;
-    ctx.font = `700 ${12 * dpr}px Fredoka, system-ui, sans-serif`;
+    ctx.font = `700 ${12 * dpr}px Outfit, system-ui, sans-serif`;
     const tw = ctx.measureText(label).width + 20 * dpr;
     const th = 26 * dpr;
     const bx = Math.min(w - tw - 4 * dpr, Math.max(4 * dpr, px - tw / 2));
@@ -126,7 +140,7 @@ export const GdpChart: React.FC<GdpChartProps> = ({ history, currentGdp }) => {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(label, bx + tw / 2, by + th / 2 + 0.5 * dpr);
-  }, [h, hasData, hoverIdx]);
+  }, [h, hasData, hoverIdx, layoutTick]);
 
   const handlePointer = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!hasData || !canvasRef.current) return;
@@ -139,9 +153,7 @@ export const GdpChart: React.FC<GdpChartProps> = ({ history, currentGdp }) => {
     <div className="gdpc">
       <div className="gdpc-h">
         <span className="gdpc-ic">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M3 17l6-6 4 4 8-8M15 7h6v6" />
-          </svg>
+          <TrendingUp size={15} />
         </span>
         GDP history
       </div>

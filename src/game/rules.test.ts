@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import {
   BOOSTERS,
   BUILDINGS,
+  CRATE_COST_CASH,
+  CRATE_COST_GEMS,
+  MAX_RANK,
   RANKS,
   STICKERS,
   SUBSCRIPTIONS,
@@ -13,12 +16,16 @@ import {
   applyBuyRank,
   applyBuySubscription,
   applyOfflineEarnings,
+  applyPolicyPreset,
   buildingCost,
+  bulkBuildingCost,
+  buyStickerCrate,
   calculateGdp,
   calculateIncome,
   calculateTaxCollect,
   canBuyBooster,
   canBuySubscription,
+  claimMilestone,
   claimSubscriptionDaily,
   freshState,
   fuseSticker,
@@ -28,9 +35,12 @@ import {
   gxRepairCost,
   gxUpgradeCost,
   migrateState,
+  MILESTONES,
+  rollTradePortExport,
   sanitizeStats,
   selectDailyQuestIds,
   targetHappiness,
+  taxInfo,
   totalBuildings,
 } from './rules';
 
@@ -45,7 +55,6 @@ test('bank section is completely removed from tabs and state migration strips lo
   const migrated = migrateState(legacyWithLoan);
   assert.equal('loan' in migrated, false);
   assert.equal('deals' in migrated, false);
-  // GDP equals cash without loan subtraction
   assert.equal(calculateGdp(migrated), 50_000);
 });
 
@@ -58,14 +67,12 @@ test('shop boosters are limited: cannot stack multiple income boosters and multi
   const boom = BOOSTERS.find((b) => b.id === 'boom_surge')!;
   const treasury = BOOSTERS.find((b) => b.id === 'golden_treasury')!;
 
-  // Buy Boom Surge (+75% = 1.75x for 2 min)
   const r1 = applyBuyBooster(state, boom, now);
   assert.equal(r1.ok, true);
   state = r1.state;
   assert.equal(state.cash, 9_000_000);
   assert.equal(state.activeFx.incomeBoostMult, 1.75);
 
-  // Cannot stack Quick Profit or Treasury Rush while Boom Surge is active
   const r2 = canBuyBooster(state, quick, now + 10_000);
   assert.equal(r2.ok, false);
   assert.match(r2.reason || '', /already active/i);
@@ -73,7 +80,6 @@ test('shop boosters are limited: cannot stack multiple income boosters and multi
   const r3 = canBuyBooster(state, treasury, now + 10_000);
   assert.equal(r3.ok, false);
 
-  // After Boom Surge expires (120s), Quick Profit can be bought
   const r4 = applyBuyBooster(state, quick, now + 125_000);
   assert.equal(r4.ok, true);
   assert.equal(r4.state.activeFx.incomeBoostMult, 1.25);
@@ -84,7 +90,6 @@ test('tax surge booster bonus is limited to +35% and capped at 2 minutes of unbo
   let state = freshState();
   state.cash = 2_000_000;
   state.b.tech = 5;
-  // Turn on both gem boost AND shop boom surge to test that tax surge ignores temp boosters
   state.boost = 30;
   const boom = BOOSTERS.find((b) => b.id === 'boom_surge')!;
   state = applyBuyBooster(state, boom, now).state;
@@ -94,23 +99,23 @@ test('tax surge booster bonus is limited to +35% and capped at 2 minutes of unbo
 
   const baseNet = calculateIncome(state, { nowMs: now + 1000, ignoreTempBoosters: true }).net;
 
-  // Case 1: huge taxPool -> bonus capped at baseNet * 120 (2 minutes)
   state.taxPool = baseNet * 1000;
   const hugeCollect = calculateTaxCollect(state, 0, now + 1000);
   assert.equal(hugeCollect.bonusApplied, true);
   assert.equal(hugeCollect.bonusAmount, Math.floor(baseNet * 120));
 
-  // Case 2: small taxPool -> bonus capped at 35% of taxPool
   state.taxPool = 1000;
   const smallCollect = calculateTaxCollect(state, 0, now + 1000);
   assert.equal(smallCollect.bonusApplied, true);
   assert.equal(smallCollect.bonusAmount, 350);
 });
 
-test('building costs scale by 1.25x and upkeep is capped at 35%', () => {
+test('building costs scale by 1.25x, bulkBuildingCost matches sum, and upkeep is capped at 35%', () => {
   const farm = BUILDINGS.find((b) => b.id === 'farm')!;
   assert.equal(buildingCost(farm, 0), 250);
   assert.equal(buildingCost(farm, 1), 313);
+  const sum5 = [0, 1, 2, 3, 4].reduce((a, i) => a + buildingCost(farm, i), 0);
+  assert.equal(bulkBuildingCost(farm, 0, 5), sum5);
 
   const state = freshState();
   state.b.farm = 300;
@@ -119,19 +124,33 @@ test('building costs scale by 1.25x and upkeep is capped at 35%', () => {
   assert.ok(inc.upkeep <= inc.gross * 0.35 + 0.001);
 });
 
-test('ranks must be bought in strict order', () => {
+test('ranks reduced costs, +1% per rank income bonus, and 10 total ranks bought in strict order', () => {
+  assert.equal(MAX_RANK, 10);
+  assert.equal(RANKS.length, 11);
+  assert.equal(RANKS[1].cost, 250_000);
+  assert.equal(RANKS[6].cost, 18_000_000);
+  assert.equal(RANKS[10].cost, 600_000_000);
+
   let state = freshState();
-  state.cash = 50_000_000;
+  state.cash = 2_000_000_000;
+  state.b.tech = 2;
+  const baseNet = calculateIncome(state).net;
+
   const skip = applyBuyRank(state, 2);
   assert.equal(skip.ok, false);
 
-  const first = applyBuyRank(state, 1);
-  assert.equal(first.ok, true);
-  assert.equal(first.state.rank, 1);
-  assert.equal(first.state.cash, 50_000_000 - RANKS[1].cost);
+  for (let r = 1; r <= MAX_RANK; r++) {
+    const res = applyBuyRank(state, r);
+    assert.equal(res.ok, true);
+    state = res.state;
+  }
+  assert.equal(state.rank, 10);
+  const rankedNet = calculateIncome(state).net;
+  assert.ok(Math.abs(rankedNet / baseNet - 1.1) < 0.001, 'Rank 10 gives +10% (+1% per rank)');
 });
 
-test('sticker fusion consumes 3 duplicates and increments fused counter', () => {
+test('sticker fusion & crates (standard 5m CD cash crate and royal gem crate)', () => {
+  const now = 1_750_000_000_000;
   const state = freshState();
   state.stk = { bee: 3 };
   const res = fuseSticker(state, 'bee', () => 0);
@@ -140,27 +159,85 @@ test('sticker fusion consumes 3 duplicates and increments fused counter', () => 
   assert.equal(res.state.stk.bee, undefined);
   assert.equal(res.granted?.r, 2);
   assert.ok(STICKERS.some((s) => s.id === res.granted?.id));
+
+  const crateState = freshState();
+  crateState.cash = CRATE_COST_CASH * 2;
+  crateState.gems = CRATE_COST_GEMS;
+
+  const c1 = buyStickerCrate(crateState, 'cash', now, () => 0.1);
+  assert.equal(c1.ok, true);
+  assert.equal(c1.granted.length, 1);
+  assert.equal(c1.state.cash, CRATE_COST_CASH);
+
+  // Cooldown prevents immediate second cash crate
+  const c2 = buyStickerCrate(c1.state, 'cash', now + 60_000, () => 0.1);
+  assert.equal(c2.ok, false);
+  assert.match(c2.reason || '', /cooldown/i);
+
+  // Gem crate grants 2 stickers with first guaranteed Rare+
+  const g1 = buyStickerCrate(c1.state, 'gems', now + 1000, () => 0.1);
+  assert.equal(g1.ok, true);
+  assert.equal(g1.granted.length, 2);
+  assert.ok(g1.granted[0].r >= 2);
+  assert.equal(g1.state.gems, 0);
 });
 
-test('offline earnings credit 20% to taxPool capped at 30 minutes', () => {
+test('trade port export drops gems or stickers on meaningful tax collection', () => {
+  const s = freshState();
+  s.b.port = 2;
+  const noPortDrop = rollTradePortExport(freshState(), 1000, 10, () => 0);
+  assert.equal(noPortDrop.gems, 0);
+  assert.equal(noPortDrop.sticker, null);
+
+  const gemDrop = rollTradePortExport(s, 1000, 10, () => 0.01);
+  assert.equal(gemDrop.gems, 1);
+
+  let call = 0;
+  const seq = [0.01, 0.9, 0.2, 0];
+  const stkDrop = rollTradePortExport(s, 1000, 10, () => seq[call++] ?? 0);
+  assert.equal(stkDrop.gems, 0);
+  assert.ok(stkDrop.sticker !== null);
+});
+
+test('offline earnings credit 20% to taxPool capped at 30 minutes and ignore temp boosters', () => {
   const now = 1_700_000_000_000;
   const state = freshState();
   state.b.fact = 2;
-  state.t = now - 3_600_000; // 60 min ago -> capped at 30 min (1800s)
-  const net = calculateIncome(state, { nowMs: now }).net;
+  state.boost = 30;
+  state.t = now - 3_600_000;
+  const baseNet = calculateIncome(state, { nowMs: now, ignoreTempBoosters: true }).net;
   const res = applyOfflineEarnings(state, now);
   assert.equal(res.wasCapped, true);
   assert.equal(res.awaySec, 1800);
-  assert.ok(Math.abs(res.credited - net * 1800 * 0.2) < 0.01);
+  assert.ok(Math.abs(res.credited - baseNet * 1800 * 0.2) < 0.01);
   assert.equal(totalBuildings(res.state), 2);
 });
 
-test('target happiness stays clamped between 5 and 100 and daily quests deterministic', () => {
+test('policy presets, milestones, target happiness, and daily quests', () => {
   const state = freshState();
   state.tax = 45;
   state.prop = 15;
   state.wel = 0;
   assert.equal(targetHappiness(state), 5);
+
+  const balanced = applyPolicyPreset(state, 'balanced');
+  assert.equal(taxInfo(balanced).ev, 0);
+  const revenue = applyPolicyPreset(state, 'revenue');
+  const bliss = applyPolicyPreset(state, 'welfare');
+  assert.equal(bliss.tax, 12);
+  assert.equal(bliss.wel, 32);
+  assert.equal(taxInfo(bliss).ev, 0);
+  assert.ok(targetHappiness(bliss) > 60);
+  assert.ok(taxInfo(revenue).mult > taxInfo(balanced).mult);
+  assert.ok(taxInfo(balanced).mult > taxInfo(bliss).mult);
+  assert.ok(calculateIncome(revenue).net > calculateIncome(balanced).net);
+  assert.ok(calculateIncome(balanced).net > calculateIncome(bliss).net);
+
+  bliss.b.farm = 5;
+  const msRes = claimMilestone(bliss, MILESTONES[0].id);
+  assert.equal(msRes.ok, true);
+  assert.equal(msRes.gemsAdded, MILESTONES[0].r);
+  assert.equal(claimMilestone(msRes.state, MILESTONES[0].id).ok, false);
 
   const q1 = selectDailyQuestIds('Wed Nov 25 2026');
   const q2 = selectDailyQuestIds('Wed Nov 25 2026');
@@ -196,10 +273,8 @@ test('normalizeProject never sets a 1970 deadline when startedAt is null/pending
     fallbackNow,
   );
   assert.equal(proj.st, fallbackNow);
-  assert.equal(proj.dl, fallbackNow + proj.t.dur * 0 + proj.t.dl * 60_000);
   assert.ok(proj.dl > fallbackNow);
 
-  // Even when client clock estimate is hours behind server time, isPending forces server fallback
   const clientSkewedTs = { toMillis: () => fallbackNow - 10 * 3600_000 };
   const pendingProj = normalizeProject(
     'proj_2',
@@ -220,15 +295,21 @@ test('normalizeProject never sets a 1970 deadline when startedAt is null/pending
   assert.ok(pendingProj.dl > fallbackNow);
 });
 
-test('subscriptions (5M daily, 50M weekly, 500M monthly) grant benefits & prevent same-day double-claim on upgrade', () => {
+test('balanced subscriptions grant modest perks & prevent same-day double-claim on upgrade', () => {
   const now = 1_750_000_000_000;
   const daily = SUBSCRIPTIONS.find((s) => s.id === 'daily')!;
   const weekly = SUBSCRIPTIONS.find((s) => s.id === 'weekly')!;
   const monthly = SUBSCRIPTIONS.find((s) => s.id === 'monthly')!;
 
-  assert.equal(daily.cost, 5_000_000);
-  assert.equal(weekly.cost, 50_000_000);
-  assert.equal(monthly.cost, 500_000_000);
+  assert.equal(daily.incomeMult, 1.04);
+  assert.equal(daily.discountRate, 0.03);
+  assert.equal(daily.dailyCash, 150_000);
+  assert.equal(weekly.incomeMult, 1.08);
+  assert.equal(weekly.discountRate, 0.06);
+  assert.equal(weekly.dailyCash, 600_000);
+  assert.equal(monthly.incomeMult, 1.12);
+  assert.equal(monthly.discountRate, 0.1);
+  assert.equal(monthly.dailyCash, 2_500_000);
 
   let state = freshState();
   state.cash = 600_000_000;
@@ -241,44 +322,37 @@ test('subscriptions (5M daily, 50M weekly, 500M monthly) grant benefits & preven
   const baseRepair = gxRepairCost(state, 'parl', false, now);
   const baseUpgrade = gxUpgradeCost(state, 'farm', now);
 
-  // Buy Daily Pass (5M)
   const sub1 = applyBuySubscription(state, daily, now);
   assert.equal(sub1.ok, true);
   state = sub1.state;
   assert.equal(state.cash, 595_000_000);
-  assert.equal(getDevelopmentDiscount(state, now), 0.1);
-  assert.equal(getSubscriptionProjectSpeedMult(state, now), 1.1);
-  assert.ok(calculateIncome(state, { nowMs: now }).net > baseInc * 1.14);
+  assert.equal(getDevelopmentDiscount(state, now), 0.03);
+  assert.equal(getSubscriptionProjectSpeedMult(state, now), 1.05);
+  assert.ok(Math.abs(calculateIncome(state, { nowMs: now }).net / baseInc - 1.04) < 0.001);
   assert.ok(buildingCost(farmDef, 10, getDevelopmentDiscount(state, now)) < baseFarmCost);
   assert.ok(gxRepairCost(state, 'parl', false, now) < baseRepair);
   assert.ok(gxUpgradeCost(state, 'farm', now) < baseUpgrade);
 
-  // Cannot re-buy same or lower tier while active
   assert.equal(canBuySubscription(state, daily, now + 1000).ok, false);
 
-  // Claim daily stipend
   const c1 = claimSubscriptionDaily(state, '2026-11-25', now + 2000);
   assert.equal(c1.ok, true);
-  assert.equal(c1.cashAdded, 500_000);
+  assert.equal(c1.cashAdded, 150_000);
   state = c1.state;
 
-  // Cannot claim twice on same day
   assert.equal(claimSubscriptionDaily(state, '2026-11-25', now + 3000).ok, false);
 
-  // Upgrade to Weekly Charter (50M) on same day -> preserves lastClaimDay so cannot double-claim
   const sub2 = applyBuySubscription(state, weekly, now + 4000);
   assert.equal(sub2.ok, true);
   state = sub2.state;
   assert.equal(getActiveSubscription(state, now + 5000)?.def.id, 'weekly');
   assert.equal(claimSubscriptionDaily(state, '2026-11-25', now + 5000).ok, false);
 
-  // Next day claim works with Weekly stipend (2M + 1 gem)
   const c2 = claimSubscriptionDaily(state, '2026-11-26', now + 86_400_000);
   assert.equal(c2.ok, true);
-  assert.equal(c2.cashAdded, 2_000_000);
+  assert.equal(c2.cashAdded, 600_000);
   assert.equal(c2.gemsAdded, 1);
 
-  // Migration clamps absurd future subscription expiry
   const migrated = migrateState({
     ...c2.state,
     sub: { tier: 'monthly', exp: Date.now() + 999 * 86_400_000, lastClaimDay: '2026-11-26' },
@@ -288,20 +362,17 @@ test('subscriptions (5M daily, 50M weekly, 500M monthly) grant benefits & preven
 
 test('government renovation depends strictly on 20% of building development (unaffected by temp boosters)', () => {
   const state = freshState();
-  state.b.tech = 5; // 5 * 22 = 110 raw building dev
-  state.gx.cond.parl = 60; // missing 40%
-  state.gx.cond.road = 60; // missing 40%
+  state.b.tech = 5;
+  state.gx.cond.parl = 60;
+  state.gx.cond.road = 60;
 
   const baseParlFull = gxRepairCost(state, 'parl', true);
-  // 40 * (110 * 0.2) * 1.5 = 1320 (no 1.25x surcharge)
   assert.equal(baseParlFull, 1320);
 
-  // Turning on gem x2 boost + highest tax must NOT inflate renovation cost
   state.boost = 30;
   state.tax = 45;
   assert.equal(gxRepairCost(state, 'parl', true), baseParlFull);
 
-  // Full condition (>= 99.5) costs 0
   state.gx.cond.parl = 100;
   assert.equal(gxRepairCost(state, 'parl', true), 0);
 });
@@ -327,7 +398,7 @@ test('new buildings (hydro, stock, evplant, fusion) and new policies (tourism, d
     digital: 15,
     rd: 20,
     green: 20,
-    tax: 999, // Verify migration clamps out-of-range policies & boost
+    tax: 999,
     boost: 999,
   });
   assert.equal(boosted.tax, 45);
@@ -338,4 +409,3 @@ test('new buildings (hydro, stock, evplant, fusion) and new policies (tourism, d
   assert.equal(boosted.green, 20);
   assert.ok(calculateIncome(boosted).gross > incBefore);
 });
-

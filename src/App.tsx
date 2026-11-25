@@ -19,6 +19,7 @@ import {
   setDoc,
   type Unsubscribe,
 } from 'firebase/firestore';
+import { Landmark, StickerArt, TabIcon } from './components/GameIcons';
 import { HeroPanel } from './components/HeroPanel';
 import { LoginGate } from './components/LoginGate';
 import {
@@ -91,12 +92,15 @@ import {
   applyBuyRank,
   applyBuySubscription,
   applyOfflineEarnings,
-  buildingCost,
+  applyPolicyPreset,
+  bulkBuildingCost,
+  buyStickerCrate,
   calculateGdp,
   calculateIncome,
   calculateOfflineRank,
   calculateOnlineRank,
   calculateTaxCollect,
+  claimMilestone,
   claimSubscriptionDaily,
   cleanStickersMap,
   formatNumber,
@@ -110,6 +114,7 @@ import {
   playerLevel,
   POLICY_BOUNDS,
   QUEST_POOL,
+  rollTradePortExport,
   selectDailyQuestIds,
   targetHappiness,
   tierOfCompletedTrades,
@@ -199,6 +204,7 @@ export default function App() {
   const [dmMessages, setDmMessages] = useState<ChatMessage[]>([]);
   const [dmRecipient, setDmRecipient] = useState<DmRecipient | null>(null);
   const [recentDms, setRecentDms] = useState<DmRecipient[]>([]);
+  const [sentDmContacts, setSentDmContacts] = useState<DmRecipient[]>([]);
 
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [floats, setFloats] = useState<FloatPop[]>([]);
@@ -449,12 +455,12 @@ export default function App() {
         const nextStreak = lastKey === ydayKey ? (working.streak || 0) + 1 : 1;
         const rw = DAILY_REWARDS[Math.min(DAILY_REWARDS.length - 1, nextStreak - 1)];
         const nextStk = { ...working.stk };
-        let grantedStickerEmoji = '';
+        let grantedStickerId = '';
         let grantedStickerName = '';
         if (rw.e) {
           const picked = STICKERS[Math.floor(Math.random() * STICKERS.length)];
           nextStk[picked.id] = (nextStk[picked.id] || 0) + 1;
-          grantedStickerEmoji = picked.e;
+          grantedStickerId = picked.id;
           grantedStickerName = picked.n;
         }
         working = {
@@ -466,14 +472,19 @@ export default function App() {
           lastDaily: now,
         };
         streakDialog = {
-          title: `🎁 Day ${nextStreak} Streak!`,
+          title: `Day ${nextStreak} Streak!`,
           body: (
             <div>
               <p>Welcome back! Here is today&apos;s treasury bonus:</p>
               <p style={{ fontSize: 18, color: 'var(--gold)', fontFamily: 'var(--d)' }}>
-                +₨ {formatNumber(rw.c)} {rw.g > 0 ? `· +${rw.g} 💎` : ''}
-                {grantedStickerName ? ` · ${grantedStickerEmoji} ${grantedStickerName}` : ''}
+                +₨ {formatNumber(rw.c)} {rw.g > 0 ? `· +${rw.g} Gems` : ''}
+                {grantedStickerName ? ` · ${grantedStickerName}` : ''}
               </p>
+              {grantedStickerId && (
+                <div style={{ margin: '8px auto' }}>
+                  <StickerArt id={grantedStickerId} size={34} />
+                </div>
+              )}
               {off.credited >= 1 && (
                 <p className="ok" style={{ fontSize: 13 }}>
                   Plus +₨ {formatNumber(off.credited)} offline tax collected while away!
@@ -667,12 +678,13 @@ export default function App() {
       onSnapshot(
         queries.playersActiveQuery(),
         (snap) => {
+          const nowEst = Date.now() + serverOffsetMsRef.current;
           const rows = snap.docs
             .map((d) => {
               const data = d.data({ serverTimestamps: 'estimate' }) as Omit<PlayerProfile, 'id'>;
               return { ...data, id: d.id, seen: timestampToMs(data.lastSeen) };
             })
-            .filter((p) => p.id === uid || (p.seen && Date.now() - p.seen <= ACTIVE_WINDOW_MS))
+            .filter((p) => p.id === uid || (p.seen && nowEst - p.seen <= ACTIVE_WINDOW_MS))
             .sort((a, b) => (b.gdp || 0) - (a.gdp || 0));
           setLeaderboard(rows);
           setLbLoaded(true);
@@ -890,16 +902,19 @@ export default function App() {
     return () => unsub();
   }, [uid, cloudReady, dmRecipient]);
 
-  // Collect recent DM contacts from DM notifications
+  // Collect recent DM contacts from both incoming DM notifications and initiated DMs
   useEffect(() => {
     const map = new Map<string, DmRecipient>();
+    for (const c of sentDmContacts) {
+      if (c.uid && c.name) map.set(c.uid, c);
+    }
     for (const n of notifications) {
       if (n.type === 'dm' && n.from && n.fromName && !map.has(n.from)) {
         map.set(n.from, { uid: n.from, name: n.fromName, cc: n.fromCc || '' });
       }
     }
     setRecentDms(Array.from(map.values()));
-  }, [notifications]);
+  }, [notifications, sentDmContacts]);
 
   const tradeTier = useMemo(
     () => tierOfCompletedTrades(pubProfile?.stats?.completedTrades),
@@ -941,9 +956,9 @@ export default function App() {
         let nextDay = prev.day + 1 / 12;
         let nextEv = prev.ev - 1;
 
-        // Clear expired shop income boost cleanly
+        // Clear expired shop income boost cleanly using server clock
         let nextActiveFx = prev.activeFx;
-        if (nextActiveFx?.incomeBoostEnd && nextActiveFx.incomeBoostEnd <= now) {
+        if (nextActiveFx?.incomeBoostEnd && nextActiveFx.incomeBoostEnd <= nowSrv) {
           nextActiveFx = { ...nextActiveFx };
           delete nextActiveFx.incomeBoostEnd;
           delete nextActiveFx.incomeBoostMult;
@@ -1181,21 +1196,34 @@ export default function App() {
       addToast('Tax pool is empty — wait a moment!');
       return;
     }
+    const portDrop = rollTradePortExport(cur, res.poolAmount, res.baseNet);
     playSfx('coin', !!cur.set.sfx);
     triggerBuzz(14, !!cur.set.vib);
     setBurstKey((k) => k + 1);
     const rect = e.currentTarget.getBoundingClientRect();
     spawnFloat(`+₨ ${formatNumber(res.collected)}`, rect.left + rect.width / 2, rect.top, '#3fe0b0');
 
-    updateState((prev) => ({
-      ...prev,
-      cash: prev.cash + res.collected,
-      taxPool: 0,
-      activeFx: res.bonusApplied ? { ...prev.activeFx, taxSurge: 0 } : prev.activeFx,
-    }), 1000);
+    updateState((prev) => {
+      const nextStk = portDrop.sticker
+        ? { ...prev.stk, [portDrop.sticker.id]: (prev.stk[portDrop.sticker.id] || 0) + 1 }
+        : prev.stk;
+      return {
+        ...prev,
+        cash: prev.cash + res.collected,
+        gems: prev.gems + portDrop.gems,
+        stk: nextStk,
+        taxPool: 0,
+        activeFx: res.bonusApplied ? { ...prev.activeFx, taxSurge: 0 } : prev.activeFx,
+      };
+    }, 1000);
 
     if (res.bonusApplied) {
-      addToast(`💰 Tax Surge added +₨ ${formatNumber(res.bonusAmount)}!`);
+      addToast(`Tax Surge added +₨ ${formatNumber(res.bonusAmount)}!`);
+    }
+    if (portDrop.gems > 0) {
+      addToast(`Trade Port Export: +${portDrop.gems} Gem!`);
+    } else if (portDrop.sticker) {
+      addToast(`Trade Port Export: ${portDrop.sticker.n} sticker!`);
     }
   };
 
@@ -1209,10 +1237,10 @@ export default function App() {
       gems: prev.gems - 5,
       boost: 30,
     }), 1000);
-    addToast('⚡ ×2 Boost active for 30s!');
+    addToast('×2 Boost active for 30s!');
   };
 
-  const handleCityBuildingTap = () => {
+  const handleCityBuildingTap = (clientX?: number, clientY?: number) => {
     const now = Date.now();
     if (now - lastCityTapRef.current < 600) return;
     lastCityTapRef.current = now;
@@ -1226,28 +1254,33 @@ export default function App() {
     playSfx('tap', !!cur.set.sfx);
     setBurstKey((k) => k + 1);
     updateState((prev) => ({ ...prev, cash: prev.cash + bonus }), 3000);
-    addToast(`🏙️ City tap bonus +₨ ${formatNumber(bonus)}`);
+    spawnFloat(
+      `+₨ ${formatNumber(bonus)}`,
+      clientX ?? window.innerWidth / 2,
+      clientY ?? 260,
+      '#ffc23d',
+    );
   };
 
-  const handleBuyBuilding = (id: string, e: React.MouseEvent<HTMLButtonElement>) => {
+  const handleBuyBuilding = (id: string, qty: 1 | 5, e: React.MouseEvent<HTMLButtonElement>) => {
     const def = BUILDINGS.find((b) => b.id === id);
     if (!def) return;
     const cur = stateRef.current;
     const nowSrv = Date.now() + serverOffsetMsRef.current;
     const count = cur.b[id] || 0;
-    const cost = buildingCost(def, count, getDevelopmentDiscount(cur, nowSrv));
+    const cost = bulkBuildingCost(def, count, qty, getDevelopmentDiscount(cur, nowSrv));
     if (cur.cash < cost) return;
 
     playSfx('buy', !!cur.set.sfx);
     triggerBuzz(15, !!cur.set.vib);
     setBurstKey((k) => k + 1);
     const rect = e.currentTarget.getBoundingClientRect();
-    spawnFloat(`${def.e} Lv ${count + 1}`, rect.left + rect.width / 2, rect.top, '#ffc23d');
+    spawnFloat(`${def.n} Lv ${count + qty}`, rect.left + rect.width / 2, rect.top, '#ffc23d');
 
     updateState((prev) => ({
       ...prev,
       cash: prev.cash - cost,
-      b: { ...prev.b, [id]: (prev.b[id] || 0) + 1 },
+      b: { ...prev.b, [id]: (prev.b[id] || 0) + qty },
     }), 1200);
   };
 
@@ -1350,6 +1383,13 @@ export default function App() {
     updateState((prev) => ({ ...prev, [key]: clamped }), 2200);
   };
 
+  const handleApplyPreset = (presetId: 'balanced' | 'revenue' | 'welfare') => {
+    playSfx('buy', !!stateRef.current.set.sfx);
+    updateState((prev) => applyPolicyPreset(prev, presetId), 1200);
+    const label = presetId === 'balanced' ? 'Balanced Growth' : presetId === 'revenue' ? 'High Revenue' : 'Citizen Bliss';
+    addToast(`Policy preset applied: ${label}`);
+  };
+
   const handleChangeGov = (govId: string) => {
     const g = GOVS.find((x) => x.id === govId);
     if (!g) return;
@@ -1365,7 +1405,7 @@ export default function App() {
       gov: govId,
       govT: nowSrv,
     }), 1000);
-    addToast(`🏛️ Switched to ${g.n}!`);
+    addToast(`Switched government to ${g.n}!`);
   };
 
   const handleFuseSticker = (stickerId: string) => {
@@ -1378,10 +1418,10 @@ export default function App() {
     triggerBuzz(20, !!stateRef.current.set.vib);
     updateState(() => res.state, 1000);
     setDialog({
-      title: '🔮 Sticker Fused!',
+      title: 'Sticker Fused!',
       body: (
         <div className="stkcard big">
-          <span className="stk-e">{res.granted.e}</span>
+          <StickerArt id={res.granted.id} size={40} />
           <span className="stk-n">{res.granted.n}</span>
           <span className="stk-r" style={{ color: '#ffc93c' }}>
             {'★'.repeat(res.granted.r)}
@@ -1389,6 +1429,37 @@ export default function App() {
         </div>
       ),
       actions: [{ label: 'Awesome', variant: 'gold', onClick: () => setDialog(null) }],
+    });
+  };
+
+  const handleBuyStickerCrate = (kind: 'cash' | 'gems', e: React.MouseEvent<HTMLButtonElement>) => {
+    const nowSrv = Date.now() + serverOffsetMsRef.current;
+    const res = buyStickerCrate(stateRef.current, kind, nowSrv);
+    if (!res.ok || res.granted.length === 0) {
+      if (res.reason) addToast(res.reason);
+      return;
+    }
+    playSfx('win', !!stateRef.current.set.sfx);
+    triggerBuzz(18, !!stateRef.current.set.vib);
+    const rect = e.currentTarget.getBoundingClientRect();
+    spawnFloat(`+${res.granted.length} Sticker`, rect.left + rect.width / 2, rect.top, '#ffc23d');
+    updateState(() => res.state, 800);
+    setDialog({
+      title: kind === 'gems' ? 'Royal Crate Opened!' : 'Standard Crate Opened!',
+      body: (
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+          {res.granted.map((st, idx) => (
+            <div key={`${st.id}_${idx}`} className="stkcard" style={{ minWidth: 120 }}>
+              <StickerArt id={st.id} size={36} />
+              <span className="stk-n">{st.n}</span>
+              <span className="stk-r" style={{ color: '#ffc93c' }}>
+                {'★'.repeat(st.r)}
+              </span>
+            </div>
+          ))}
+        </div>
+      ),
+      actions: [{ label: 'Collect', variant: 'gold', onClick: () => setDialog(null) }],
     });
   };
 
@@ -1410,12 +1481,26 @@ export default function App() {
     playSfx('win', !!cur.set.sfx);
     triggerBuzz(16, !!cur.set.vib);
     const rect = e.currentTarget.getBoundingClientRect();
-    spawnFloat(`+${verifiedGems} 💎`, rect.left + rect.width / 2, rect.top, '#5ccbff');
+    spawnFloat(`+${verifiedGems} Gems`, rect.left + rect.width / 2, rect.top, '#5ccbff');
     updateState((prev) => ({
       ...prev,
       gems: prev.gems + verifiedGems,
       claimed: { ...prev.claimed, [questId]: 1 },
     }), 1000);
+  };
+
+  const handleClaimMilestone = (milestoneId: string, e: React.MouseEvent<HTMLButtonElement>) => {
+    const res = claimMilestone(stateRef.current, milestoneId);
+    if (!res.ok) {
+      if (res.reason) addToast(res.reason);
+      return;
+    }
+    playSfx('win', !!stateRef.current.set.sfx);
+    triggerBuzz(18, !!stateRef.current.set.vib);
+    const rect = e.currentTarget.getBoundingClientRect();
+    spawnFloat(`+${res.gemsAdded} Gems`, rect.left + rect.width / 2, rect.top, '#5ccbff');
+    updateState(() => res.state, 800);
+    addToast(`Milestone completed! +${res.gemsAdded} Gems`);
   };
 
   const handleBuyRank = (rankId: number, e: React.MouseEvent<HTMLButtonElement>) => {
@@ -1428,9 +1513,9 @@ export default function App() {
     playSfx('win', !!stateRef.current.set.sfx);
     triggerBuzz(20, !!stateRef.current.set.vib);
     const rect = e.currentTarget.getBoundingClientRect();
-    spawnFloat(`${rk.e} ${rk.n}`, rect.left + rect.width / 2, rect.top, '#ffc23d');
+    spawnFloat(rk.n, rect.left + rect.width / 2, rect.top, '#ffc23d');
     updateState(() => res.state, 800);
-    addToast(`🏅 Promoted to ${rk.n}!`);
+    addToast(`Promoted to ${rk.n}!`);
   };
 
   const handleBuySubscription = (tierId: SubscriptionTierId, e: React.MouseEvent<HTMLButtonElement>) => {
@@ -1445,9 +1530,9 @@ export default function App() {
     playSfx('win', !!stateRef.current.set.sfx);
     triggerBuzz(20, !!stateRef.current.set.vib);
     const rect = e.currentTarget.getBoundingClientRect();
-    spawnFloat(`${subDef.e} ${subDef.n}`, rect.left + rect.width / 2, rect.top, '#ffc23d');
+    spawnFloat(subDef.n, rect.left + rect.width / 2, rect.top, '#ffc23d');
     updateState(() => res.state, 600);
-    addToast(`${subDef.e} ${subDef.n} activated!`);
+    addToast(`${subDef.n} activated!`);
   };
 
   const handleClaimSubDaily = (e: React.MouseEvent<HTMLButtonElement>) => {
@@ -1462,14 +1547,14 @@ export default function App() {
     triggerBuzz(16, !!stateRef.current.set.vib);
     const rect = e.currentTarget.getBoundingClientRect();
     spawnFloat(
-      `+₨ ${formatNumber(res.cashAdded)}${res.gemsAdded > 0 ? ` +${res.gemsAdded}💎` : ''}`,
+      `+₨ ${formatNumber(res.cashAdded)}${res.gemsAdded > 0 ? ` +${res.gemsAdded} Gems` : ''}`,
       rect.left + rect.width / 2,
       rect.top,
       '#3fe0b0',
     );
     updateState(() => res.state, 600);
     addToast(
-      `💵 Subscription stipend: +₨ ${formatNumber(res.cashAdded)}${res.gemsAdded > 0 ? ` + ${res.gemsAdded}💎` : ''}`,
+      `Subscription stipend: +₨ ${formatNumber(res.cashAdded)}${res.gemsAdded > 0 ? ` + ${res.gemsAdded} Gems` : ''}`,
     );
   };
 
@@ -1484,9 +1569,9 @@ export default function App() {
     playSfx('buy', !!stateRef.current.set.sfx);
     triggerBuzz(16, !!stateRef.current.set.vib);
     const rect = e.currentTarget.getBoundingClientRect();
-    spawnFloat(`${b.e} ${b.n}`, rect.left + rect.width / 2, rect.top, '#3fe0b0');
+    spawnFloat(b.n, rect.left + rect.width / 2, rect.top, '#3fe0b0');
     updateState(() => res.state, 800);
-    addToast(`${b.e} ${b.n} activated!`);
+    addToast(`${b.n} activated!`);
   };
 
   // Auth handlers
@@ -1558,11 +1643,12 @@ export default function App() {
   }, [uid, lbLoaded, leaderboard, state]);
   rankPositionRef.current = rankPosition;
 
+  const currentSecond = Math.floor(state.t / 1000);
   const pendingIncomingGifts = useMemo(() => {
     if (!uid) return 0;
-    const nowSrv = Date.now() + serverOffsetMsRef.current;
+    const nowSrv = currentSecond * 1000 + serverOffsetMsRef.current;
     return trades.filter((t) => t.to === uid && t.status === 'pending' && t.expMs > nowSrv).length;
-  }, [uid, trades]);
+  }, [uid, trades, currentSecond]);
 
   const unreadNotifs = useMemo(
     () => notifications.filter((n) => !n.read).length,
@@ -1676,7 +1762,9 @@ export default function App() {
       ))}
 
       <aside className="brand" aria-hidden="true">
-        <div className="bm">🏛️</div>
+        <div className="bm">
+          <Landmark size={22} strokeWidth={2.2} />
+        </div>
         <div>
           <b>Country Economy</b>
           <small>Tycoon</small>
@@ -1724,7 +1812,9 @@ export default function App() {
 
           <div className="card">
             <div className="tabs">
-              <div className="ttl-ic">{currentTabMeta.emoji}</div>
+              <div className="ttl-ic">
+                <TabIcon tab={tab} size={20} />
+              </div>
               <div>
                 <b>{currentTabMeta.label}</b>
                 <small>{currentTabMeta.subtitle}</small>
@@ -1758,6 +1848,7 @@ export default function App() {
                 uid={uid}
                 serverOffsetMs={serverOffsetMsRef.current}
                 onPolicyChange={handlePolicyChange}
+                onApplyPreset={handleApplyPreset}
                 onChangeGov={handleChangeGov}
                 onResetGame={handleResetGame}
                 onSaveCloudNow={() => void performCloudSync(true)}
@@ -1771,6 +1862,7 @@ export default function App() {
                 subTab={playersSubTab}
                 leaderboard={leaderboard}
                 lbLoaded={lbLoaded}
+                serverOffsetMs={serverOffsetMsRef.current}
                 globalChat={globalChat}
                 dmMessages={dmMessages}
                 dmRecipient={dmRecipient}
@@ -1780,7 +1872,9 @@ export default function App() {
                 onOpenProfile={(targetUid) => void openPlayerProfile(targetUid)}
                 onStartGift={(targetUid) => void openGiftComposer(targetUid)}
                 onOpenDm={(targetUid, name, cc) => {
-                  setDmRecipient({ uid: targetUid, name, cc });
+                  const rec = { uid: targetUid, name, cc };
+                  setSentDmContacts((prev) => (prev.some((x) => x.uid === targetUid) ? prev : [rec, ...prev]));
+                  setDmRecipient(rec);
                   setPlayersSubTab('dm');
                 }}
                 onBackDm={() => setDmRecipient(null)}
@@ -1811,6 +1905,9 @@ export default function App() {
                       text,
                       notify: true,
                     });
+                    setSentDmContacts((prev) =>
+                      prev.some((x) => x.uid === dmRecipient.uid) ? prev : [dmRecipient, ...prev],
+                    );
                     return true;
                   } catch (err) {
                     addToast(formatFirebaseError(err));
@@ -1819,7 +1916,14 @@ export default function App() {
                 }}
               />
             )}
-            {tab === 'stickers' && <StickersTab state={state} onFuseSticker={handleFuseSticker} />}
+            {tab === 'stickers' && (
+              <StickersTab
+                state={state}
+                serverOffsetMs={serverOffsetMsRef.current}
+                onFuseSticker={handleFuseSticker}
+                onBuyCrate={handleBuyStickerCrate}
+              />
+            )}
             {tab === 'trade' && (
               <GiftsTab
                 uid={uid}
@@ -1836,7 +1940,7 @@ export default function App() {
                 onAcceptTrade={async (id) => {
                   try {
                     await acceptGiftOffer(id, sidRef.current, handleKicked, serverOffsetMsRef.current);
-                    addToast('🎁 Gift accepted!');
+                    addToast('Gift accepted!');
                   } catch (err) {
                     addToast(formatFirebaseError(err));
                   }
@@ -1873,6 +1977,7 @@ export default function App() {
                 dayKey={dayKey}
                 rankPosition={rankPosition}
                 onClaimQuest={handleClaimQuest}
+                onClaimMilestone={handleClaimMilestone}
               />
             )}
             {tab === 'shop' && (
@@ -1920,7 +2025,9 @@ export default function App() {
         }}
         onMessage={(p) => {
           setProfileView(null);
-          setDmRecipient({ uid: p.id, name: p.username, cc: p.countryCode });
+          const rec = { uid: p.id, name: p.username, cc: p.countryCode };
+          setSentDmContacts((prev) => (prev.some((x) => x.uid === rec.uid) ? prev : [rec, ...prev]));
+          setDmRecipient(rec);
           setTab('rivals');
           setPlayersSubTab('dm');
         }}
@@ -1966,6 +2073,7 @@ export default function App() {
 
       <OnboardingModal
         open={needsOnboarding}
+        defaultCountryCode={state.country?.[0]}
         onCheckUsername={checkUsernameAvailability}
         onSubmitProfile={async (username, cc) => {
           try {
@@ -1976,7 +2084,7 @@ export default function App() {
             updateState((prev) => ({ ...prev, country: chosen }), 500);
             setNeedsOnboarding(false);
             setCloudReady(true);
-            addToast(`🎉 Welcome, ${username}!`);
+            addToast(`Welcome, ${username}!`);
           } catch (err) {
             addToast(formatFirebaseError(err));
           }

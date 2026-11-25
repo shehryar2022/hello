@@ -1,7 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { STICKERS } from '../../game/constants';
-import { flagUrl, formatNumber } from '../../game/rules';
+import { formatNumber } from '../../game/rules';
 import type { GameState, PlayerProfile, TradeOffer } from '../../game/types';
+import { CashCoinIcon, CountryFlag, GemDiamondIcon, Gift, StickerArt } from '../GameIcons';
 
 interface GiftTableModalProps {
   mode: 'compose' | 'review';
@@ -29,7 +30,6 @@ interface SlotEntry {
   kind: 'cash' | 'gems' | 'stk';
   label: string;
   qty: string;
-  emoji?: string;
   stkId?: string;
 }
 
@@ -57,6 +57,14 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   const maxCash = Math.min(1e12, Math.floor(state.cash));
   const maxGems = Math.min(1e9, Math.floor(state.gems));
 
@@ -80,7 +88,6 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
             kind: 'stk',
             label: def.n.split(' ')[0].toUpperCase(),
             qty: `×${count}`,
-            emoji: def.e,
             stkId: id,
           });
         }
@@ -91,9 +98,9 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
 
   const totalParts: string[] = [];
   if (effectiveCash > 0) totalParts.push(`₨ ${formatNumber(effectiveCash)}`);
-  if (effectiveGems > 0) totalParts.push(`💎 ${effectiveGems}`);
+  if (effectiveGems > 0) totalParts.push(`${effectiveGems} Gems`);
   const stkTotal = Object.values(effectiveStk || {}).reduce((a, b) => a + (b || 0), 0);
-  if (stkTotal > 0) totalParts.push(`🃏 ×${stkTotal}`);
+  if (stkTotal > 0) totalParts.push(`${stkTotal} Stickers`);
   const totalSummary = totalParts.join(' · ');
 
   const ownedStickers = STICKERS.filter((s) => (state.stk[s.id] || 0) > 0);
@@ -166,10 +173,13 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
   };
 
   return (
-    <div id="tov" role="dialog" aria-modal="true" aria-label="Gift Table">
-      <div className="tt">
+    <div id="tov" role="dialog" aria-modal="true" aria-label="Gift Table" onClick={onClose}>
+      <div className="tt" onClick={(e) => e.stopPropagation()}>
         <div className="ttbar">
-          <h2>{mode === 'compose' ? '🎁 Send a Gift' : '🎁 Gift Details'}</h2>
+          <h2>
+            <Gift size={20} color="#ffc23d" />
+            <span>{mode === 'compose' ? 'Send a Gift' : 'Gift Details'}</span>
+          </h2>
           {mode === 'review' && trade && (
             <span className="tag">
               {trade.status === 'pending' && trade.expMs > nowSrv
@@ -184,7 +194,7 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
 
         <div className="ttrcpt">
           <div className="tr-flag">
-            {peerCc && <img src={flagUrl(peerCc)} alt={peerCc} referrerPolicy="no-referrer" />}
+            <CountryFlag code={peerCc} alt={peerCc} className="" />
           </div>
           <div className="tr-info">
             <div className="tr-label">{mode === 'compose' ? 'Recipient' : trade?.from === uid ? 'To' : 'From'}</div>
@@ -196,14 +206,17 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
         {mode === 'compose' && (
           <div className="ttyou">
             <div className="ty-flag">
-              {myCountryCode && (
-                <img src={flagUrl(myCountryCode)} alt={myCountryCode} referrerPolicy="no-referrer" />
-              )}
+              <CountryFlag code={myCountryCode} alt={myCountryCode} className="" />
             </div>
             <div className="ty-meta">
               <div className="ty-nm">{myName || 'You'}</div>
               <div className="ty-bal">
-                Balance: <b>₨ {formatNumber(state.cash)}</b> · <b>💎 {Math.floor(state.gems)}</b>
+                <span>Balance:</span>
+                <b>₨ {formatNumber(state.cash)}</b>
+                <span>·</span>
+                <b>
+                  <GemDiamondIcon size={13} /> {Math.floor(state.gems)}
+                </b>
               </div>
             </div>
           </div>
@@ -236,11 +249,11 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
                 >
                   <span className="l">{entry.label}</span>
                   {entry.kind === 'cash' ? (
-                    <span className="coin">₨</span>
+                    <CashCoinIcon size={24} />
                   ) : entry.kind === 'gems' ? (
-                    <span className="gemi">💎</span>
+                    <GemDiamondIcon size={24} />
                   ) : (
-                    <span className="gemi">{entry.emoji}</span>
+                    entry.stkId && <StickerArt id={entry.stkId} size={22} />
                   )}
                   <span className="q">{entry.qty}</span>
                 </button>
@@ -267,16 +280,16 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
                 </div>
                 <div className="chiprow">
                   <button type="button" onClick={() => setGems((g) => Math.min(maxGems, g + 1))}>
-                    +1 💎
+                    +1 <GemDiamondIcon size={13} />
                   </button>
                   <button type="button" onClick={() => setGems((g) => Math.min(maxGems, g + 5))}>
-                    +5 💎
+                    +5 <GemDiamondIcon size={13} />
                   </button>
                   <button type="button" onClick={() => setGems((g) => Math.min(maxGems, g + 25))}>
-                    +25 💎
+                    +25 <GemDiamondIcon size={13} />
                   </button>
                   <button type="button" className="max" onClick={() => setGems(maxGems)}>
-                    MAX 💎
+                    MAX <GemDiamondIcon size={13} />
                   </button>
                 </div>
               </div>
@@ -299,7 +312,7 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
                   min={0}
                   max={maxGems}
                   className="inp"
-                  placeholder="Diamonds 💎"
+                  placeholder="Diamonds"
                   value={gems || ''}
                   onChange={(e) => {
                     const n = Math.floor(Number(e.target.value) || 0);
@@ -322,7 +335,7 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
                         onClick={() => toggleSticker(s.id)}
                       >
                         {added > 0 && <b>×{added}</b>}
-                        <span>{s.e}</span>
+                        <StickerArt id={s.id} size={22} />
                         <small>{own}</small>
                       </button>
                     );
@@ -397,7 +410,8 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
                 disabled={!totalSummary}
                 onClick={() => setConfirming(true)}
               >
-                🎁 Send Gift
+                <Gift size={15} />
+                <span>Send Gift</span>
               </button>
             </div>
           )

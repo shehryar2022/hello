@@ -1,7 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ACTIVE_WINDOW_MS, RANKS } from '../../game/constants';
-import { calculateGdp, flagUrl, formatNumber } from '../../game/rules';
+import { calculateGdp, formatNumber } from '../../game/rules';
 import type { ChatMessage, DmRecipient, GameState, PlayerProfile, PlayersSubTab } from '../../game/types';
+import {
+  CountryFlag,
+  Gift,
+  Globe,
+  IdCard,
+  Lock,
+  Mail,
+  MessageSquare,
+  RankEmblem,
+  TrendingUp,
+} from '../GameIcons';
 import { GdpChart } from '../GdpChart';
 
 interface PlayersTabProps {
@@ -11,6 +22,7 @@ interface PlayersTabProps {
   subTab: PlayersSubTab;
   leaderboard: PlayerProfile[];
   lbLoaded: boolean;
+  serverOffsetMs?: number;
   globalChat: ChatMessage[];
   dmMessages: ChatMessage[];
   dmRecipient: DmRecipient | null;
@@ -42,6 +54,7 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
   subTab,
   leaderboard,
   lbLoaded,
+  serverOffsetMs = 0,
   globalChat,
   dmMessages,
   dmRecipient,
@@ -69,10 +82,14 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
     return (
       <div>
         <h2 className="f sec">
-          🌍 Real players <span className="lv" style={{ background: 'var(--mint)' }}>LIVE</span>
+          <Globe size={18} color="#3fe0b0" />
+          <span>Real players</span>
+          <span className="lv" style={{ background: 'var(--mint)', color: '#04332a' }}>LIVE</span>
         </h2>
         <div className="empty">
-          <div className="big">🔐</div>
+          <div className="big">
+            <Lock size={28} />
+          </div>
           <p className="dim">Sign in to see active players and chat.</p>
           <button type="button" className="btn gold" onClick={onOpenLogin}>
             Sign in
@@ -82,6 +99,8 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
       </div>
     );
   }
+
+  const nowSrv = Date.now() + serverOffsetMs;
 
   const handleSendChat = async () => {
     const trimmed = chatInput.trim();
@@ -101,13 +120,16 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
     <div>
       <div className="subtabs">
         <button type="button" className={subTab === 'lb' ? 'on' : ''} onClick={() => onChangeSubTab('lb')}>
-          💲 Active
+          <TrendingUp size={14} />
+          <span>Active</span>
         </button>
         <button type="button" className={subTab === 'chat' ? 'on' : ''} onClick={() => onChangeSubTab('chat')}>
-          📢 Chat
+          <MessageSquare size={14} />
+          <span>Chat</span>
         </button>
         <button type="button" className={subTab === 'dm' ? 'on' : ''} onClick={() => onChangeSubTab('dm')}>
-          📫 Private
+          <Mail size={14} />
+          <span>Private</span>
         </button>
       </div>
 
@@ -116,7 +138,9 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
       ) : subTab === 'lb' ? (
         <>
           <h2 className="f sec">
-            🌍 Active players <span className="lv" style={{ background: 'var(--mint)' }}>ONLINE</span>
+            <Globe size={18} color="#3fe0b0" />
+            <span>Active players</span>
+            <span className="lv" style={{ background: 'var(--mint)', color: '#04332a' }}>ONLINE</span>
           </h2>
           {!lbLoaded ? (
             <p className="dim">Loading players…</p>
@@ -126,20 +150,20 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
                 {leaderboard.map((p, idx) => {
                   const me = p.id === uid;
                   const rk = RANKS[p.rank || 0] || RANKS[0];
-                  const isOnline = !me && p.seen && Date.now() - p.seen <= ACTIVE_WINDOW_MS;
+                  const isOnline = !me && p.seen && nowSrv - p.seen <= ACTIVE_WINDOW_MS;
                   return (
                     <div key={p.id} className={`row pcard ${me ? 'me' : ''}`}>
                       <div className={`medal m${idx + 1}`}>{idx + 1}</div>
                       <div style={{ minWidth: 0 }}>
                         <h2 style={{ display: 'flex', gap: 7, alignItems: 'center' }}>
                           <span style={{ width: 24, height: 17, flex: 'none', display: 'inline-block' }}>
-                            <img className="flagimg" src={flagUrl(p.countryCode)} alt={p.countryCode} referrerPolicy="no-referrer" />
+                            <CountryFlag code={p.countryCode} alt={p.countryCode} />
                           </span>
                           {isOnline && <i className="onl" />}
                           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.username}</span>
-                          {rk.e && (
+                          {rk.id > 0 && (
                             <span className="rank-badge" style={{ '--c': rk.c } as React.CSSProperties} title={rk.n}>
-                              {rk.e}
+                              <RankEmblem rank={rk.id} size={18} />
                             </span>
                           )}
                         </h2>
@@ -157,7 +181,7 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
                           aria-label={`View ${p.username} profile`}
                           onClick={() => onOpenProfile(p.id)}
                         >
-                          🪪
+                          <IdCard size={15} />
                         </button>
                         {!me && (
                           <>
@@ -169,7 +193,7 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
                               aria-label={`Gift ${p.username}`}
                               onClick={() => onStartGift(p.id)}
                             >
-                              💱
+                              <Gift size={15} />
                             </button>
                             <button
                               type="button"
@@ -179,7 +203,7 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
                               aria-label={`Message ${p.username}`}
                               onClick={() => onOpenDm(p.id, p.username, p.countryCode)}
                             >
-                              📫
+                              <Mail size={15} />
                             </button>
                           </>
                         )}
@@ -199,7 +223,9 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
       ) : subTab === 'chat' ? (
         <div className="chbox">
           <div className="chhd">
-            🌍 Global chat <small>be kind · max 200 chars</small>
+            <Globe size={16} color="#5ccbff" />
+            <span>Global chat</span>
+            <small>be kind · max 200 chars</small>
           </div>
           <div className="chlist" ref={listRef}>
             {globalChat.length ? (
@@ -209,12 +235,12 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
                   <div key={m.id} className={`cm ${m.uid === uid ? 'me' : ''}`}>
                     <div className="cmh">
                       <span className="cmf">
-                        <img src={flagUrl(m.cc)} alt={m.cc} referrerPolicy="no-referrer" />
+                        <CountryFlag code={m.cc} alt={m.cc} className="" />
                       </span>
                       <button type="button" className="cmn" onClick={() => onOpenProfile(m.uid)}>
                         {m.name || 'Player'}
                       </button>
-                      {rk.e && <span title={rk.n}>{rk.e}</span>}
+                      {rk.id > 0 && <RankEmblem rank={rk.id} size={15} />}
                       <small>{formatWhen(m.ms)}</small>
                     </div>
                     <div className="cmt">{m.text}</div>
@@ -223,7 +249,7 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
               })
             ) : (
               <p className="dim" style={{ textAlign: 'center', margin: '16px 0' }}>
-                No messages yet — say hi 👋
+                No messages yet — say hello!
               </p>
             )}
           </div>
@@ -249,14 +275,14 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
       ) : !dmRecipient ? (
         <>
           <p className="dim" style={{ marginBottom: 8 }}>
-            Private chats. Tap 💬 next to a player to start one.
+            Private chats. Tap the mail icon next to any player to start one.
           </p>
           {recentDms.length ? (
             <div className="list">
               {recentDms.map((r) => (
                 <div key={r.uid} className="row">
                   <div className="em">
-                    <img className="flagimg" src={flagUrl(r.cc)} alt={r.cc} referrerPolicy="no-referrer" />
+                    <CountryFlag code={r.cc} alt={r.cc} />
                   </div>
                   <div>
                     <h2>{r.name}</h2>
@@ -266,14 +292,17 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
                     className="btn sm mint"
                     onClick={() => onOpenDm(r.uid, r.name, r.cc)}
                   >
-                    💬 Open
+                    <Mail size={14} />
+                    <span>Open</span>
                   </button>
                 </div>
               ))}
             </div>
           ) : (
             <div className="empty">
-              <div className="big">📪</div>
+              <div className="big">
+                <Mail size={28} />
+              </div>
               <p className="dim">No private chats yet.</p>
             </div>
           )}
@@ -281,13 +310,13 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
       ) : (
         <div className="chbox">
           <div className="chhd">
-            <button type="button" className="btn sm" style={{ minWidth: 0 }} onClick={onBackDm}>
+            <button type="button" className="btn sm" style={{ minWidth: 0 }} onClick={onBackDm} aria-label="Back to DM list">
               ←
             </button>
             <span className="cmf">
-              <img src={flagUrl(dmRecipient.cc)} alt={dmRecipient.cc} referrerPolicy="no-referrer" />
+              <CountryFlag code={dmRecipient.cc} alt={dmRecipient.cc} className="" />
             </span>
-            {dmRecipient.name}
+            <span>{dmRecipient.name}</span>
           </div>
           <div className="chlist" ref={listRef}>
             {dmMessages.length ? (
@@ -295,7 +324,7 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
                 <div key={m.id} className={`cm ${m.uid === uid ? 'me' : ''}`}>
                   <div className="cmh">
                     <span className="cmf">
-                      <img src={flagUrl(m.cc)} alt={m.cc} referrerPolicy="no-referrer" />
+                      <CountryFlag code={m.cc} alt={m.cc} className="" />
                     </span>
                     <button type="button" className="cmn" onClick={() => onOpenProfile(m.uid)}>
                       {m.name || 'Player'}
@@ -307,7 +336,7 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
               ))
             ) : (
               <p className="dim" style={{ textAlign: 'center', margin: '16px 0' }}>
-                No messages yet — say hi 👋
+                No messages yet — say hello!
               </p>
             )}
           </div>

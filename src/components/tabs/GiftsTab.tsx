@@ -1,7 +1,17 @@
 import React, { useState } from 'react';
 import { DAILY_GIFT_MAX } from '../../game/constants';
-import { flagUrl, formatNumber } from '../../game/rules';
+import { formatNumber } from '../../game/rules';
 import type { GiftsSubTab, PlayerProfile, TradeOffer } from '../../game/types';
+import {
+  Clock,
+  CountryFlag,
+  Gift,
+  Lock,
+  Mail,
+  Package,
+  Search,
+  Sparkles,
+} from '../GameIcons';
 
 interface GiftsTabProps {
   uid: string | null;
@@ -24,9 +34,9 @@ interface GiftsTabProps {
 function summarizeGift(t: TradeOffer): string {
   const parts: string[] = [];
   if (t.offerCash > 0) parts.push(`₨ ${formatNumber(t.offerCash)}`);
-  if (t.offerGems > 0) parts.push(`💎 ${t.offerGems}`);
+  if (t.offerGems > 0) parts.push(`${t.offerGems} Gems`);
   const stkCount = Object.values(t.offerStk || {}).reduce((a, b) => a + (b || 0), 0);
-  if (stkCount > 0) parts.push(`🃏 ×${stkCount}`);
+  if (stkCount > 0) parts.push(`${stkCount} Stickers`);
   return parts.length ? parts.join(' · ') : 'Empty gift';
 }
 
@@ -54,10 +64,13 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
   if (!uid) {
     return (
       <div className="empty">
-        <div className="big">💱</div>
+        <div className="big">
+          <Gift size={28} color="#ffc23d" />
+        </div>
         <p className="dim">Sign in to send and receive gifts with other players.</p>
         <button type="button" className="btn gold" onClick={onOpenLogin}>
-          🔐 Sign in
+          <Lock size={15} />
+          <span>Sign in</span>
         </button>
       </div>
     );
@@ -105,16 +118,21 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
 
       <div className="subtabs">
         <button type="button" className={subTab === 'in' ? 'on' : ''} onClick={() => onChangeSubTab('in')}>
-          📥 Inbox {incoming.length > 0 && <em>{incoming.length}</em>}
+          <Package size={14} />
+          <span>Inbox</span>
+          {incoming.length > 0 && <em>{incoming.length}</em>}
         </button>
         <button type="button" className={subTab === 'out' ? 'on' : ''} onClick={() => onChangeSubTab('out')}>
-          📤 Sent ({outgoing.length})
+          <Mail size={14} />
+          <span>Sent ({outgoing.length})</span>
         </button>
         <button type="button" className={subTab === 'hist' ? 'on' : ''} onClick={() => onChangeSubTab('hist')}>
-          📆 History
+          <Clock size={14} />
+          <span>History</span>
         </button>
         <button type="button" className={subTab === 'find' ? 'on' : ''} onClick={() => onChangeSubTab('find')}>
-          💸 Send Gift
+          <Gift size={14} />
+          <span>Send Gift</span>
         </button>
       </div>
 
@@ -132,12 +150,7 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
                     onClick={() => onOpenGiftReview(t)}
                   >
                     <div className="em">
-                      <img
-                        className="flagimg"
-                        src={flagUrl(t.fromCountry)}
-                        alt={t.fromCountry}
-                        referrerPolicy="no-referrer"
-                      />
+                      <CountryFlag code={t.fromCountry} alt={t.fromCountry} />
                     </div>
                     <div style={{ minWidth: 0 }}>
                       <h2>
@@ -179,7 +192,9 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
             </div>
           ) : (
             <div className="empty">
-              <div className="big">📪</div>
+              <div className="big">
+                <Package size={28} />
+              </div>
               <p className="dim">No incoming gifts right now.</p>
             </div>
           )}
@@ -200,12 +215,7 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
                     onClick={() => onOpenGiftReview(t)}
                   >
                     <div className="em">
-                      <img
-                        className="flagimg"
-                        src={flagUrl(t.toCountry)}
-                        alt={t.toCountry}
-                        referrerPolicy="no-referrer"
-                      />
+                      <CountryFlag code={t.toCountry} alt={t.toCountry} />
                     </div>
                     <div style={{ minWidth: 0 }}>
                       <h2>
@@ -232,7 +242,9 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
             </div>
           ) : (
             <div className="empty">
-              <div className="big">📤</div>
+              <div className="big">
+                <Sparkles size={28} />
+              </div>
               <p className="dim">No active outgoing gifts.</p>
               <button type="button" className="btn mint" onClick={() => onChangeSubTab('find')}>
                 Find a player
@@ -255,12 +267,7 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
                 return (
                   <div key={t.id} className="row trow" onClick={() => onOpenGiftReview(t)}>
                     <div className="em">
-                      <img
-                        className="flagimg"
-                        src={flagUrl(peerCc)}
-                        alt={peerCc}
-                        referrerPolicy="no-referrer"
-                      />
+                      <CountryFlag code={peerCc} alt={peerCc} />
                     </div>
                     <div style={{ minWidth: 0 }}>
                       <h2>
@@ -274,7 +281,9 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
             </div>
           ) : (
             <div className="empty">
-              <div className="big">📪</div>
+              <div className="big">
+                <Clock size={28} />
+              </div>
               <p className="dim">No past gifts yet.</p>
             </div>
           )}
@@ -296,12 +305,7 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
               {candidatePlayers.map((p) => (
                 <div key={p.id} className="row pcard">
                   <div className="em">
-                    <img
-                      className="flagimg"
-                      src={flagUrl(p.countryCode)}
-                      alt={p.countryCode}
-                      referrerPolicy="no-referrer"
-                    />
+                    <CountryFlag code={p.countryCode} alt={p.countryCode} />
                   </div>
                   <div style={{ minWidth: 0 }}>
                     <h2>{p.username}</h2>
@@ -315,14 +319,17 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
                     disabled={sentToday >= DAILY_GIFT_MAX}
                     onClick={() => onOpenGiftCompose(p)}
                   >
-                    💱 Gift
+                    <Gift size={14} />
+                    <span>Gift</span>
                   </button>
                 </div>
               ))}
             </div>
           ) : (
             <div className="empty">
-              <div className="big">🔍</div>
+              <div className="big">
+                <Search size={28} />
+              </div>
               <p className="dim">
                 {searchText.trim().length >= 2
                   ? 'No matching players found.'

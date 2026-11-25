@@ -1,8 +1,19 @@
 import React from 'react';
 import { TAB_META } from '../game/constants';
-import { flagUrl, formatNumber } from '../game/rules';
+import { formatNumber } from '../game/rules';
 import type { GameState, PlayerProfile, TabId } from '../game/types';
-import { GoogleIcon } from './LoginGate';
+import {
+  Bell,
+  CashCoinIcon,
+  Cloud,
+  CountryFlag,
+  GemDiamondIcon,
+  IdCard,
+  Landmark,
+  Lock,
+  SlidersHorizontal,
+  TabIcon,
+} from './GameIcons';
 
 interface TopBarProps {
   state: GameState;
@@ -35,7 +46,7 @@ export const TopBar: React.FC<TopBarProps> = ({
     <header className="top">
       <div className="who">
         <button type="button" className="flag" title="View profile" aria-label="View profile" onClick={onOpenProfile}>
-          {cc ? <img className="flagimg" src={flagUrl(cc)} alt={state.country[1]} referrerPolicy="no-referrer" /> : '🏛️'}
+          {cc ? <CountryFlag code={cc} alt={state.country[1]} /> : <Landmark size={20} color="#ffd257" />}
         </button>
         <div>
           <h1>Country Economy Tycoon</h1>
@@ -45,33 +56,33 @@ export const TopBar: React.FC<TopBarProps> = ({
 
       <div className="pill res">
         <b title="Cash">
-          <i>💵</i>
+          <i>
+            <CashCoinIcon size={20} />
+          </i>
           <span data-testid="hud-cash">{formatNumber(state.cash)}</span>
         </b>
         <b className="g" title="Diamonds">
-          <i>💎</i>
+          <i>
+            <GemDiamondIcon size={19} />
+          </i>
           <span data-testid="hud-gems">{Math.floor(state.gems)}</span>
         </b>
       </div>
 
       <div className="acts2">
         <button type="button" className="profbtn" title="Profile" aria-label="Profile" onClick={onOpenProfile}>
-          <span aria-hidden="true" style={{ fontSize: 18, lineHeight: 1 }}>🪪</span>
+          <IdCard size={18} strokeWidth={2} />
         </button>
         <button type="button" className="profbtn" title="Settings" aria-label="Settings" onClick={onOpenSettings}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-            <path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0" />
-            <circle cx="16" cy="6" r="2" />
-            <circle cx="10" cy="12" r="2" />
-            <circle cx="18" cy="18" r="2" />
-          </svg>
+          <SlidersHorizontal size={18} strokeWidth={2} />
         </button>
         <button type="button" className="profbtn bell" title="Notifications" aria-label="Notifications" onClick={onOpenNotifications}>
-          <span aria-hidden="true" style={{ fontSize: 18, lineHeight: 1 }}>🔔</span>
+          <Bell size={18} strokeWidth={2} />
           {unreadNotifs > 0 && <i>{unreadNotifs > 9 ? '9+' : unreadNotifs}</i>}
         </button>
         <button type="button" className="btn sm" id="login" onClick={onOpenAuth}>
-          {uid && pubProfile ? `☁️ ${pubProfile.username}` : uid ? '☁️ …' : '🔐 Login'}
+          {uid ? <Cloud size={15} strokeWidth={2.2} /> : <Lock size={14} strokeWidth={2.2} />}
+          <span>{uid && pubProfile ? pubProfile.username : uid ? 'Syncing' : 'Login'}</span>
         </button>
       </div>
     </header>
@@ -100,7 +111,9 @@ export const NavBar: React.FC<NavBarProps> = ({
           data-t={key}
           onClick={() => onSelectTab(key)}
         >
-          <span aria-hidden="true">{meta.emoji}</span>
+          <span aria-hidden="true">
+            <TabIcon tab={key} size={18} />
+          </span>
           {meta.label}
           {key === 'trade' && pendingIncomingGifts > 0 && (
             <em className="nb">{pendingIncomingGifts}</em>

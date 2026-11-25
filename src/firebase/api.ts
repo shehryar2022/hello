@@ -20,6 +20,7 @@ import {
   COUNTRIES,
   DAILY_GIFT_MAX,
   GX_PROJECT_TYPES,
+  MAX_RANK,
   PROJECT_STAGES,
   TZ,
 } from '../game/constants';
@@ -245,7 +246,7 @@ export async function syncSaveToCloud(params: {
         cash,
         gems,
         level: playerLevel(state),
-        rank: state.rank || 0,
+        rank: Math.max(0, Math.min(MAX_RANK, Math.floor(state.rank || 0))),
         lastSeen: serverTimestamp(),
         stats: mergedStats,
       });
@@ -364,7 +365,7 @@ export async function createGiftOffer(params: {
       cash: newCash,
       gems: newGems,
       level: Math.max(1, Math.floor(Number(meData.level) || 1)),
-      rank: Math.max(0, Math.min(6, Math.floor(Number(meData.rank) || 0))),
+      rank: Math.max(0, Math.min(MAX_RANK, Math.floor(Number(meData.rank) || 0))),
       lastSeen: serverTimestamp(),
       stats: sanitizeStats(prevStats, {
         tradesSent: prevStats.tradesSent + 1,
@@ -456,7 +457,7 @@ export async function acceptGiftOffer(
         cash: newCash,
         gems: newGems,
         level: Math.max(1, Math.floor(Number(md.level) || 1)),
-        rank: Math.max(0, Math.min(6, Math.floor(Number(md.rank) || 0))),
+        rank: Math.max(0, Math.min(MAX_RANK, Math.floor(Number(md.rank) || 0))),
         lastSeen: serverTimestamp(),
         stats: sanitizeStats(prevStats, {
           completedTrades: prevStats.completedTrades + 1,
@@ -654,7 +655,7 @@ export async function sendGlobalChatMessage(params: {
     uid: params.uid,
     name: params.username.slice(0, 16),
     cc: sanitizeCountryCode(params.countryCode),
-    rank: Math.max(0, Math.min(6, Math.floor(params.rank || 0))),
+    rank: Math.max(0, Math.min(MAX_RANK, Math.floor(params.rank || 0))),
     text: params.text.trim().slice(0, 200),
     createdAt: serverTimestamp(),
   });

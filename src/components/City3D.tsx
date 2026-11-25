@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { BUILDINGS } from '../game/constants';
 import { gxLevelMult, totalBuildings } from '../game/rules';
 import type { GameState } from '../game/types';
+import { BuildingIcon, Hammer, RefreshCw } from './GameIcons';
 
 const CSZ: Record<string, number> = {
   farm: 32, solar: 32, water: 28, stadium: 32, airport: 34, port: 30, rail: 30, mine: 28,
@@ -19,7 +20,7 @@ interface City3DProps {
   state: GameState;
   visible: boolean;
   burstKey: number;
-  onBuildingTap: () => void;
+  onBuildingTap: (clientX?: number, clientY?: number) => void;
 }
 
 export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuildingTap }) => {
@@ -28,13 +29,17 @@ export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuil
   const dragRef = useRef({ active: false, sx: 0, o0: 0, t0: 0, off: 0 });
   const prevLevelsRef = useRef<Record<string, number>>({});
   const [popId, setPopId] = useState<string | null>(null);
-  const [tip, setTip] = useState<{ text: string; x: number; y: number; open: boolean }>({
+  const [rotated, setRotated] = useState(false);
+  const [tip, setTip] = useState<{ id: string; text: string; x: number; y: number; open: boolean }>({
+    id: '',
     text: '',
     x: 0,
     y: 0,
     open: false,
   });
   const tipTimerRef = useRef<number | null>(null);
+
+  const animEnabled = !!state.set.anim;
 
   const applyRotation = (rz: number) => {
     if (cityRef.current) {
@@ -43,15 +48,19 @@ export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuil
   };
 
   useEffect(() => {
+    if (!visible || !animEnabled) {
+      applyRotation(-35 + dragRef.current.off);
+      return;
+    }
     let raf = 0;
     const loop = (t: number) => {
       raf = requestAnimationFrame(loop);
-      if (dragRef.current.active || !visible || document.hidden) return;
+      if (dragRef.current.active || document.hidden) return;
       applyRotation(-35 + dragRef.current.off + Math.sin(t / 3800) * 12);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [visible]);
+  }, [visible, animEnabled]);
 
   const spawnParticle = (cls: 'coin' | 'puff', buildingEl: Element | null, text?: string) => {
     const city = cityRef.current;
@@ -70,12 +79,12 @@ export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuil
   };
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || !animEnabled) return;
     const coinTimer = window.setInterval(() => {
       if (document.hidden || !cityRef.current) return;
       const bs = Array.from(cityRef.current.querySelectorAll('.bd:not(.empty)'));
       if (!bs.length) return;
-      spawnParticle('coin', bs[Math.floor(Math.random() * bs.length)], '🪙');
+      spawnParticle('coin', bs[Math.floor(Math.random() * bs.length)], '₨');
     }, 1600);
 
     const puffTimer = window.setInterval(() => {
@@ -92,17 +101,17 @@ export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuil
       window.clearInterval(coinTimer);
       window.clearInterval(puffTimer);
     };
-  }, [visible]);
+  }, [visible, animEnabled]);
 
   useEffect(() => {
-    if (burstKey <= 0 || !visible || !cityRef.current) return;
+    if (burstKey <= 0 || !visible || !animEnabled || !cityRef.current) return;
     const bs = Array.from(cityRef.current.querySelectorAll('.bd:not(.empty)'));
     bs.forEach((b, idx) => {
       window.setTimeout(() => {
-        spawnParticle('coin', b, '🪙');
+        spawnParticle('coin', b, '₨');
       }, idx * 60);
     });
-  }, [burstKey, visible]);
+  }, [burstKey, visible, animEnabled]);
 
   useEffect(() => {
     const nextPrev: Record<string, number> = {};
@@ -118,6 +127,7 @@ export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuil
   const builtTotal = totalBuildings(state);
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest('.sky-reset')) return;
     dragRef.current.active = true;
     dragRef.current.sx = e.clientX;
     dragRef.current.t0 = Date.now();
@@ -132,6 +142,7 @@ export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuil
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!dragRef.current.active) return;
     dragRef.current.off = dragRef.current.o0 + (e.clientX - dragRef.current.sx) * 0.6;
+    if (Math.abs(dragRef.current.off) > 4 && !rotated) setRotated(true);
     applyRotation(-35 + dragRef.current.off);
   };
 
@@ -154,20 +165,28 @@ export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuil
     const lvl = state.b[def.id] || 0;
     setPopId(null);
     requestAnimationFrame(() => setPopId(def.id));
-    onBuildingTap();
+    onBuildingTap(e.clientX, e.clientY);
 
     const r = skyRef.current.getBoundingClientRect();
     const mult = gxLevelMult(state, def.id);
     setTip({
-      text: `${def.e} ${def.n} · Lv ${lvl}${lvl ? ` · +${(def.inc * lvl * mult).toFixed(1)}/s` : ' · not built'}`,
-      x: Math.max(70, Math.min(r.width - 70, e.clientX - r.left)),
-      y: e.clientY - r.top,
+      id: def.id,
+      text: `${def.n} · Lv ${lvl}${lvl ? ` · +${(def.inc * lvl * mult).toFixed(1)}/s` : ' · not built'}`,
+      x: Math.max(85, Math.min(r.width - 85, e.clientX - r.left)),
+      y: Math.max(44, e.clientY - r.top),
       open: true,
     });
     if (tipTimerRef.current) window.clearTimeout(tipTimerRef.current);
     tipTimerRef.current = window.setTimeout(() => {
       setTip((prev) => ({ ...prev, open: false }));
     }, 2200);
+  };
+
+  const handleResetView = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    dragRef.current.off = 0;
+    setRotated(false);
+    applyRotation(-35);
   };
 
   return (
@@ -180,6 +199,13 @@ export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuil
       onPointerUp={handlePointerEnd}
       onPointerCancel={handlePointerEnd}
     >
+      {rotated && (
+        <button type="button" className="sky-reset" onClick={handleResetView} title="Reset camera angle">
+          <RefreshCw size={11} />
+          <span>Reset view</span>
+        </button>
+      )}
+
       <div className="city" ref={cityRef}>
         <i className="road" style={{ left: -124, top: -1, width: 248, height: 2 }} />
         <i className="road" style={{ left: -124, top: -43, width: 248, height: 2 }} />
@@ -223,16 +249,26 @@ export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuil
               <i className="fN" />
               <i className="fE" />
               <i className="fW" />
-              {l > 0 && <b className="em3">{d.e}</b>}
+              {l > 0 && (
+                <b className="em3">
+                  <BuildingIcon id={d.id} size={13} color="#fff" />
+                </b>
+              )}
             </div>
           );
         })}
       </div>
 
       <div className={`ctip${tip.open ? ' on' : ''}`} style={{ left: tip.x, top: tip.y }}>
-        {tip.text}
+        {tip.id && <BuildingIcon id={tip.id} size={14} color="#ffc23d" />}
+        <span>{tip.text}</span>
       </div>
-      {builtTotal === 0 && <span className="dim-hint">🏗️ Build your first farm below ↓</span>}
+      {builtTotal === 0 && (
+        <span className="dim-hint">
+          <Hammer size={13} color="#ffc23d" />
+          <span>Build your first farm below</span>
+        </span>
+      )}
     </div>
   );
 };

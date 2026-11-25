@@ -21,8 +21,8 @@
         "gdp": { "type": "number" },
         "cash": { "type": "number" },
         "gems": { "type": "number" },
-        "level": { "type": "integer" },
-        "rank": { "type": "integer" },
+        "level": { "type": "integer", "minimum": 1 },
+        "rank": { "type": "integer", "minimum": 0, "maximum": 10 },
         "lastSeen": { "type": "string", "format": "date-time" },
         "createdAt": { "type": "string", "format": "date-time" },
         "stats": { "type": "object" }
@@ -56,7 +56,7 @@
     },
     "PlayerSave": {
       "title": "PlayerSave",
-      "description": "Owner-only full game save snapshot.",
+      "description": "Owner-only full game state snapshot including buildings, policies, milestones, crateCd, and subscription state.",
       "type": "object",
       "properties": {
         "save": { "type": "object" }
@@ -141,7 +141,7 @@
         "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
         "name": { "type": "string", "minLength": 1, "maxLength": 16 },
         "cc": { "type": "string", "maxLength": 3 },
-        "rank": { "type": "integer" },
+        "rank": { "type": "integer", "minimum": 0, "maximum": 10 },
         "text": { "type": "string", "minLength": 1, "maxLength": 200 },
         "createdAt": { "type": "string", "format": "date-time" }
       },

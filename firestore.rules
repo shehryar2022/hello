@@ -37,6 +37,7 @@ service cloud.firestore {
         && pairId is string
         && pairId.size() >= 3
         && pairId.size() <= 260
+        && pairId != request.auth.uid + '_' + request.auth.uid
         && (
           pairId.matches('^' + request.auth.uid + '_[A-Za-z0-9\\-]+$')
           || pairId.matches('^[A-Za-z0-9\\-]+_' + request.auth.uid + '$')
@@ -83,7 +84,7 @@ service cloud.firestore {
         && data.cash is number && data.cash >= 0 && data.cash <= 10000000000000
         && data.gems is number && data.gems >= 0 && data.gems <= 1000000000
         && data.level is int && data.level >= 1 && data.level <= 10000000
-        && data.rank is int && data.rank >= 0 && data.rank <= 6
+        && data.rank is int && data.rank >= 0 && data.rank <= 10
         && data.lastSeen is timestamp
         && (!('createdAt' in data) || data.createdAt is timestamp)
         && isValidPlayerStats(data.stats);
@@ -112,18 +113,27 @@ service cloud.firestore {
       return data.keys().hasAll(['save'])
         && data.keys().hasOnly(['save'])
         && data.save is map
-        && data.save.size() <= 60
+        && data.save.size() <= 64
         && (!('cash' in data.save) || (data.save.cash is number && data.save.cash >= 0 && data.save.cash <= 10000000000000))
         && (!('gems' in data.save) || (data.save.gems is number && data.save.gems >= 0 && data.save.gems <= 1000000000))
         && (!('taxPool' in data.save) || (data.save.taxPool is number && data.save.taxPool >= 0 && data.save.taxPool <= 10000000000000))
-        && (!('rank' in data.save) || (data.save.rank is int && data.save.rank >= 0 && data.save.rank <= 6))
+        && (!('rank' in data.save) || (data.save.rank is int && data.save.rank >= 0 && data.save.rank <= 10))
         && (!('boost' in data.save) || (data.save.boost is number && data.save.boost >= 0 && data.save.boost <= 30))
+        && (!('crateCd' in data.save) || (data.save.crateCd is number && data.save.crateCd >= 0))
         && (!('b' in data.save) || (data.save.b is map && data.save.b.size() <= 30))
+        && (!('stk' in data.save) || (data.save.stk is map && data.save.stk.size() <= 40))
+        && (!('milestones' in data.save) || (data.save.milestones is map && data.save.milestones.size() <= 40))
         && (!('tourism' in data.save) || (data.save.tourism is number && data.save.tourism >= 0 && data.save.tourism <= 20))
         && (!('digital' in data.save) || (data.save.digital is number && data.save.digital >= 0 && data.save.digital <= 20))
         && (!('rd' in data.save) || (data.save.rd is number && data.save.rd >= 0 && data.save.rd <= 25))
         && (!('green' in data.save) || (data.save.green is number && data.save.green >= 0 && data.save.green <= 25))
-        && (!('sub' in data.save) || (data.save.sub is map && data.save.sub.size() <= 5 && (!('tier' in data.save.sub) || data.save.sub.tier in ['daily', 'weekly', 'monthly'])));
+        && (!('sub' in data.save) || (
+          data.save.sub is map
+          && data.save.sub.size() <= 5
+          && (!('tier' in data.save.sub) || data.save.sub.tier in ['daily', 'weekly', 'monthly'])
+          && (!('exp' in data.save.sub) || (data.save.sub.exp is number && data.save.sub.exp >= 0))
+          && (!('lastClaimDay' in data.save.sub) || (data.save.sub.lastClaimDay is string && data.save.sub.lastClaimDay.size() <= 16))
+        ));
     }
 
     function isValidNotification(data) {
@@ -200,7 +210,7 @@ service cloud.firestore {
         && isValidId(data.uid)
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 16
         && data.cc is string && data.cc.size() <= 3
-        && data.rank is int && data.rank >= 0 && data.rank <= 6
+        && data.rank is int && data.rank >= 0 && data.rank <= 10
         && data.text is string && data.text.size() >= 1 && data.text.size() <= 200
         && data.text.matches('(?s).*\\S.*')
         && data.createdAt is timestamp;
@@ -379,7 +389,7 @@ service cloud.firestore {
         && incoming().expiresAt == existing().expiresAt
         && (
           (existing().status == 'pending' && request.auth.uid == existing().to && affectedOnly(['status', 'resolvedAt']) && incoming().status in ['accepted', 'rejected'] && (incoming().status == 'rejected' || request.time < existing().expiresAt) && incoming().resolvedAt == request.time) ||
-          (existing().status == 'pending' && request.auth.uid == existing().from && affectedOnly(['status', 'resolvedAt', 'refunded']) && incoming().status in ['cancelled', 'expired'] && incoming().refunded == true && incoming().resolvedAt == request.time) ||
+          (existing().status == 'pending' && request.auth.uid == existing().from && affectedOnly(['status', 'resolvedAt', 'refunded']) && (incoming().status == 'cancelled' || (incoming().status == 'expired' && request.time >= existing().expiresAt)) && incoming().refunded == true && incoming().resolvedAt == request.time) ||
           (existing().status in ['rejected', 'expired'] && existing().refunded == false && request.auth.uid == existing().from && affectedOnly(['refunded']) && incoming().refunded == true)
         );
       allow delete: if false;

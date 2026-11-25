@@ -86,13 +86,19 @@ test('Dirty Dozen security invariants are enforced in firestore.rules', () => {
   assert.match(rules, /affectedOnly\(\['progressMs', 'lastTickAt', 'status', 'resolvedAt'\]\)[\s\S]*incoming\(\)\.status in \['done', 'failed'\]/);
   assert.match(rules, /\(!\('rev' in existing\(\)\) \|\| incoming\(\)\.rev >= existing\(\)\.rev\)/);
 
-  // 9. Save balance/policy/building bounds, non-whitespace text guards, and nullable trade resolvedAt
+  // 9. Save balance/policy/building bounds, non-whitespace text guards, rank 0..10, and nullable trade resolvedAt
   assert.match(rules, /data\.save\.cash >= 0/);
   assert.match(rules, /data\.save\.gems >= 0/);
   assert.match(rules, /data\.save\.b\.size\(\) <= 30/);
+  assert.match(rules, /data\.save\.milestones\.size\(\) <= 40/);
+  assert.match(rules, /data\.save\.crateCd >= 0/);
+  assert.match(rules, /data\.save\.rank <= 10/);
+  assert.match(rules, /data\.rank <= 10/);
   assert.match(rules, /data\.save\.sub\.tier in \['daily', 'weekly', 'monthly'\]/);
   assert.match(rules, /existing\(\)\.paid == 3/);
   assert.match(rules, /request\.time < existing\(\)\.expiresAt/);
+  assert.match(rules, /request\.time >= existing\(\)\.expiresAt/);
+  assert.match(rules, /pairId != request\.auth\.uid \+ '_' \+ request\.auth\.uid/);
   assert.match(rules, /data\.text\.matches\('\(\?s\)\.\*\\\\S\.\*'\)/);
   assert.match(rules, /'resolvedAt' in data\) \|\| data\.resolvedAt == null \|\| data\.resolvedAt is timestamp/);
 });

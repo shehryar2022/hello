@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { COUNTRIES } from '../game/constants';
-import { flagUrl } from '../game/rules';
 import type { CountryTuple } from '../game/types';
+import { Cloud, CountryFlag, Gift, Landmark, TrendingUp, Zap } from './GameIcons';
 
 interface LoginGateProps {
   selectedCountry: CountryTuple;
@@ -48,13 +48,24 @@ export const LoginGate: React.FC<LoginGateProps> = ({
     <div id="gate">
       <div className="g-in">
         <section className="g-hero">
-          <div className="g-mark">🏛️</div>
+          <div className="g-mark">
+            <Landmark size={28} strokeWidth={2.2} />
+          </div>
           <h1>Country Economy Tycoon</h1>
           <p>Build your nation&apos;s economy, govern policies, and climb the live GDP leaderboard.</p>
           <ul className="g-feat">
-            <li>💲 Live leaderboard</li>
-            <li>💱 Player gifting</li>
-            <li>☁️ Cloud save</li>
+            <li>
+              <TrendingUp size={15} color="#3fe0b0" />
+              <span>Live leaderboard</span>
+            </li>
+            <li>
+              <Gift size={15} color="#ffc23d" />
+              <span>Player gifting</span>
+            </li>
+            <li>
+              <Cloud size={15} color="#5ccbff" />
+              <span>Cloud save</span>
+            </li>
           </ul>
           <div className="g-sky" aria-hidden="true">
             <i style={{ height: '38%' }} />
@@ -82,7 +93,7 @@ export const LoginGate: React.FC<LoginGateProps> = ({
                 className={selectedCountry[0] === c[0] ? 'on' : ''}
                 onClick={() => onSelectCountry(c)}
               >
-                <img src={flagUrl(c[0])} alt={c[1]} referrerPolicy="no-referrer" />
+                <CountryFlag code={c[0]} alt={c[1]} className="" />
                 <span>{c[1]}</span>
               </button>
             ))}
@@ -122,7 +133,8 @@ export const LoginGate: React.FC<LoginGateProps> = ({
             </button>
           </div>
           <button type="button" className="lnk" data-start="true" onClick={onPlayOffline}>
-            🎮 Play offline (no leaderboard, no gifting)
+            <Zap size={14} color="#ffc23d" />
+            <span>Play offline (no leaderboard, no gifting)</span>
           </button>
           {authMsg && <small className="dim">{authMsg}</small>}
         </div>

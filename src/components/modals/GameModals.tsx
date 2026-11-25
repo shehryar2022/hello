@@ -1,7 +1,24 @@
 import React, { useEffect, useState } from 'react';
 import { COUNTRIES, RANKS } from '../../game/constants';
-import { flagLargeUrl, flagUrl, formatNumber } from '../../game/rules';
+import { formatNumber } from '../../game/rules';
 import type { GameState, NotificationItem, PlayerProfile } from '../../game/types';
+import {
+  Bell,
+  Cloud,
+  CountryFlag,
+  GemDiamondIcon,
+  Gift,
+  Landmark,
+  Lock,
+  Mail,
+  NotifIcon,
+  RankEmblem,
+  RefreshCw,
+  SlidersHorizontal,
+  Smartphone,
+  Sparkles,
+  Volume2,
+} from '../GameIcons';
 
 interface ProfileModalProps {
   profile: PlayerProfile | null;
@@ -29,13 +46,11 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     <div className="modal" role="dialog" aria-modal="true" aria-label="Player Profile" onClick={onClose}>
       <div className="card" onClick={(e) => e.stopPropagation()}>
         <div className="bigflag">
-          {profile.countryCode && (
-            <img src={flagLargeUrl(profile.countryCode)} alt={profile.countryCode} referrerPolicy="no-referrer" />
-          )}
+          <CountryFlag code={profile.countryCode} alt={profile.countryCode} large className="" />
         </div>
-        {rk.e && (
+        {rk.id > 0 && (
           <div className="rank-badge big" style={{ '--c': rk.c } as React.CSSProperties} title={rk.n}>
-            {rk.e}
+            <RankEmblem rank={rk.id} size={30} />
           </div>
         )}
         <h2>{profile.username}</h2>
@@ -54,7 +69,9 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
           </div>
           <div>
             <span>Diamonds</span>
-            <b>💎 {Math.floor(profile.gems || 0)}</b>
+            <b>
+              <GemDiamondIcon size={14} /> {Math.floor(profile.gems || 0)}
+            </b>
           </div>
           <div>
             <span>Level</span>
@@ -84,10 +101,12 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
           {!isMe && uid && (
             <>
               <button type="button" className="btn mint" onClick={() => onGift(profile)}>
-                💱 Send Gift
+                <Gift size={15} />
+                <span>Send Gift</span>
               </button>
               <button type="button" className="btn" onClick={() => onMessage(profile)}>
-                📫 Private Message
+                <Mail size={15} />
+                <span>Private Message</span>
               </button>
             </>
           )}
@@ -128,16 +147,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
   if (!open) return null;
 
-  const rows: Array<{ key: 'sfx' | 'vib' | 'anim'; icon: string; label: string }> = [
-    { key: 'sfx', icon: '🔊', label: 'Sound effects' },
-    { key: 'vib', icon: '📳', label: 'Haptic vibration' },
-    { key: 'anim', icon: '✨', label: 'Animations' },
+  const rows: Array<{ key: 'sfx' | 'vib' | 'anim'; icon: React.ReactNode; label: string }> = [
+    { key: 'sfx', icon: <Volume2 size={17} color="#5ccbff" />, label: 'Sound effects' },
+    { key: 'vib', icon: <Smartphone size={17} color="#3fe0b0" />, label: 'Haptic vibration' },
+    { key: 'anim', icon: <Sparkles size={17} color="#ffc23d" />, label: 'Animations' },
   ];
 
   return (
     <div className="modal" role="dialog" aria-modal="true" aria-label="Settings" onClick={onClose}>
       <div className="card" onClick={(e) => e.stopPropagation()}>
-        <h2>⚙️ Settings</h2>
+        <h2>
+          <SlidersHorizontal size={20} color="#5ccbff" />
+          <span>Settings</span>
+        </h2>
         <p style={{ marginBottom: 8 }}>{uid ? `Cloud account: ${email || 'Signed in'}` : 'Playing in offline mode'}</p>
 
         {rows.map((r) => {
@@ -162,11 +184,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         <div className="acts" style={{ marginTop: 14 }}>
           <button type="button" className="btn" onClick={onOpenAuth}>
-            {uid ? '☁️ Account' : '🔐 Sign in / Link Cloud'}
+            {uid ? <Cloud size={15} /> : <Lock size={15} />}
+            <span>{uid ? 'Account' : 'Sign in / Link Cloud'}</span>
           </button>
           {!uid && (
             <button type="button" className="btn red" onClick={onRequestReset}>
-              ♻️ New Game
+              <RefreshCw size={15} />
+              <span>New Game</span>
             </button>
           )}
           <button type="button" className="btn gold" onClick={onClose}>
@@ -193,18 +217,13 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
 }) => {
   if (!open) return null;
 
-  const iconFor = (t: NotificationItem['type']) => {
-    if (t === 'dm') return '📫';
-    if (t === 'new_offer') return '📥';
-    if (t === 'accepted') return '✅';
-    if (t === 'rejected') return '❌';
-    return '⏳';
-  };
-
   return (
     <div className="modal" role="dialog" aria-modal="true" aria-label="Notifications" onClick={onClose}>
       <div className="card" onClick={(e) => e.stopPropagation()}>
-        <h2>🔔 Notifications</h2>
+        <h2>
+          <Bell size={20} color="#ffc23d" />
+          <span>Notifications</span>
+        </h2>
         <div className="nlist" style={{ marginTop: 10 }}>
           {notifications.length ? (
             notifications.map((n) => (
@@ -213,7 +232,9 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
                 className={`nitem ${!n.read ? 'un' : ''}`}
                 onClick={() => onSelectNotification(n)}
               >
-                <div className="ni">{iconFor(n.type)}</div>
+                <div className="ni">
+                  <NotifIcon type={n.type} size={18} />
+                </div>
                 <div>
                   <p>{n.text}</p>
                   <small>
@@ -240,6 +261,7 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
 
 interface OnboardingModalProps {
   open: boolean;
+  defaultCountryCode?: string;
   onCheckUsername: (u: string) => Promise<{ available: boolean; reason?: string }>;
   onSubmitProfile: (username: string, countryCode: string) => Promise<void>;
   onSignOut: () => void;
@@ -247,14 +269,19 @@ interface OnboardingModalProps {
 
 export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   open,
+  defaultCountryCode,
   onCheckUsername,
   onSubmitProfile,
   onSignOut,
 }) => {
   const [username, setUsername] = useState('');
-  const [countryCode, setCountryCode] = useState(COUNTRIES[0][0]);
+  const [countryCode, setCountryCode] = useState(defaultCountryCode || COUNTRIES[0][0]);
   const [status, setStatus] = useState<{ msg: string; ok: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (defaultCountryCode) setCountryCode(defaultCountryCode);
+  }, [defaultCountryCode]);
 
   useEffect(() => {
     const trimmed = username.trim();
@@ -272,7 +299,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
         const res = await onCheckUsername(trimmed);
         if (!cancelled) {
           setStatus({
-            msg: res.available ? 'Username available ✓' : res.reason || 'Already taken',
+            msg: res.available ? 'Username available' : res.reason || 'Already taken',
             ok: res.available,
           });
         }
@@ -302,7 +329,10 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   return (
     <div className="modal" role="dialog" aria-modal="true" aria-label="Create Country">
       <div className="card">
-        <h2>🏛️ Establish Your Country</h2>
+        <h2>
+          <Landmark size={20} color="#ffc23d" />
+          <span>Establish Your Country</span>
+        </h2>
         <p>Pick a unique leader username and national flag.</p>
 
         <form onSubmit={(e) => void handleSubmit(e)}>
@@ -328,7 +358,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                 className={countryCode === code ? 'on' : ''}
                 onClick={() => setCountryCode(code)}
               >
-                <img src={flagUrl(code)} alt={code} referrerPolicy="no-referrer" />
+                <CountryFlag code={code} alt={code} className="" />
                 <span>{name}</span>
               </button>
             ))}

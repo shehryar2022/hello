@@ -17,6 +17,21 @@ import {
   gxUpgradeCost,
 } from '../../game/rules';
 import type { GameState, GovProject, ProjectType } from '../../game/types';
+import {
+  Bell,
+  BuildingIcon,
+  CheckCircle2,
+  Clock,
+  Coins,
+  Hammer,
+  InfraIcon,
+  Landmark,
+  Lock,
+  Sparkles,
+  TrendingUp,
+  Wrench,
+  Zap,
+} from '../GameIcons';
 
 function formatDuration(ms: number): string {
   if (ms <= 0) return '0s';
@@ -31,7 +46,7 @@ function formatDuration(ms: number): string {
 }
 
 function conditionColor(c: number): string {
-  return c >= 70 ? '#37e6a0' : c >= 40 ? '#ffb020' : '#ff5c5c';
+  return c >= 70 ? '#3fe0b0' : c >= 40 ? '#ffc23d' : '#ff6fa5';
 }
 
 interface GovtTabProps {
@@ -108,7 +123,10 @@ export const GovtTab: React.FC<GovtTabProps> = ({
     <div>
       {(disc > 0 || projSpeed > 1) && (
         <div className="tradelim">
-          <span>💳 Subscription Perks Active</span>
+          <span>
+            <Sparkles size={14} color="#3fe0b0" />
+            Subscription Perks Active
+          </span>
           <b className="ok">
             −{Math.round(disc * 100)}% repair/upgrade · ×{projSpeed.toFixed(2)} project speed
           </b>
@@ -116,8 +134,9 @@ export const GovtTab: React.FC<GovtTabProps> = ({
       )}
 
       <div className="gxc">
-        <p>
-          <b>💸 Daily Government Expenses</b>{' '}
+        <p style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <Coins size={15} color="#ffc23d" />
+          <b>Daily Government Expenses</b>{' '}
           <span className="dim">
             · next in <b>{Math.max(0, GOV_DAY_SEC - Math.floor(gx.acc))}s</b> of active play
           </span>
@@ -137,17 +156,20 @@ export const GovtTab: React.FC<GovtTabProps> = ({
         )}
         <p className="dim">
           Buildings avg {Math.round(gbAvg)}% · Transport efficiency {Math.round(92 + (8 * rdAvg) / 100)}% ·{' '}
-          {gx.blk > 0 ? '⚡ Blackout −15% income' : 'Power OK'}
+          {gx.blk > 0 ? 'Blackout −15% income' : 'Power OK'}
           {gx.pb > 0 ? ` · Projects bonus +${(gx.pb * 100).toFixed(0)}% income` : ''}
         </p>
       </div>
 
-      <div className="gxh">🏛️ Government Buildings</div>
+      <div className="gxh">
+        <Landmark size={15} color="#ffc23d" />
+        <span>Government Buildings</span>
+      </div>
       <p className="dim" style={{ marginBottom: 8 }}>
         Renovation costs depend only on <b>20% of your building development</b> (temporary boosters never inflate repairs).
       </p>
       <div className="list g2">
-        {GX_GOV_BUILDINGS.map(([key, name, emoji]) => {
+        {GX_GOV_BUILDINGS.map(([key, name]) => {
           const cond = gx.cond[key] ?? 100;
           const col = conditionColor(cond);
           const c20 = gxRepairCost(state, key, false, nowSrv);
@@ -155,13 +177,15 @@ export const GovtTab: React.FC<GovtTabProps> = ({
           const needsFix = cond < 99.5;
           return (
             <div key={key} className="row" style={{ '--c': col } as React.CSSProperties}>
-              <div className="em">{emoji}</div>
+              <div className="em">
+                <InfraIcon id={key} size={22} />
+              </div>
               <div>
                 <h2>
                   {name}
                   <span className="lv">{Math.round(cond)}%</span>
                 </h2>
-                <p>{cond < 40 ? '⚠️ Poor — hurts income & happiness' : 'Condition'}</p>
+                <p>{cond < 40 ? 'Poor — hurts income & happiness' : 'Condition'}</p>
                 <div className="gxm">
                   <b style={{ width: `${Math.round(cond)}%`, background: col }} />
                 </div>
@@ -181,7 +205,7 @@ export const GovtTab: React.FC<GovtTabProps> = ({
                   disabled={!needsFix || state.cash < cFull}
                   onClick={() => onFixInfra(key, true)}
                 >
-                  {needsFix ? `Renovate ₨ ${formatNumber(cFull)}` : 'Full ✓'}
+                  {needsFix ? `Renovate ₨ ${formatNumber(cFull)}` : 'Full'}
                 </button>
               </div>
             </div>
@@ -189,9 +213,12 @@ export const GovtTab: React.FC<GovtTabProps> = ({
         })}
       </div>
 
-      <div className="gxh">🛣️ Roads &amp; Highways</div>
+      <div className="gxh">
+        <Wrench size={15} color="#5ccbff" />
+        <span>Roads &amp; Highways</span>
+      </div>
       <div className="list g2">
-        {GX_ROADS.map(([key, name, emoji]) => {
+        {GX_ROADS.map(([key, name]) => {
           const cond = gx.cond[key] ?? 100;
           const col = conditionColor(cond);
           const c20 = gxRepairCost(state, key, false, nowSrv);
@@ -199,7 +226,9 @@ export const GovtTab: React.FC<GovtTabProps> = ({
           const needsFix = cond < 99.5;
           return (
             <div key={key} className="row" style={{ '--c': col } as React.CSSProperties}>
-              <div className="em">{emoji}</div>
+              <div className="em">
+                <InfraIcon id={key} size={22} />
+              </div>
               <div>
                 <h2>
                   {name}
@@ -225,7 +254,7 @@ export const GovtTab: React.FC<GovtTabProps> = ({
                   disabled={!needsFix || state.cash < cFull}
                   onClick={() => onFixInfra(key, true)}
                 >
-                  {needsFix ? `Repair all ₨ ${formatNumber(cFull)}` : 'Full ✓'}
+                  {needsFix ? `Repair all ₨ ${formatNumber(cFull)}` : 'Full'}
                 </button>
               </div>
             </div>
@@ -233,7 +262,10 @@ export const GovtTab: React.FC<GovtTabProps> = ({
         })}
       </div>
 
-      <div className="gxh">⬆️ Building Upgrades (Level 1–5)</div>
+      <div className="gxh">
+        <TrendingUp size={15} color="#3fe0b0" />
+        <span>Building Upgrades (Level 1–5)</span>
+      </div>
       {builtBuildings.length ? (
         <div className="list g2">
           {builtBuildings.map((d) => {
@@ -241,7 +273,9 @@ export const GovtTab: React.FC<GovtTabProps> = ({
             const upCost = gxUpgradeCost(state, d.id, nowSrv);
             return (
               <div key={d.id} className="row" style={{ '--c': d.c } as React.CSSProperties}>
-                <div className="em">{d.e}</div>
+                <div className="em">
+                  <BuildingIcon id={d.id} size={22} />
+                </div>
                 <div>
                   <h2>
                     {d.n}
@@ -275,13 +309,18 @@ export const GovtTab: React.FC<GovtTabProps> = ({
         <p className="dim">Buy buildings in the Build tab first.</p>
       )}
 
-      <div className="gxh">🏗️ Government Projects</div>
+      <div className="gxh">
+        <Hammer size={15} color="#a58cff" />
+        <span>Government Projects</span>
+      </div>
       <p className="dim" style={{ marginBottom: 10 }}>
         Pay in {PROJECT_STAGES} stages. Construction advances while you are online &amp; active (24h–96h deadlines; 75% refund if missed). Max 3 active.
       </p>
 
       {!uid ? (
-        <p className="dim">🔐 Sign in to start government projects.</p>
+        <p className="dim" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <Lock size={14} /> Sign in to start government projects.
+        </p>
       ) : (
         <>
           {projects
@@ -297,20 +336,18 @@ export const GovtTab: React.FC<GovtTabProps> = ({
               const stageCost = Math.ceil(p.t.cost / PROJECT_STAGES);
               const stageCapReached = effectiveMs >= capMs && p.paid < PROJECT_STAGES;
               const statusText = p.pending
-                ? '⏳ Starting…'
+                ? 'Starting…'
                 : stageCapReached
-                  ? `⏸️ Stage ${p.paid}/${PROJECT_STAGES} complete — invest next stage`
+                  ? `Stage ${p.paid}/${PROJECT_STAGES} complete — invest next stage`
                   : isUserActive
-                    ? '🔨 Building'
-                    : '⏸️ Paused';
+                    ? 'Building'
+                    : 'Paused';
 
               return (
                 <div key={p.id} className="gxc">
-                  <p>
-                    <b>
-                      {p.t.e} {p.t.n}
-                    </b>{' '}
-                    · {statusText}
+                  <p style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <InfraIcon id={p.type} size={16} />
+                    <b>{p.t.n}</b> · {statusText}
                   </p>
                   <div className="gxm">
                     <b style={{ width: `${pct}%`, background: '#7c5cff' }} />
@@ -318,7 +355,9 @@ export const GovtTab: React.FC<GovtTabProps> = ({
                   <p className="dim">
                     Progress {pct}% · Invested ₨ {formatNumber(invested)} / ₨ {formatNumber(p.t.cost)} · Stage{' '}
                     {p.paid}/{PROJECT_STAGES}
-                    <br />⏳ <b>{formatDuration(p.dl - nowSrv)}</b> left
+                    <br />
+                    <Clock size={12} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+                    <b>{formatDuration(p.dl - nowSrv)}</b> left
                   </p>
                   {p.paid < PROJECT_STAGES && (
                     <button
@@ -327,7 +366,8 @@ export const GovtTab: React.FC<GovtTabProps> = ({
                       disabled={state.cash < stageCost}
                       onClick={() => onPayProjectStage(p.id)}
                     >
-                      💳 Invest stage {p.paid + 1} · ₨ {formatNumber(stageCost)}
+                      <Zap size={13} />
+                      <span>Invest stage {p.paid + 1} · ₨ {formatNumber(stageCost)}</span>
                     </button>
                   )}
                 </div>
@@ -341,7 +381,9 @@ export const GovtTab: React.FC<GovtTabProps> = ({
               const canStart = activeCount < 3 && state.cash >= stageCost;
               return (
                 <div key={k} className="row" style={{ '--c': '#7c5cff' } as React.CSSProperties}>
-                  <div className="em">{def.e}</div>
+                  <div className="em">
+                    <InfraIcon id={k} size={22} />
+                  </div>
                   <div>
                     <h2>
                       {def.n}
@@ -368,7 +410,7 @@ export const GovtTab: React.FC<GovtTabProps> = ({
           {pastProjects.length > 0 && (
             <details style={{ marginTop: 10 }}>
               <summary className="dim" style={{ cursor: 'pointer', fontSize: 13 }}>
-                📌 Past projects ({pastProjects.length})
+                Past projects ({pastProjects.length})
               </summary>
               <div style={{ marginTop: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
@@ -385,11 +427,9 @@ export const GovtTab: React.FC<GovtTabProps> = ({
                     const pct = Math.round((Math.min(p.t.dur, p.progressMs) / p.t.dur) * 100);
                     return (
                       <div key={p.id} className="gxc">
-                        <p>
-                          <b>
-                            {p.t.e} {p.t.n}
-                          </b>{' '}
-                          · {p.status === 'done' ? '✅ Done' : '❌ Failed'}
+                        <p style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <InfraIcon id={p.type} size={15} />
+                          <b>{p.t.n}</b> · {p.status === 'done' ? <CheckCircle2 size={14} color="#3fe0b0" /> : 'Failed'}
                         </p>
                         <p className="dim">
                           Progress {pct}% · Invested ₨ {formatNumber(invested)} / ₨ {formatNumber(p.t.cost)} · Stage{' '}
@@ -406,7 +446,10 @@ export const GovtTab: React.FC<GovtTabProps> = ({
 
       {gx.log.length > 0 && (
         <>
-          <div className="gxh">📢 Recent notices</div>
+          <div className="gxh">
+            <Bell size={15} color="#ffc23d" />
+            <span>Recent notices</span>
+          </div>
           <div className="gxc">
             {gx.log.map((m, idx) => (
               <p key={idx} className="dim">

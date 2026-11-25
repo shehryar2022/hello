@@ -1,37 +1,86 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { BUILDINGS, GX_LEVEL_MULTS } from '../../game/constants';
-import { buildingCost, formatNumber, getDevelopmentDiscount } from '../../game/rules';
-import type { GameState } from '../../game/types';
+import { bulkBuildingCost, formatNumber, getDevelopmentDiscount } from '../../game/rules';
+import type { BuildingCategory, GameState } from '../../game/types';
+import { BuildingIcon, CashCoinIcon, Sparkles } from '../GameIcons';
 
 interface BuildTabProps {
   state: GameState;
   serverOffsetMs?: number;
-  onBuyBuilding: (id: string, e: React.MouseEvent<HTMLButtonElement>) => void;
+  onBuyBuilding: (id: string, qty: 1 | 5, e: React.MouseEvent<HTMLButtonElement>) => void;
 }
 
+const CATEGORIES: Array<{ id: 'all' | BuildingCategory; label: string }> = [
+  { id: 'all', label: 'All' },
+  { id: 'industry', label: 'Industry' },
+  { id: 'civic', label: 'Civic & Clean' },
+  { id: 'tech', label: 'Tech & Finance' },
+];
+
 export const BuildTab: React.FC<BuildTabProps> = ({ state, serverOffsetMs = 0, onBuyBuilding }) => {
+  const [cat, setCat] = useState<'all' | BuildingCategory>('all');
+  const [qty, setQty] = useState<1 | 5>(1);
   const nowSrv = Date.now() + serverOffsetMs;
   const disc = getDevelopmentDiscount(state, nowSrv);
+
+  const visibleBuildings = cat === 'all' ? BUILDINGS : BUILDINGS.filter((b) => b.cat === cat);
 
   return (
     <div>
       {disc > 0 && (
         <div className="tradelim">
-          <span>💳 Subscription Development Discount</span>
+          <span>
+            <Sparkles size={14} color="#3fe0b0" />
+            Subscription Development Discount
+          </span>
           <b className="ok">−{Math.round(disc * 100)}% build cost</b>
         </div>
       )}
+
+      <div className="filterbar">
+        <div className="fchips" role="group" aria-label="Filter buildings by category">
+          {CATEGORIES.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              className={`fchip ${cat === c.id ? 'on' : ''}`}
+              onClick={() => setCat(c.id)}
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
+        <div className="qty-toggle" role="group" aria-label="Build quantity">
+          <button
+            type="button"
+            className={qty === 1 ? 'on' : ''}
+            onClick={() => setQty(1)}
+          >
+            ×1
+          </button>
+          <button
+            type="button"
+            className={qty === 5 ? 'on' : ''}
+            onClick={() => setQty(5)}
+          >
+            ×5
+          </button>
+        </div>
+      </div>
+
       <div className="list g2">
-        {BUILDINGS.map((d) => {
+        {visibleBuildings.map((d) => {
           const count = state.b[d.id] || 0;
-          const c = buildingCost(d, count, disc);
+          const c = bulkBuildingCost(d, count, qty, disc);
           const upgLvl = state.gx?.lvl?.[d.id] || 1;
           const upgMult = GX_LEVEL_MULTS[upgLvl - 1] || 1;
           const canAfford = state.cash >= c;
 
           return (
             <div key={d.id} className="row" style={{ '--c': d.c } as React.CSSProperties}>
-              <div className="em">{d.e}</div>
+              <div className="em">
+                <BuildingIcon id={d.id} size={23} />
+              </div>
               <div>
                 <h2>
                   {d.n}
@@ -45,9 +94,10 @@ export const BuildTab: React.FC<BuildTabProps> = ({ state, serverOffsetMs = 0, o
                 type="button"
                 className={`btn sm ${canAfford ? 'mint' : 'no'}`}
                 disabled={!canAfford}
-                onClick={(e) => onBuyBuilding(d.id, e)}
+                onClick={(e) => onBuyBuilding(d.id, qty, e)}
               >
-                💵 ₨ {formatNumber(c)}
+                <CashCoinIcon size={15} />
+                <span>{qty > 1 ? `×${qty} ` : ''}₨ {formatNumber(c)}</span>
               </button>
             </div>
           );
