@@ -670,11 +670,16 @@ test('cleanSavePayload strips undefined/country fields and clamps all values wit
   dirty.boosterCd = Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`b_${i}`, 123]));
   dirty.avHist = [1.2, 2.3];
   dirty.avs = { n: 0, b: 0, w: 0, r: 0 };
+  dirty.legacyFoo = 'stale_legacy';
+  (dirty.b as Record<string, number>).legacyHotel = 42;
   const cleaned = cleanSavePayload(dirty as never);
 
   assert.equal('country' in cleaned, false);
   assert.equal('avHist' in cleaned, false);
   assert.equal('avs' in cleaned, false);
+  assert.equal('legacyFoo' in cleaned, false);
+  assert.equal('legacyHotel' in (cleaned.b as Record<string, unknown>), false);
+  assert.equal(Object.keys(cleaned.b as Record<string, unknown>).length, BUILDINGS.length);
   assert.equal(cleaned.cash, 1e13);
   assert.equal(cleaned.gems, 1e9);
   assert.equal(cleaned.taxPool, 1e13);

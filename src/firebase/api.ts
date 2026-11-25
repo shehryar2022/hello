@@ -312,7 +312,7 @@ export async function syncSaveToCloud(params: {
         },
       };
     }
-  }, true, 'saves');
+  }, true, 'saves (wallet + player + save)');
 
   return result;
 }

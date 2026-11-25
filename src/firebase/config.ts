@@ -1,32 +1,82 @@
-import { initializeApp } from 'firebase/app';
+import { getApp, getApps, initializeApp, type FirebaseApp } from 'firebase/app';
 import { getAuth, type Auth } from 'firebase/auth';
 import { doc, getDocFromServer, getFirestore, type Firestore } from 'firebase/firestore';
 import firebaseAppletConfig from '../../firebase-applet-config.json';
 
-const env = (import.meta as { env?: Record<string, string | undefined> }).env ?? {};
+function readConfigValue(envValue: unknown, fallbackValue: unknown): string {
+  const fromEnv = typeof envValue === 'string' ? envValue.trim() : '';
+  if (
+    fromEnv &&
+    fromEnv !== 'undefined' &&
+    fromEnv !== 'null' &&
+    !fromEnv.startsWith('YOUR_')
+  ) {
+    return fromEnv;
+  }
+  return typeof fallbackValue === 'string' ? fallbackValue.trim() : '';
+}
 
 export const FIREBASE_CONFIG = {
-  apiKey: env.VITE_FIREBASE_API_KEY?.trim() || firebaseAppletConfig.apiKey || '',
-  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN?.trim() || firebaseAppletConfig.authDomain || '',
-  databaseURL: env.VITE_FIREBASE_DATABASE_URL?.trim() || firebaseAppletConfig.databaseURL || '',
-  projectId: env.VITE_FIREBASE_PROJECT_ID?.trim() || firebaseAppletConfig.projectId || '',
-  storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET?.trim() || firebaseAppletConfig.storageBucket || '',
-  messagingSenderId:
-    env.VITE_FIREBASE_MESSAGING_SENDER_ID?.trim() || firebaseAppletConfig.messagingSenderId || '',
-  appId: env.VITE_FIREBASE_APP_ID?.trim() || firebaseAppletConfig.appId || '',
-  measurementId: env.VITE_FIREBASE_MEASUREMENT_ID?.trim() || firebaseAppletConfig.measurementId || '',
+  apiKey: readConfigValue(import.meta.env?.VITE_FIREBASE_API_KEY, firebaseAppletConfig.apiKey),
+  authDomain: readConfigValue(
+    import.meta.env?.VITE_FIREBASE_AUTH_DOMAIN,
+    firebaseAppletConfig.authDomain,
+  ),
+  databaseURL: readConfigValue(
+    import.meta.env?.VITE_FIREBASE_DATABASE_URL,
+    firebaseAppletConfig.databaseURL,
+  ),
+  projectId: readConfigValue(
+    import.meta.env?.VITE_FIREBASE_PROJECT_ID,
+    firebaseAppletConfig.projectId,
+  ),
+  storageBucket: readConfigValue(
+    import.meta.env?.VITE_FIREBASE_STORAGE_BUCKET,
+    firebaseAppletConfig.storageBucket,
+  ),
+  messagingSenderId: readConfigValue(
+    import.meta.env?.VITE_FIREBASE_MESSAGING_SENDER_ID,
+    firebaseAppletConfig.messagingSenderId,
+  ),
+  appId: readConfigValue(import.meta.env?.VITE_FIREBASE_APP_ID, firebaseAppletConfig.appId),
+  measurementId: readConfigValue(
+    import.meta.env?.VITE_FIREBASE_MEASUREMENT_ID,
+    firebaseAppletConfig.measurementId,
+  ),
 };
 
-export const isFirebaseConfigured = Boolean(
-  FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId && FIREBASE_CONFIG.appId,
+const databaseId = readConfigValue(import.meta.env?.VITE_FIREBASE_DATABASE_ID, '');
+
+const hasRequiredFirebaseConfig = Boolean(
+  FIREBASE_CONFIG.apiKey &&
+    FIREBASE_CONFIG.authDomain &&
+    FIREBASE_CONFIG.projectId &&
+    FIREBASE_CONFIG.appId,
 );
 
-const app = isFirebaseConfigured ? initializeApp(FIREBASE_CONFIG) : null;
-export const auth = (app ? getAuth(app) : null) as Auth;
-const databaseId = env.VITE_FIREBASE_DATABASE_ID?.trim();
-export const db = (
-  app ? (databaseId ? getFirestore(app, databaseId) : getFirestore(app)) : null
-) as Firestore;
+let initializedApp: FirebaseApp | null = null;
+let initializedAuth: Auth | null = null;
+let initializedDb: Firestore | null = null;
+
+if (hasRequiredFirebaseConfig) {
+  try {
+    initializedApp = getApps().length > 0 ? getApp() : initializeApp(FIREBASE_CONFIG);
+    initializedAuth = getAuth(initializedApp);
+    initializedDb = databaseId
+      ? getFirestore(initializedApp, databaseId)
+      : getFirestore(initializedApp);
+  } catch (err) {
+    console.error('Firebase initialization failed:', err);
+    initializedApp = null;
+    initializedAuth = null;
+    initializedDb = null;
+  }
+}
+
+export const firebaseApp = initializedApp;
+export const auth = initializedAuth as Auth;
+export const db = initializedDb as Firestore;
+export const isFirebaseConfigured = Boolean(initializedApp && initializedAuth && initializedDb);
 
 export enum OperationType {
   CREATE = 'create',

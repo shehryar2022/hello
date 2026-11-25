@@ -331,7 +331,7 @@ service cloud.firestore {
           && isValidId(uid)
           && isValidWallet(incoming())
           && incoming().t == request.time
-          && (!('rev' in existing()) || incoming().rev >= existing().rev);
+          && (!('rev' in existing()) || !(existing().rev is number) || incoming().rev >= existing().rev);
         allow delete: if false;
       }
 

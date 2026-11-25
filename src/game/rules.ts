@@ -207,11 +207,13 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
   delete s.avHist;
   delete s.avs;
 
-  if (!s.b || typeof s.b !== 'object') s.b = { ...D.b };
+  const rawB = s.b && typeof s.b === 'object' ? (s.b as Record<string, unknown>) : {};
+  const cleanB: Record<string, number> = {};
   for (const d of BUILDINGS) {
-    const v = Math.floor(Number(s.b[d.id]));
-    s.b[d.id] = Number.isFinite(v) && v >= 0 ? Math.min(10_000, v) : 0;
+    const v = Math.floor(Number(rawB[d.id]));
+    cleanB[d.id] = Number.isFinite(v) && v >= 0 ? Math.min(10_000, v) : 0;
   }
+  s.b = cleanB;
 
   if (!s.set || typeof s.set !== 'object') {
     s.set = { sfx: 1, vib: 1, anim: 1 };
@@ -412,6 +414,8 @@ function stripUndefinedDeep(value: unknown): unknown {
   return out;
 }
 
+const ALLOWED_SAVE_KEYS = new Set(Object.keys(freshState()).filter((k) => k !== 'country'));
+
 export function cleanSavePayload(s: GameState): Record<string, unknown> {
   const normalized = migrateState({ ...(s as GameState & Record<string, unknown>) });
   normalized.cash = Math.min(1e13, Math.max(0, Number(normalized.cash) || 0));
@@ -432,13 +436,13 @@ export function cleanSavePayload(s: GameState): Record<string, unknown> {
   normalized.questDay = typeof normalized.questDay === 'string' ? normalized.questDay.slice(0, 32) : '';
 
   const raw = stripUndefinedDeep(normalized) as Record<string, unknown>;
-  delete raw.country;
-  delete raw.deals;
-  delete raw.loan;
-  delete raw.avHist;
-  delete raw.avs;
-  delete raw._lastBal;
-  return raw;
+  const out: Record<string, unknown> = {};
+  for (const key of ALLOWED_SAVE_KEYS) {
+    if (key in raw) {
+      out[key] = raw[key];
+    }
+  }
+  return out;
 }
 
 export function totalBuildings(s: GameState): number {

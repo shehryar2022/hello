@@ -83,8 +83,9 @@ test('Dirty Dozen security invariants are enforced in firestore.rules', () => {
   // 8. Legacy player updates, heartbeat-only updates, and atomic project completion/failure
   assert.match(rules, /'createdAt' in incoming\(\)/);
   assert.match(rules, /affectedOnly\(\['lastSeen'\]\)/);
+  assert.match(rules, /affectedOnly\(\['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp'\]\)/);
   assert.match(rules, /affectedOnly\(\['progressMs', 'lastTickAt', 'status', 'resolvedAt'\]\)[\s\S]*incoming\(\)\.status in \['done', 'failed'\]/);
-  assert.match(rules, /\(!\('rev' in existing\(\)\) \|\| incoming\(\)\.rev >= existing\(\)\.rev\)/);
+  assert.match(rules, /\(!\('rev' in existing\(\)\) \|\| !\(existing\(\)\.rev is number\) \|\| incoming\(\)\.rev >= existing\(\)\.rev\)/);
 
   // 9. Save balance/policy/building bounds, non-whitespace text guards, rank 0..10, and nullable trade resolvedAt
   assert.match(rules, /data\.save\.cash >= 0/);
