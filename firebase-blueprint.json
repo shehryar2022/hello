@@ -58,7 +58,7 @@
     },
     "PlayerSave": {
       "title": "PlayerSave",
-      "description": "Owner-only full game state snapshot including buildings, all 14 bounded policy sliders, government, milestones, crateCd, tech doctrines, activeFx, and subscription state.",
+      "description": "Owner-only full game state snapshot including 24 buildings, all 16 bounded policy sliders, 36 sticker slots, government, milestones, crateCd, tech doctrines, activeFx, subscription state, and weekly subPromo state.",
       "type": "object",
       "properties": {
         "save": { "type": "object" }

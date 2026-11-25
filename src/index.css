@@ -1460,6 +1460,38 @@ input[type=range]::-webkit-slider-thumb {
   to { opacity: 1; transform: scale(1.03); }
 }
 
+/* Smart Recommended Highlights & Weekly Subscription Deal Banner */
+.rec-card {
+  background: linear-gradient(135deg, rgba(255, 194, 61, 0.12), var(--clay2) 66%);
+  box-shadow: 0 0 0 1.5px rgba(255, 194, 61, 0.72), var(--sm), var(--in);
+}
+.rec-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(255, 194, 61, 0.2);
+  border: 1px solid rgba(255, 194, 61, 0.55);
+  color: #ffe28a;
+  font: 700 10px/1.2 var(--d);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.promo-banner {
+  background: linear-gradient(135deg, rgba(255, 111, 165, 0.16), rgba(255, 194, 61, 0.16) 55%, var(--clay2));
+  box-shadow: 0 0 0 1.5px rgba(255, 194, 61, 0.68), var(--sm), var(--in);
+  border-radius: 18px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.price-strike {
+  text-decoration: line-through;
+  opacity: 0.65;
+  font-size: 11px;
+  margin-right: 4px;
+}
+
 .noanim *, .noanim :before, .noanim :after,
 .hid *, .hid :before, .hid :after {
   animation: none !important;

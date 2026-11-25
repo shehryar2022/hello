@@ -7,6 +7,9 @@ import {
   formatNumber,
   getActiveShopIncomeBooster,
   getActiveSubscription,
+  getRecommendedBoosters,
+  getRecommendedShopItems,
+  getSubscriptionPrice,
 } from '../../game/rules';
 import type { GameState, ShopSubTab, SubscriptionTierId } from '../../game/types';
 import {
@@ -17,6 +20,7 @@ import {
   Coins,
   GemDiamondIcon,
   RankEmblem,
+  Sparkles,
   SubIcon,
   Zap,
 } from '../GameIcons';
@@ -61,6 +65,12 @@ export const ShopTab: React.FC<ShopTabProps> = ({
   const activeSub = getActiveSubscription(state, nowMs);
   const canClaimDaily = !!activeSub && activeSub.lastClaimDay !== dayKey;
 
+  const shopRec = getRecommendedShopItems(state, nowMs);
+  const boosterRec = getRecommendedBoosters(state, nowMs);
+
+  const activePromoSub = SUBSCRIPTIONS.find((sub) => getSubscriptionPrice(state, sub, nowMs).promoActive);
+  const activePromoPrice = activePromoSub ? getSubscriptionPrice(state, activePromoSub, nowMs) : null;
+
   return (
     <div>
       <div className="subtabs">
@@ -71,6 +81,7 @@ export const ShopTab: React.FC<ShopTabProps> = ({
         <button type="button" className={subTab === 'sub' ? 'on' : ''} onClick={() => onChangeSubTab('sub')}>
           <Calendar size={14} />
           <span>Subscriptions</span>
+          {activePromoPrice?.promoActive && <em>−{activePromoPrice.discountPct}%</em>}
         </button>
         <button type="button" className={subTab === 'boost' ? 'on' : ''} onClick={() => onChangeSubTab('boost')}>
           <Zap size={14} />
@@ -96,9 +107,14 @@ export const ShopTab: React.FC<ShopTabProps> = ({
               const owned = (state.rank || 0) >= r.id;
               const check = canBuyRank(state, r.id);
               const isNext = r.id === (state.rank || 0) + 1;
+              const isRec = shopRec.nextRankId === r.id;
 
               return (
-                <div key={r.id} className="row rank-row" style={{ '--c': r.c } as React.CSSProperties}>
+                <div
+                  key={r.id}
+                  className={`row rank-row${isRec ? ' rec-card' : ''}`}
+                  style={{ '--c': r.c } as React.CSSProperties}
+                >
                   <div className="em">
                     <RankEmblem rank={r.id} size={28} />
                   </div>
@@ -107,6 +123,14 @@ export const ShopTab: React.FC<ShopTabProps> = ({
                       <span>{r.n}</span>
                       <span className="lv">+{r.id}%</span>
                     </h2>
+                    {isRec && (
+                      <div style={{ marginTop: 3 }}>
+                        <span className="rec-badge">
+                          <Sparkles size={10} />
+                          <span>Recommended · {shopRec.rankReason}</span>
+                        </span>
+                      </div>
+                    )}
                     <p>Prestige tier {r.id} · Permanent +1% income boost</p>
                   </div>
                   {owned ? (
@@ -130,13 +154,32 @@ export const ShopTab: React.FC<ShopTabProps> = ({
         </div>
       ) : subTab === 'sub' ? (
         <div>
+          {activePromoSub && activePromoPrice?.promoActive && (
+            <div className="promo-banner" data-testid="weekly-sub-promo">
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
+                <span className="rec-badge">
+                  <Sparkles size={11} />
+                  <span>Weekly Flash Deal · {activePromoPrice.discountPct}% OFF</span>
+                </span>
+                <span className="dim" style={{ fontSize: 12 }}>
+                  Ends in <b style={{ color: 'var(--gold)' }}>{formatSubRemaining(activePromoPrice.msLeft)}</b>
+                </span>
+              </div>
+              <p style={{ margin: '6px 0 0', fontSize: 13 }}>
+                Random weekly offer unlocked on <b>{activePromoSub.n}</b>:{' '}
+                <span className="price-strike">₨ {formatNumber(activePromoPrice.baseCost)}</span>
+                <b className="ok">₨ {formatNumber(activePromoPrice.finalCost)}</b>
+              </p>
+            </div>
+          )}
+
           <div className={`gxc ${activeSub ? `sub-card sub-card--${activeSub.def.id}` : ''}`} style={{ marginBottom: 10 }}>
             <p style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <Calendar size={15} color="#5ccbff" />
               <b>Balanced National Subscriptions</b>
             </p>
             <p className="dim">
-              Modest convenience perks (+4% to +12% income, 3%–10% build discount, +5%–15% project speed, and a daily treasury stipend) that keep core economy &amp; policy choices primary.
+              Prestige charters (₨ 5M – ₨ 500M) with modest perks (+4% to +12% income, 3%–10% build discount, +5%–15% project speed) and random weekly flash discounts.
             </p>
             {activeSub ? (
               <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
@@ -182,15 +225,17 @@ export const ShopTab: React.FC<ShopTabProps> = ({
             {SUBSCRIPTIONS.map((sub) => {
               const isCurrent = activeSub?.def.id === sub.id;
               const check = canBuySubscription(state, sub, nowMs);
+              const price = getSubscriptionPrice(state, sub, nowMs);
               const isHigherTier = activeSub
                 ? SUBSCRIPTIONS.findIndex((x) => x.id === sub.id) >
                   SUBSCRIPTIONS.findIndex((x) => x.id === activeSub.def.id)
                 : false;
+              const isRec = !isCurrent && shopRec.subTier === sub.id;
 
               return (
                 <div
                   key={sub.id}
-                  className={`row sub-card sub-card--${sub.id} ${isCurrent ? 'me' : ''}`}
+                  className={`row sub-card sub-card--${sub.id}${isCurrent ? ' me' : ''}${isRec ? ' rec-card' : ''}`}
                   style={{ '--c': sub.id === 'monthly' ? '#ffc23d' : sub.id === 'weekly' ? '#3fe0b0' : '#5ccbff' } as React.CSSProperties}
                 >
                   <div className="em">
@@ -202,8 +247,23 @@ export const ShopTab: React.FC<ShopTabProps> = ({
                     <h2>
                       <span>{sub.n}</span>
                       <span className={`sub-crest sub-crest--${sub.id}`}>{sub.periodLabel}</span>
+                      {price.promoActive && (
+                        <span className="rec-badge">
+                          <Sparkles size={10} />
+                          <span>−{price.discountPct}% Weekly Deal</span>
+                        </span>
+                      )}
+                      {isRec && !price.promoActive && (
+                        <span className="rec-badge">
+                          <Sparkles size={10} />
+                          <span>Recommended · {shopRec.subReason}</span>
+                        </span>
+                      )}
                     </h2>
-                    <p>{sub.d} · Visible animated frame on Leaderboard</p>
+                    <p>
+                      {sub.d} · Animated Leaderboard Crest
+                      {price.promoActive && ` · Deal ends in ${formatSubRemaining(price.msLeft)}`}
+                    </p>
                   </div>
                   {isCurrent ? (
                     <span className="lv" style={{ background: 'var(--mint)', color: '#04332a' }}>
@@ -212,14 +272,20 @@ export const ShopTab: React.FC<ShopTabProps> = ({
                   ) : (
                     <button
                       type="button"
-                      className={`btn sm ${check.ok ? (sub.id === 'monthly' ? 'gold' : 'mint') : 'no'}`}
+                      className={`btn sm ${check.ok ? (sub.id === 'monthly' || price.promoActive ? 'gold' : 'mint') : 'no'}`}
                       disabled={!check.ok}
                       title={check.reason}
                       onClick={(e) => onBuySubscription(sub.id, e)}
                     >
-                      {activeSub && !isHigherTier
-                        ? 'Lower tier'
-                        : `${isHigherTier ? 'Upgrade' : 'Subscribe'} · ₨ ${formatNumber(sub.cost)}`}
+                      {activeSub && !isHigherTier ? (
+                        'Lower tier'
+                      ) : (
+                        <span>
+                          {isHigherTier ? 'Upgrade' : 'Subscribe'} ·{' '}
+                          {price.promoActive && <span className="price-strike">₨ {formatNumber(price.baseCost)}</span>}
+                          ₨ {formatNumber(price.finalCost)}
+                        </span>
+                      )}
                     </button>
                   )}
                 </div>
@@ -253,6 +319,7 @@ export const ShopTab: React.FC<ShopTabProps> = ({
           <div className="list g2">
             {BOOSTERS.map((b) => {
               const check = canBuyBooster(state, b, nowMs);
+              const recReason = boosterRec[b.id];
               const label = check.cooldownLeftSec > 0
                 ? `${check.cooldownLeftSec}s CD`
                 : b.isIncomeBoost && activeIncomeBoost.active
@@ -264,7 +331,7 @@ export const ShopTab: React.FC<ShopTabProps> = ({
               return (
                 <div
                   key={b.id}
-                  className="row"
+                  className={`row${recReason ? ' rec-card' : ''}`}
                   style={{ '--c': b.tier === 'rare' ? '#ffc23d' : '#5ccbff' } as React.CSSProperties}
                 >
                   <div className="em">
@@ -274,6 +341,12 @@ export const ShopTab: React.FC<ShopTabProps> = ({
                     <h2>
                       {b.n}
                       <span className="lv">{b.tier === 'rare' ? 'Rare' : 'Common'}</span>
+                      {recReason && (
+                        <span className="rec-badge">
+                          <Sparkles size={10} />
+                          <span>Recommended · {recReason}</span>
+                        </span>
+                      )}
                     </h2>
                     <p>{b.d}</p>
                   </div>

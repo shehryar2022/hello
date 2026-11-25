@@ -98,7 +98,7 @@ service cloud.firestore {
         && data.keys().hasOnly(['cash', 'gems', 'stk', 'rev', 'sid', 't', 'tradeId'])
         && data.cash is number && data.cash >= 0 && data.cash <= 10000000000000
         && data.gems is int && data.gems >= 0 && data.gems <= 1000000000
-        && data.stk is map && data.stk.size() <= 40
+        && data.stk is map && data.stk.size() <= 48
         && data.rev is int && data.rev >= 1 && data.rev <= 1000000000
         && data.sid is string && data.sid.size() >= 1 && data.sid.size() <= 128
         && data.t is timestamp
@@ -116,7 +116,7 @@ service cloud.firestore {
       return data.keys().hasAll(['save'])
         && data.keys().hasOnly(['save'])
         && data.save is map
-        && data.save.size() <= 64
+        && data.save.size() <= 72
         && (!('cash' in data.save) || (data.save.cash is number && data.save.cash >= 0 && data.save.cash <= 10000000000000))
         && (!('gems' in data.save) || (data.save.gems is number && data.save.gems >= 0 && data.save.gems <= 1000000000))
         && (!('taxPool' in data.save) || (data.save.taxPool is number && data.save.taxPool >= 0 && data.save.taxPool <= 10000000000000))
@@ -143,8 +143,10 @@ service cloud.firestore {
         && (!('digital' in data.save) || (data.save.digital is number && data.save.digital >= 0 && data.save.digital <= 20))
         && (!('rd' in data.save) || (data.save.rd is number && data.save.rd >= 0 && data.save.rd <= 25))
         && (!('green' in data.save) || (data.save.green is number && data.save.green >= 0 && data.save.green <= 25))
-        && (!('b' in data.save) || (data.save.b is map && data.save.b.size() <= 30))
-        && (!('stk' in data.save) || (data.save.stk is map && data.save.stk.size() <= 40))
+        && (!('wealth' in data.save) || (data.save.wealth is number && data.save.wealth >= 0 && data.save.wealth <= 20))
+        && (!('transitSub' in data.save) || (data.save.transitSub is number && data.save.transitSub >= 0 && data.save.transitSub <= 25))
+        && (!('b' in data.save) || (data.save.b is map && data.save.b.size() <= 35))
+        && (!('stk' in data.save) || (data.save.stk is map && data.save.stk.size() <= 48))
         && (!('milestones' in data.save) || (data.save.milestones is map && data.save.milestones.size() <= 40))
         && (!('claimed' in data.save) || (data.save.claimed is map && data.save.claimed.size() <= 20))
         && (!('boosterCd' in data.save) || (data.save.boosterCd is map && data.save.boosterCd.size() <= 20))
@@ -161,6 +163,14 @@ service cloud.firestore {
           && (!('tier' in data.save.sub) || data.save.sub.tier in ['daily', 'weekly', 'monthly'])
           && (!('exp' in data.save.sub) || (data.save.sub.exp is number && data.save.sub.exp >= 0))
           && (!('lastClaimDay' in data.save.sub) || (data.save.sub.lastClaimDay is string && data.save.sub.lastClaimDay.size() <= 16))
+        ))
+        && (!('subPromo' in data.save) || (
+          data.save.subPromo is map
+          && data.save.subPromo.size() <= 5
+          && (!('weekKey' in data.save.subPromo) || (data.save.subPromo.weekKey is string && data.save.subPromo.weekKey.size() <= 16))
+          && (!('tier' in data.save.subPromo) || data.save.subPromo.tier in ['daily', 'weekly', 'monthly'])
+          && (!('pct' in data.save.subPromo) || (data.save.subPromo.pct is number && data.save.subPromo.pct >= 5 && data.save.subPromo.pct <= 40))
+          && (!('exp' in data.save.subPromo) || (data.save.subPromo.exp is number && data.save.subPromo.exp >= 0))
         ));
     }
 
@@ -214,7 +224,7 @@ service cloud.firestore {
         && data.participants[0] == data.from && data.participants[1] == data.to
         && data.offerCash is number && data.offerCash >= 0 && data.offerCash <= 1000000000000
         && data.offerGems is int && data.offerGems >= 0 && data.offerGems <= 1000000000
-        && data.offerStk is map && data.offerStk.size() <= 40
+        && data.offerStk is map && data.offerStk.size() <= 48
         && data.reqCash is number && data.reqCash == 0
         && data.reqGems is int && data.reqGems == 0
         && data.reqStk is map && data.reqStk.size() == 0

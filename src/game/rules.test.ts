@@ -35,6 +35,12 @@ import {
   getDevelopmentDiscount,
   getInfraDecayMult,
   getProjectSpeedMult,
+  getRecommendedBoosters,
+  getRecommendedBuildings,
+  getRecommendedPolicyHint,
+  getRecommendedShopItems,
+  getRecommendedTech,
+  getSubscriptionPrice,
   getTaxPoolCapSeconds,
   getTechIncomeMult,
   gxRepairCost,
@@ -45,11 +51,13 @@ import {
   MILESTONES,
   resolveExecutiveDecision,
   rollTradePortExport,
+  rollWeeklySubPromo,
   sanitizeStats,
   selectDailyQuestIds,
   targetHappiness,
   taxInfo,
   totalBuildings,
+  weekKeyFor,
 } from './rules';
 
 test('bank section is completely removed from tabs and state migration strips loans', () => {
@@ -303,21 +311,24 @@ test('normalizeProject never sets a 1970 deadline when startedAt is null/pending
   assert.ok(pendingProj.dl > fallbackNow);
 });
 
-test('balanced subscriptions grant modest perks & prevent same-day double-claim on upgrade', () => {
+test('subscriptions cost 5M-500M, grant modest perks, and prevent same-day double-claim on upgrade', () => {
   const now = 1_750_000_000_000;
   const daily = SUBSCRIPTIONS.find((s) => s.id === 'daily')!;
   const weekly = SUBSCRIPTIONS.find((s) => s.id === 'weekly')!;
   const monthly = SUBSCRIPTIONS.find((s) => s.id === 'monthly')!;
 
+  assert.equal(daily.cost, 5_000_000);
   assert.equal(daily.incomeMult, 1.04);
   assert.equal(daily.discountRate, 0.03);
-  assert.equal(daily.dailyCash, 150_000);
+  assert.equal(daily.dailyCash, 200_000);
+  assert.equal(weekly.cost, 65_000_000);
   assert.equal(weekly.incomeMult, 1.08);
   assert.equal(weekly.discountRate, 0.06);
-  assert.equal(weekly.dailyCash, 600_000);
+  assert.equal(weekly.dailyCash, 900_000);
+  assert.equal(monthly.cost, 500_000_000);
   assert.equal(monthly.incomeMult, 1.12);
   assert.equal(monthly.discountRate, 0.1);
-  assert.equal(monthly.dailyCash, 2_500_000);
+  assert.equal(monthly.dailyCash, 3_500_000);
 
   let state = freshState();
   state.cash = 600_000_000;
@@ -333,7 +344,7 @@ test('balanced subscriptions grant modest perks & prevent same-day double-claim 
   const sub1 = applyBuySubscription(state, daily, now);
   assert.equal(sub1.ok, true);
   state = sub1.state;
-  assert.equal(state.cash, 596_500_000);
+  assert.equal(state.cash, 595_000_000);
   assert.equal(getDevelopmentDiscount(state, now), 0.03);
   assert.equal(getProjectSpeedMult(state, now), 1.05);
   assert.ok(Math.abs(calculateIncome(state, { nowMs: now }).net / baseInc - 1.04) < 0.001);
@@ -345,7 +356,7 @@ test('balanced subscriptions grant modest perks & prevent same-day double-claim 
 
   const c1 = claimSubscriptionDaily(state, '2026-11-25', now + 2000);
   assert.equal(c1.ok, true);
-  assert.equal(c1.cashAdded, 150_000);
+  assert.equal(c1.cashAdded, 200_000);
   state = c1.state;
 
   assert.equal(claimSubscriptionDaily(state, '2026-11-25', now + 3000).ok, false);
@@ -358,7 +369,7 @@ test('balanced subscriptions grant modest perks & prevent same-day double-claim 
 
   const c2 = claimSubscriptionDaily(state, '2026-11-26', now + 86_400_000);
   assert.equal(c2.ok, true);
-  assert.equal(c2.cashAdded, 600_000);
+  assert.equal(c2.cashAdded, 900_000);
   assert.equal(c2.gemsAdded, 1);
 
   const migrated = migrateState({
@@ -385,9 +396,9 @@ test('government renovation depends strictly on 20% of building development (una
   assert.equal(gxRepairCost(state, 'parl', true), 0);
 });
 
-test('new buildings (hydro, stock, evplant, fusion) and new policies (tourism, digital, rd, green) function cleanly', () => {
-  assert.equal(BUILDINGS.length, 20);
-  for (const id of ['hydro', 'stock', 'evplant', 'fusion']) {
+test('24 buildings (including transit, semicon, logistics, quantum) and 16 policies (including wealth, transitSub) function cleanly', () => {
+  assert.equal(BUILDINGS.length, 24);
+  for (const id of ['hydro', 'stock', 'evplant', 'fusion', 'transit', 'semicon', 'logistics', 'quantum']) {
     assert.ok(BUILDINGS.some((b) => b.id === id), `Missing building ${id}`);
   }
 
@@ -396,9 +407,14 @@ test('new buildings (hydro, stock, evplant, fusion) and new policies (tourism, d
   base.b.stock = 2;
   base.b.evplant = 1;
   base.b.fusion = 1;
+  base.b.transit = 2;
+  base.b.semicon = 1;
+  base.b.logistics = 1;
+  base.b.quantum = 1;
   base.b.airport = 2;
   base.b.tech = 2;
   const incBefore = calculateIncome(base).gross;
+  const hapBefore = targetHappiness(base);
 
   const boosted = migrateState({
     ...base,
@@ -406,6 +422,8 @@ test('new buildings (hydro, stock, evplant, fusion) and new policies (tourism, d
     digital: 15,
     rd: 20,
     green: 20,
+    wealth: 10,
+    transitSub: 18,
     tax: 999,
     boost: 999,
   });
@@ -415,7 +433,12 @@ test('new buildings (hydro, stock, evplant, fusion) and new policies (tourism, d
   assert.equal(boosted.digital, 15);
   assert.equal(boosted.rd, 20);
   assert.equal(boosted.green, 20);
+  assert.equal(boosted.wealth, 10);
+  assert.equal(boosted.transitSub, 18);
   assert.ok(calculateIncome(boosted).gross > incBefore);
+
+  const transitHapBoost = migrateState({ ...base, transitSub: 25 });
+  assert.ok(targetHappiness(transitHapBoost) > hapBefore);
 });
 
 test('rebalanced economy invariants: starter cash 260, monotonic endgame ROI, +15 Happy Days, and 0% approval taxInfo', () => {
@@ -527,4 +550,104 @@ test('Civic Rally booster, Executive Decisions, and leaderboard sub visibility h
   assert.equal(isProfileSubActive({ subTier: 'weekly', subExp: now - 1 }, now), null);
   assert.equal(isProfileSubActive({ subTier: '', subExp: now + 60_000 }, now), null);
 });
+
+test('weekly random subscription discount locks per weekKey, expires after 72h, and applies discounted price', () => {
+  const week1Now = 1_750_000_000_000;
+  let state = freshState();
+  const monthly = SUBSCRIPTIONS.find((s) => s.id === 'monthly')!;
+
+  // Pick monthly (idx 2 -> rng ~ 0.9) and 35% off (idx 4 -> rng ~ 0.9)
+  const r1 = rollWeeklySubPromo(state, week1Now, () => 0.9);
+  assert.equal(r1.rolled, true);
+  assert.equal(r1.promo?.tier, 'monthly');
+  assert.equal(r1.promo?.pct, 35);
+  state = r1.state;
+
+  // Same weekKey cannot re-roll even with different rng
+  const reroll = rollWeeklySubPromo(state, week1Now + 3600_000, () => 0.05);
+  assert.equal(reroll.rolled, false);
+  assert.equal(reroll.promo?.tier, 'monthly');
+  assert.equal(reroll.promo?.pct, 35);
+
+  const pActive = getSubscriptionPrice(state, monthly, week1Now + 1000);
+  assert.equal(pActive.promoActive, true);
+  assert.equal(pActive.discountPct, 35);
+  assert.equal(pActive.finalCost, 325_000_000);
+
+  state.cash = 350_000_000;
+  assert.equal(canBuySubscription(state, monthly, week1Now + 1000).ok, true);
+  const bought = applyBuySubscription(state, monthly, week1Now + 1000);
+  assert.equal(bought.ok, true);
+  assert.equal(bought.paidCost, 325_000_000);
+  assert.equal(bought.state.cash, 25_000_000);
+
+  // After 72h, promo expires and price reverts to 500M
+  const pExpired = getSubscriptionPrice(state, monthly, week1Now + 73 * 3_600_000);
+  assert.equal(pExpired.promoActive, false);
+  assert.equal(pExpired.finalCost, 500_000_000);
+
+  // Next ISO week allows rolling a fresh discount
+  const nextWeekNow = week1Now + 7 * 86_400_000;
+  assert.notEqual(weekKeyFor(week1Now), weekKeyFor(nextWeekNow));
+  const r2 = rollWeeklySubPromo(state, nextWeekNow, () => 0.01);
+  assert.equal(r2.rolled, true);
+  assert.equal(r2.promo?.tier, 'daily');
+  assert.equal(r2.promo?.pct, 15);
+});
+
+test('36 stickers, monotonic endgame building ROI, and smart recommendation highlights work accurately', () => {
+  assert.equal(STICKERS.length, 36);
+  for (const id of ['turtle', 'dove', 'pegasus', 'sphinx', 'atlas', 'nebula']) {
+    assert.ok(STICKERS.some((s) => s.id === id), `Missing sticker ${id}`);
+  }
+
+  const semicon = BUILDINGS.find((b) => b.id === 'semicon')!;
+  const space = BUILDINGS.find((b) => b.id === 'space')!;
+  const logistics = BUILDINGS.find((b) => b.id === 'logistics')!;
+  const fusion = BUILDINGS.find((b) => b.id === 'fusion')!;
+  const quantum = BUILDINGS.find((b) => b.id === 'quantum')!;
+  const bank = BUILDINGS.find((b) => b.id === 'bank')!;
+
+  assert.ok(quantum.cost / quantum.inc < fusion.cost / fusion.inc);
+  assert.ok(fusion.cost / fusion.inc < logistics.cost / logistics.inc);
+  assert.ok(logistics.cost / logistics.inc < space.cost / space.inc);
+  assert.ok(space.cost / space.inc < semicon.cost / semicon.inc);
+  assert.ok(semicon.cost / semicon.inc < bank.cost / bank.inc);
+
+  const now = 1_750_000_000_000;
+  const s = freshState();
+  s.cash = 200_000;
+  s.hap = 40;
+  s.appr = 40;
+  s.b.farm = 15;
+  s.b.fact = 5;
+  s.b.hosp = 5;
+  s.taxPool = 50_000;
+
+  const bRecs = getRecommendedBuildings(s, 1, now);
+  assert.ok(Object.values(bRecs).includes('Best ROI'));
+  assert.ok(Object.values(bRecs).includes('Happiness Fix'));
+
+  const boostRecs = getRecommendedBoosters(s, now);
+  assert.equal(boostRecs.happy_days, 'Happiness Fix');
+  assert.equal(boostRecs.civic_rally, 'Approval Boost');
+  assert.equal(boostRecs.tax_surge, 'Tax Cashout');
+  assert.equal(boostRecs.quick_profit, 'Top Income');
+
+  const techRecs = getRecommendedTech(s);
+  assert.equal(techRecs.healthcare_act, 'Happiness Fix');
+
+  const highEv = { ...s, tax: 45, prop: 15, corp: 30 };
+  assert.equal(getRecommendedPolicyHint(highEv).id, 'balanced');
+
+  const shopRec = getRecommendedShopItems(
+    { ...s, cash: 500_000_000, subPromo: { weekKey: weekKeyFor(now), tier: 'weekly', pct: 25, exp: now + 3_600_000 } },
+    now,
+  );
+  assert.equal(shopRec.nextRankId, 1);
+  assert.equal(shopRec.rankReason, 'Ready Upgrade');
+  assert.equal(shopRec.subTier, 'weekly');
+  assert.equal(shopRec.subReason, 'Weekly Deal −25%');
+});
+
 

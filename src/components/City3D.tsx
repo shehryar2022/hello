@@ -8,12 +8,14 @@ const CSZ: Record<string, number> = {
   farm: 32, solar: 32, water: 28, stadium: 32, airport: 34, port: 30, rail: 30, mine: 28,
   hosp: 24, univ: 26, pow: 26, fact: 28, tech: 22, bank: 22, data: 22, space: 20,
   hydro: 28, stock: 24, evplant: 28, fusion: 24,
+  transit: 28, semicon: 24, logistics: 30, quantum: 22,
 };
 
 const CHM: Record<string, number> = {
   farm: 0.5, solar: 0.38, water: 0.6, stadium: 0.62, airport: 0.32, port: 0.52, rail: 0.5,
   mine: 0.58, hosp: 0.88, univ: 0.8, pow: 0.9, fact: 0.92, tech: 1.12, bank: 1.2, data: 1.1, space: 1.5,
   hydro: 0.65, stock: 1.15, evplant: 0.95, fusion: 1.45,
+  transit: 0.62, semicon: 1.15, logistics: 0.82, quantum: 1.55,
 };
 
 interface City3DProps {
@@ -156,7 +158,8 @@ const City3DInner: React.FC<City3DProps> = ({ state, visible, burstKey, onBuildi
 
   if (!visible) return null;
 
-  const gap = 42;
+  const totalRows = Math.ceil(BUILDINGS.length / 5);
+  const gap = totalRows > 4 ? 38 : 42;
   const builtTotal = totalBuildings(state);
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -258,7 +261,7 @@ const City3DInner: React.FC<City3DProps> = ({ state, visible, burstKey, onBuildi
           const row = Math.floor(i / 5);
           const sz = CSZ[d.id] || 26;
           const cx = (col - 2) * gap;
-          const cy = (row - 1.5) * gap;
+          const cy = (row - (totalRows - 1) / 2) * gap;
           const x = Math.round(cx - sz / 2);
           const y = Math.round(cy - sz / 2);
           const h = l ? Math.max(8, Math.round((8 + Math.min(l, 40) * 2.6) * (CHM[d.id] || 0.8))) : 2;

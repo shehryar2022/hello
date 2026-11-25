@@ -5,6 +5,7 @@ import {
   currentWorldEvent,
   formatNumber,
   getGovDefinition,
+  getRecommendedPolicyHint,
   targetHappiness,
   taxInfo,
 } from '../../game/rules';
@@ -49,7 +50,8 @@ const TAX_SLIDERS: Array<{
   { key: 'prop', label: 'Property tax', min: 0, max: 15, desc: 'Scales with population. Biggest happiness hit.', color: '#ff6fa3' },
   { key: 'duty', label: 'Import duty', min: 0, max: 30, desc: 'Customs on imports. Each Port boosts the revenue.', color: '#a07bff' },
   { key: 'tourism', label: 'Tourism levy', min: 0, max: 20, desc: 'Visitor tax boosted by Airports & Stadiums; tiny happiness cost.', color: '#38bdf8' },
-  { key: 'digital', label: 'Digital economy tax', min: 0, max: 20, desc: 'Online commerce levy boosted by Tech Parks & Data Centers.', color: '#a78bfa' },
+  { key: 'digital', label: 'Digital economy tax', min: 0, max: 20, desc: 'Online commerce levy boosted by Tech Parks, Data Centers & Fabs.', color: '#a78bfa' },
+  { key: 'wealth', label: 'Ultra-wealth levy', min: 0, max: 20, desc: 'Taxes top fortunes; boosted by Central Banks with minimal evasion.', color: '#f472b6' },
 ];
 
 const SPENDING_SLIDERS: Array<{
@@ -64,6 +66,7 @@ const SPENDING_SLIDERS: Array<{
   { key: 'edu', label: 'Education', min: 0, max: 30, desc: 'Long-term: raises income and happiness.', color: 'var(--cy)' },
   { key: 'rd', label: 'R&D innovation grant', min: 0, max: 25, desc: 'Funds science to lift national income & slight happiness.', color: '#60a5fa' },
   { key: 'green', label: 'Green energy subsidy', min: 0, max: 25, desc: 'Boosts happiness, cuts carbon penalty & powers Solar/Hydro/Fusion.', color: '#4ade80' },
+  { key: 'transitSub', label: 'Public transit subsidy', min: 0, max: 25, desc: 'Boosts happiness & multiplies Metro Transit + Railway Hub output.', color: '#22d3ee' },
 ];
 
 export const PolicyTab: React.FC<PolicyTabProps> = ({
@@ -83,10 +86,11 @@ export const PolicyTab: React.FC<PolicyTabProps> = ({
   const govCd = Math.max(0, (state.govT || 0) + GOV_CHANGE_CD_MS - nowSrv);
   const worldEv = currentWorldEvent(nowSrv);
   const targHap = Math.round(targetHappiness(state));
+  const recPreset = getRecommendedPolicyHint(state);
 
   const renderSlider = (s: (typeof TAX_SLIDERS)[number]) => {
     const val = Number(state[s.key] || 0);
-    const pct = ((val - s.min) / (s.max - s.min)) * 100;
+    const pct = Math.max(0, Math.min(100, ((val - s.min) / (s.max - s.min)) * 100));
     return (
       <div key={s.key} className="sl" style={{ '--ac': s.color } as React.CSSProperties}>
         <div>
@@ -117,17 +121,28 @@ export const PolicyTab: React.FC<PolicyTabProps> = ({
         <span>Quick Policy Presets</span>
       </div>
       <div className="preset-grid">
-        {POLICY_PRESETS.map((preset) => (
-          <button
-            key={preset.id}
-            type="button"
-            className="preset-btn"
-            onClick={() => onApplyPreset(preset.id)}
-          >
-            <b>{preset.label}</b>
-            <small>{preset.desc}</small>
-          </button>
-        ))}
+        {POLICY_PRESETS.map((preset) => {
+          const isRec = recPreset.id === preset.id;
+          return (
+            <button
+              key={preset.id}
+              type="button"
+              className={`preset-btn${isRec ? ' rec-card' : ''}`}
+              onClick={() => onApplyPreset(preset.id)}
+            >
+              <b>
+                {preset.label}
+                {isRec && (
+                  <span className="rec-badge" style={{ marginLeft: 6 }}>
+                    <Sparkles size={10} />
+                    <span>{recPreset.reason}</span>
+                  </span>
+                )}
+              </b>
+              <small>{preset.desc}</small>
+            </button>
+          );
+        })}
       </div>
 
       <div className="gxc" style={{ marginBottom: 12 }}>

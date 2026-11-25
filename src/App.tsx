@@ -123,6 +123,7 @@ import {
   QUEST_POOL,
   resolveExecutiveDecision,
   rollTradePortExport,
+  rollWeeklySubPromo,
   selectDailyQuestIds,
   targetHappiness,
   tierOfCompletedTrades,
@@ -464,6 +465,19 @@ export default function App() {
         };
       }
 
+      // Roll weekly random subscription promo (once per Asia/Karachi ISO week)
+      const promoRes = rollWeeklySubPromo(working, now);
+      working = promoRes.state;
+      if (promoRes.rolled && promoRes.promo) {
+        const promoTier = SUBSCRIPTIONS.find((x) => x.id === promoRes.promo!.tier);
+        if (promoTier) {
+          const pct = promoRes.promo.pct;
+          window.setTimeout(() => {
+            addToast(`Weekly Flash Deal: −${pct}% off ${promoTier.n}!`);
+          }, 250);
+        }
+      }
+
       // Apply offline earnings
       const off = applyOfflineEarnings(working, now, tradeTier);
       working = off.state;
@@ -532,7 +546,7 @@ export default function App() {
       if (streakDialog) setDialog(streakDialog);
       return working;
     },
-    [],
+    [addToast],
   );
 
   // Firebase bootstrap & auth listener
@@ -993,11 +1007,18 @@ export default function App() {
         const targHap = targetHappiness(prev);
         const nextHap = Math.max(0, Math.min(100, prev.hap + (targHap - prev.hap) * 0.04));
         const nextAppr = Math.max(0, Math.min(100, prev.appr + (nextHap - prev.appr) * 0.02));
+        const promoTick = rollWeeklySubPromo(prev, nowSrv);
+        const nextSubPromo = promoTick.rolled ? promoTick.state.subPromo : prev.subPromo;
         const nextPop = Math.min(
           100_000,
           Math.max(
             1,
-            prev.pop + (nextHap - 45) * 0.0005 + ((prev.b.water || 0) * 0.0002 + (prev.b.rail || 0) * 0.0003),
+            prev.pop +
+              (nextHap - 45) * 0.0005 +
+              ((prev.b.water || 0) * 0.0002 +
+                (prev.b.rail || 0) * 0.0003 +
+                (prev.b.transit || 0) * 0.00025 +
+                (prev.transitSub || 0) * 0.00004),
           ),
         );
 
@@ -1082,6 +1103,7 @@ export default function App() {
           hist: nextHist,
           activeFx: nextActiveFx,
           gx: nextGx,
+          subPromo: nextSubPromo,
           t: now,
         };
 
@@ -1666,7 +1688,11 @@ export default function App() {
     const rect = e.currentTarget.getBoundingClientRect();
     spawnFloat(subDef.n, rect.left + rect.width / 2, rect.top, '#ffc23d');
     updateState(() => res.state, 600);
-    addToast(`${subDef.n} activated!`);
+    if (res.paidCost && res.paidCost < subDef.cost) {
+      addToast(`${subDef.n} activated for ₨ ${formatNumber(res.paidCost)} (Weekly Deal)!`);
+    } else {
+      addToast(`${subDef.n} activated!`);
+    }
   };
 
   const handleClaimSubDaily = (e: React.MouseEvent<HTMLButtonElement>) => {

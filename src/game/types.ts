@@ -144,6 +144,13 @@ export interface SubscriptionState {
   lastClaimDay?: string;
 }
 
+export interface SubPromoState {
+  weekKey?: string;
+  tier?: SubscriptionTierId;
+  pct?: number;
+  exp?: number;
+}
+
 export interface SettingsState {
   sfx: number;
   vib: number;
@@ -183,8 +190,10 @@ export interface GameState {
   duty: number;
   tourism: number;
   digital: number;
+  wealth: number;
   rd: number;
   green: number;
+  transitSub: number;
   questDay: string;
   questIds: number[];
   rank: number;
@@ -195,6 +204,7 @@ export interface GameState {
   govT: number;
   gx: GovExtensionState;
   sub?: SubscriptionState;
+  subPromo?: SubPromoState;
   tech?: Record<string, number>;
 }
 

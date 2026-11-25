@@ -14,6 +14,7 @@ import {
   formatNumber,
   getDevelopmentDiscount,
   getProjectSpeedMult,
+  getRecommendedTech,
   gxAverageCondition,
   gxRepairCost,
   gxUpgradeCost,
@@ -97,6 +98,7 @@ export const GovtTab: React.FC<GovtTabProps> = ({
   const projSpeed = getProjectSpeedMult(state, nowSrv);
   const researchedCount = techCount(state);
   const readyTechCount = TECH_TREE.filter((t) => canUnlockTech(state, t.id).ok).length;
+  const techRec = getRecommendedTech(state);
   const ownedBuildings = totalBuildings(state);
 
   const dismissStorageKey = `cet_cleared_proj_${uid || 'offline'}`;
@@ -524,8 +526,13 @@ export const GovtTab: React.FC<GovtTabProps> = ({
               const check = canUnlockTech(state, t.id);
               const catColor = t.cat === 'economy' ? '#ffc23d' : t.cat === 'civic' ? '#3fe0b0' : '#5ccbff';
               const metReq = ownedBuildings >= t.reqBuildings;
+              const recReason = !unlocked ? techRec[t.id] : undefined;
               return (
-                <div key={t.id} className="row" style={{ '--c': unlocked ? '#3fe0b0' : catColor } as React.CSSProperties}>
+                <div
+                  key={t.id}
+                  className={`row${recReason ? ' rec-card' : ''}`}
+                  style={{ '--c': unlocked ? '#3fe0b0' : catColor } as React.CSSProperties}
+                >
                   <div className="em">
                     {unlocked ? <CheckCircle2 size={22} color="#3fe0b0" /> : <FlaskConical size={22} color={catColor} />}
                   </div>
@@ -535,6 +542,12 @@ export const GovtTab: React.FC<GovtTabProps> = ({
                       <span className="lv" style={{ background: unlocked ? 'var(--mint)' : catColor, color: '#05161f' }}>
                         {t.cat.toUpperCase()}
                       </span>
+                      {recReason && (
+                        <span className="rec-badge">
+                          <Sparkles size={10} />
+                          <span>Recommended · {recReason}</span>
+                        </span>
+                      )}
                     </h2>
                     <p>
                       {t.d} <b style={{ color: '#e6dcff' }}>{t.effectLabel}</b>

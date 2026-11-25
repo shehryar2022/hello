@@ -3,11 +3,14 @@ import {
   Anchor,
   Atom,
   Award,
+  Banknote,
   BatteryCharging,
   Bell,
   Bird,
+  Boxes,
   Bug,
   Building2,
+  Bus,
   Calendar,
   CalendarDays,
   CandlestickChart,
@@ -40,12 +43,15 @@ import {
   Lock,
   Mail,
   MessageSquare,
+  Microchip,
+  Orbit,
   Package,
   Pickaxe,
   Plane,
   Rabbit,
   RefreshCw,
   Rocket,
+  Scale,
   School,
   Search,
   Server,
@@ -59,8 +65,10 @@ import {
   Sun,
   Target,
   TrainFront,
+  TramFront,
   TrendingUp,
   Trophy,
+  Turtle,
   Users,
   Volume2,
   Vote,
@@ -195,6 +203,14 @@ export const BuildingIcon: React.FC<{ id: string; size?: number; color?: string 
       return <BatteryCharging {...props} />;
     case 'fusion':
       return <Atom {...props} />;
+    case 'transit':
+      return <TramFront {...props} />;
+    case 'semicon':
+      return <Microchip {...props} />;
+    case 'logistics':
+      return <Boxes {...props} />;
+    case 'quantum':
+      return <Orbit {...props} />;
     default:
       return <Building2 {...props} />;
   }
@@ -288,6 +304,8 @@ export const PolicyIcon: React.FC<{ k: string; size?: number }> = ({ k, size = 1
       return <Plane {...props} />;
     case 'digital':
       return <Cpu {...props} />;
+    case 'wealth':
+      return <Scale {...props} />;
     case 'wel':
       return <HeartPulse {...props} />;
     case 'edu':
@@ -296,6 +314,8 @@ export const PolicyIcon: React.FC<{ k: string; size?: number }> = ({ k, size = 1
       return <FlaskConical {...props} />;
     case 'green':
       return <Sun {...props} />;
+    case 'transitSub':
+      return <Bus {...props} />;
     default:
       return <SlidersHorizontal {...props} />;
   }
@@ -424,6 +444,18 @@ function stickerIconElement(id: string, color: string, size: number) {
       return <Rocket {...props} />;
     case 'dia':
       return <Gem {...props} />;
+    case 'turtle':
+      return <Turtle {...props} />;
+    case 'dove':
+      return <Bird {...props} />;
+    case 'pegasus':
+      return <Feather {...props} />;
+    case 'sphinx':
+      return <Landmark {...props} />;
+    case 'atlas':
+      return <Globe {...props} />;
+    case 'nebula':
+      return <Orbit {...props} />;
     default:
       return <Star {...props} />;
   }
@@ -512,6 +544,7 @@ export const NotifIcon: React.FC<{ type: NotificationItem['type']; size?: number
 
 export {
   Award,
+  Banknote,
   Bell,
   Calendar,
   CheckCircle2,

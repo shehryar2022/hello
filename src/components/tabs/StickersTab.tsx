@@ -114,15 +114,22 @@ export const StickersTab: React.FC<StickersTabProps> = ({
         {STICKERS.map((s) => {
           const count = state.stk[s.id] || 0;
           const [rarityLabel, rarityColor] = RARITY_META[s.r];
+          const canFuse = count >= 3;
           return (
-            <div key={s.id} className={`stkcard ${count > 0 ? '' : 'miss'}`}>
+            <div key={s.id} className={`stkcard ${count > 0 ? '' : 'miss'}${canFuse ? ' rec-card' : ''}`}>
               <StickerArt id={s.id} size={32} />
               <span className="stk-n">{s.n}</span>
               <span className="stk-r" style={{ color: rarityColor }} title={rarityLabel}>
                 {'★'.repeat(s.r)}
               </span>
+              {canFuse && (
+                <span className="rec-badge">
+                  <Sparkles size={10} />
+                  <span>Fuse Ready</span>
+                </span>
+              )}
               <small className="dim">{count > 0 ? `×${count}` : rarityLabel}</small>
-              {count >= 3 && (
+              {canFuse && (
                 <button
                   type="button"
                   className="btn sm mint"

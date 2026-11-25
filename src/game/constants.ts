@@ -63,6 +63,10 @@ export const BUILDINGS: BuildingDef[] = [
   { id: 'stock', n: 'Stock Exchange', e: '📊', c: '#fbbf24', cat: 'tech', cost: 62000, inc: 138, d: 'Capital markets, boosts corporate & trade revenue' },
   { id: 'evplant', n: 'EV Gigafactory', e: '🔋', c: '#4ade80', cat: 'industry', cost: 125000, inc: 295, d: 'Zero-smog clean manufacturing, +happiness' },
   { id: 'fusion', n: 'Fusion Reactor', e: '⚛️', c: '#38bdf8', cat: 'tech', cost: 650000, inc: 1750, d: 'Mega clean energy, +2.5% building output each' },
+  { id: 'transit', n: 'Metro Transit', e: '🚇', c: '#22d3ee', cat: 'civic', cost: 28000, inc: 58, d: 'City metro lines, +happiness & +population growth' },
+  { id: 'semicon', n: 'Semiconductor Fab', e: '🔬', c: '#818cf8', cat: 'tech', cost: 260000, inc: 650, d: 'Precision chips lift tech & digital output' },
+  { id: 'logistics', n: 'Logistics Mega-Hub', e: '📦', c: '#fb923c', cat: 'industry', cost: 480000, inc: 1260, d: 'Automated freight boosts trade & import duties' },
+  { id: 'quantum', n: 'Quantum Lab', e: '🛰️', c: '#e879f9', cat: 'tech', cost: 1200000, inc: 3400, d: 'Next-gen computing, +happiness & +2% tech synergy' },
 ];
 
 export const RANKS: RankDef[] = [
@@ -160,7 +164,7 @@ export const BOOSTERS: BoosterDef[] = [
 ];
 
 /**
- * Economy-balanced national subscriptions (high-average rates, modest perks):
+ * Economy-balanced national subscriptions (5M - 500M rates, modest perks + weekly random discount):
  * Modest convenience perks so core building & policy choices remain primary.
  */
 export const SUBSCRIPTIONS: SubscriptionDef[] = [
@@ -169,42 +173,42 @@ export const SUBSCRIPTIONS: SubscriptionDef[] = [
     n: 'Daily Pass',
     e: '📅',
     periodLabel: 'Daily',
-    cost: 3_500_000,
+    cost: 5_000_000,
     durMs: 86_400_000,
     incomeMult: 1.04,
     discountRate: 0.03,
     projectSpeedMult: 1.05,
-    dailyCash: 150_000,
+    dailyCash: 200_000,
     dailyGems: 0,
-    d: '+4% income, 3% build/upgrade discount, +5% project speed, ₨ 150K/day',
+    d: '+4% income, 3% build/upgrade discount, +5% project speed, ₨ 200K/day',
   },
   {
     id: 'weekly',
     n: 'Weekly Charter',
     e: '📆',
     periodLabel: 'Weekly',
-    cost: 24_000_000,
+    cost: 65_000_000,
     durMs: 7 * 86_400_000,
     incomeMult: 1.08,
     discountRate: 0.06,
     projectSpeedMult: 1.1,
-    dailyCash: 600_000,
+    dailyCash: 900_000,
     dailyGems: 1,
-    d: '+8% income, 6% build/upgrade discount, +10% project speed, ₨ 600K + 1 gem/day',
+    d: '+8% income, 6% build/upgrade discount, +10% project speed, ₨ 900K + 1 gem/day',
   },
   {
     id: 'monthly',
     n: 'Monthly Sovereignty',
     e: '💳',
     periodLabel: 'Monthly',
-    cost: 120_000_000,
+    cost: 500_000_000,
     durMs: 30 * 86_400_000,
     incomeMult: 1.12,
     discountRate: 0.1,
     projectSpeedMult: 1.15,
-    dailyCash: 2_500_000,
+    dailyCash: 3_500_000,
     dailyGems: 2,
-    d: '+12% income, 10% build/upgrade discount, +15% project speed, ₨ 2.5M + 2 gems/day',
+    d: '+12% income, 10% build/upgrade discount, +15% project speed, ₨ 3.5M + 2 gems/day',
   },
 ];
 
@@ -361,6 +365,12 @@ export const STICKERS: StickerDef[] = [
   { id: 'crown', n: 'Crown Reserve', e: '👑', r: 3 },
   { id: 'rocket', n: 'Rocket Growth', e: '🚀', r: 3 },
   { id: 'dia', n: 'Diamond Standard', e: '💎', r: 3 },
+  { id: 'turtle', n: 'Steady Turtle', e: '🐢', r: 1 },
+  { id: 'dove', n: 'Peace Dove', e: '🕊️', r: 1 },
+  { id: 'pegasus', n: 'Sky Pegasus', e: '🪽', r: 2 },
+  { id: 'sphinx', n: 'Vault Sphinx', e: '🗿', r: 2 },
+  { id: 'atlas', n: 'Golden Atlas', e: '🌍', r: 3 },
+  { id: 'nebula', n: 'Nebula Sovereign', e: '🌌', r: 3 },
 ];
 
 export const RARITY_META: Record<number, [string, string]> = {
@@ -432,7 +442,7 @@ export const POLICY_PRESETS: PolicyPreset[] = [
     desc: 'Zero tax evasion with steady revenue and upbeat citizens',
     values: {
       tax: 15, fuel: 0, carbon: 2, luxury: 4, corp: 5, gst: 2,
-      prop: 0, duty: 3, tourism: 3, digital: 4, wel: 18, edu: 12, rd: 8, green: 6,
+      prop: 0, duty: 2, tourism: 3, digital: 3, wealth: 3, wel: 18, edu: 12, rd: 8, green: 6, transitSub: 8,
     },
   },
   {
@@ -441,7 +451,7 @@ export const POLICY_PRESETS: PolicyPreset[] = [
     desc: 'Pushes tax yield near peak before evasion drags it down',
     values: {
       tax: 22, fuel: 3, carbon: 0, luxury: 3, corp: 0, gst: 0,
-      prop: 0, duty: 5, tourism: 6, digital: 6, wel: 10, edu: 10, rd: 10, green: 2,
+      prop: 0, duty: 5, tourism: 6, digital: 6, wealth: 8, wel: 10, edu: 10, rd: 10, green: 2, transitSub: 4,
     },
   },
   {
@@ -450,7 +460,7 @@ export const POLICY_PRESETS: PolicyPreset[] = [
     desc: 'High happiness, approval & green subsidies for long-term stability',
     values: {
       tax: 12, fuel: 0, carbon: 2, luxury: 4, corp: 5, gst: 2,
-      prop: 0, duty: 3, tourism: 3, digital: 3, wel: 32, edu: 20, rd: 15, green: 20,
+      prop: 0, duty: 3, tourism: 3, digital: 3, wealth: 6, wel: 32, edu: 20, rd: 15, green: 20, transitSub: 16,
     },
   },
 ];

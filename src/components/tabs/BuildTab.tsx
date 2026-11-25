@@ -1,6 +1,11 @@
 import React, { useState } from 'react';
 import { BUILDINGS, GX_LEVEL_MULTS } from '../../game/constants';
-import { bulkBuildingCost, formatNumber, getDevelopmentDiscount } from '../../game/rules';
+import {
+  bulkBuildingCost,
+  formatNumber,
+  getDevelopmentDiscount,
+  getRecommendedBuildings,
+} from '../../game/rules';
 import type { BuildingCategory, GameState } from '../../game/types';
 import { BuildingIcon, CashCoinIcon, Sparkles } from '../GameIcons';
 
@@ -22,6 +27,7 @@ export const BuildTab: React.FC<BuildTabProps> = ({ state, serverOffsetMs = 0, o
   const [qty, setQty] = useState<1 | 5>(1);
   const nowSrv = Date.now() + serverOffsetMs;
   const disc = getDevelopmentDiscount(state, nowSrv);
+  const recMap = getRecommendedBuildings(state, qty, nowSrv);
 
   const visibleBuildings = cat === 'all' ? BUILDINGS : BUILDINGS.filter((b) => b.cat === cat);
 
@@ -75,9 +81,14 @@ export const BuildTab: React.FC<BuildTabProps> = ({ state, serverOffsetMs = 0, o
           const upgLvl = state.gx?.lvl?.[d.id] || 1;
           const upgMult = GX_LEVEL_MULTS[upgLvl - 1] || 1;
           const canAfford = state.cash >= c;
+          const recReason = recMap[d.id];
 
           return (
-            <div key={d.id} className="row" style={{ '--c': d.c } as React.CSSProperties}>
+            <div
+              key={d.id}
+              className={`row${recReason ? ' rec-card' : ''}`}
+              style={{ '--c': d.c } as React.CSSProperties}
+            >
               <div className="em">
                 <BuildingIcon id={d.id} size={23} />
               </div>
@@ -85,6 +96,12 @@ export const BuildTab: React.FC<BuildTabProps> = ({ state, serverOffsetMs = 0, o
                 <h2>
                   {d.n}
                   <span className="lv">Lv {count}</span>
+                  {recReason && (
+                    <span className="rec-badge">
+                      <Sparkles size={10} />
+                      <span>Recommended · {recReason}</span>
+                    </span>
+                  )}
                 </h2>
                 <p>
                   {d.d} · +{(() => {

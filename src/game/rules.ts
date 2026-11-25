@@ -23,6 +23,7 @@ import {
   STICKERS,
   SUBSCRIPTIONS,
   TECH_TREE,
+  TZ,
   WORLD_EVENTS,
 } from './constants';
 import type {
@@ -33,6 +34,7 @@ import type {
   PlayerStats,
   QuestDef,
   StickerDef,
+  SubPromoState,
   SubscriptionDef,
   SubscriptionTierId,
 } from './types';
@@ -75,10 +77,12 @@ export const POLICY_BOUNDS: Record<string, [number, number]> = {
   duty: [0, 30],
   tourism: [0, 20],
   digital: [0, 20],
+  wealth: [0, 20],
   wel: [0, 50],
   edu: [0, 30],
   rd: [0, 25],
   green: [0, 25],
+  transitSub: [0, 25],
 };
 
 export function freshState(): GameState {
@@ -126,8 +130,10 @@ export function freshState(): GameState {
     duty: 0,
     tourism: 0,
     digital: 0,
+    wealth: 0,
     rd: 0,
     green: 0,
+    transitSub: 0,
     questDay: '',
     questIds: [],
     rank: 0,
@@ -147,6 +153,7 @@ export function freshState(): GameState {
       exp: null,
     },
     sub: {},
+    subPromo: {},
     tech: {},
   };
 }
@@ -217,7 +224,7 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
   const numFields: Array<keyof GameState> = [
     'cash', 'gems', 'taxPool', 'day', 'tax', 'wel', 'hap', 'appr', 'pop',
     'boost', 'ev', 'edu', 'streak', 'lastDaily', 'crateCd', 'fuel', 'carbon', 'luxury',
-    'corp', 'gst', 'prop', 'duty', 'tourism', 'digital', 'rd', 'green', 'rank', 'govT',
+    'corp', 'gst', 'prop', 'duty', 'tourism', 'digital', 'wealth', 'rd', 'green', 'transitSub', 'rank', 'govT',
   ];
   for (const k of numFields) {
     const v = Number(s[k]);
@@ -325,6 +332,31 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
     s.sub = {};
   }
 
+  // Weekly subscription promo sanitization
+  const rawPromo = s.subPromo && typeof s.subPromo === 'object' ? s.subPromo : {};
+  const promoTier = SUBSCRIPTIONS.find((x) => x.id === rawPromo.tier);
+  const promoPct = Number(rawPromo.pct);
+  const promoExp = Number(rawPromo.exp);
+  const promoWeek = typeof rawPromo.weekKey === 'string' ? rawPromo.weekKey.slice(0, 16) : '';
+  if (
+    promoWeek &&
+    promoTier &&
+    Number.isFinite(promoPct) &&
+    promoPct >= 5 &&
+    promoPct <= 40 &&
+    Number.isFinite(promoExp) &&
+    promoExp >= 0
+  ) {
+    s.subPromo = {
+      weekKey: promoWeek,
+      tier: promoTier.id,
+      pct: Math.round(promoPct),
+      exp: Math.min(promoExp, now + 8 * 86_400_000),
+    };
+  } else {
+    s.subPromo = {};
+  }
+
   return s;
 }
 
@@ -424,6 +456,7 @@ export function taxInfo(s: GameState) {
   const f = s.fuel || 0;
   const tr = s.tourism || 0;
   const dg = s.digital || 0;
+  const w = s.wealth || 0;
 
   const raw =
     0.4 +
@@ -433,11 +466,12 @@ export function taxInfo(s: GameState) {
     (co / 150) * (1 + (s.b.stock || 0) * 0.05) +
     g / 70 +
     (p / 60) * Math.max(0.6, Math.min(2, (s.pop || 48) / 50)) +
-    (d / 90) * (1 + (s.b.port || 0) * 0.08) +
+    (d / 90) * (1 + ((s.b.port || 0) + (s.b.logistics || 0)) * 0.08) +
     (tr / 85) * (1 + ((s.b.airport || 0) + (s.b.stadium || 0)) * 0.06) +
-    (dg / 90) * (1 + ((s.b.tech || 0) + (s.b.data || 0)) * 0.05);
+    (dg / 90) * (1 + ((s.b.tech || 0) + (s.b.data || 0) + (s.b.semicon || 0)) * 0.05) +
+    (w / 105) * (1 + (s.b.bank || 0) * 0.04);
   const burden =
-    t + co * 0.8 + g + p + d * 0.6 + c * 0.7 + l * 0.5 + f * 0.4 + tr * 0.4 + dg * 0.5;
+    t + co * 0.8 + g + p + d * 0.6 + c * 0.7 + l * 0.5 + f * 0.4 + tr * 0.4 + dg * 0.5 + w * 0.35;
   const ev = Math.max(0, Math.min(0.75, (burden - 30) / 70 + Math.max(0, 50 - (s.appr ?? 50)) / 400));
   return { mult: raw * (1 - ev), raw, burden, ev };
 }
@@ -577,15 +611,19 @@ export function calculateIncome(
 
   const cleanGreenCount = (s.b.solar || 0) + (s.b.hydro || 0) + (s.b.fusion || 0);
   const greenSynergy = 1 + Math.min(0.5, cleanGreenCount * (s.green || 0) * 0.002);
+  const transitSynergy = 1 + Math.min(0.45, ((s.b.transit || 0) + (s.b.rail || 0)) * (s.transitSub || 0) * 0.002);
+  const quantumSynergy = 1 + Math.min(0.4, (s.b.quantum || 0) * 0.02);
 
   const mult =
     taxMult *
     (1 + (s.hap - 50) / 200) *
     (1 + (s.b.pow || 0) * 0.015 + (s.b.fusion || 0) * 0.025) *
+    quantumSynergy *
     tempMult *
     (1 + s.edu / 200) *
     (1 + (s.rd || 0) / 140) *
     greenSynergy *
+    transitSynergy *
     (1 + (s.fuel || 0) / 150) *
     (1 + tradeTier * 0.05) *
     (1 + stickerBonus(s)) *
@@ -598,7 +636,7 @@ export function calculateIncome(
   const upkeep = gross * upkeepRate;
   const policySpendShare = Math.min(
     0.6,
-    (((s.wel + s.edu) * 0.7 + (s.rd || 0) * 0.55 + (s.green || 0) * 0.45) / 100) * gov.wel,
+    (((s.wel + s.edu) * 0.7 + (s.rd || 0) * 0.55 + (s.green || 0) * 0.45 + (s.transitSub || 0) * 0.4) / 100) * gov.wel,
   );
   const welfareCost = gross * policySpendShare;
   const net = gross - welfareCost - upkeep;
@@ -654,7 +692,8 @@ export function targetHappiness(s: GameState): number {
         s.wel * 1.5 +
         s.edu * 0.6 +
         (s.rd || 0) * 0.25 +
-        (s.green || 0) * 0.7 -
+        (s.green || 0) * 0.7 +
+        (s.transitSub || 0) * 0.55 -
         (s.tax - 20) * 1.8 -
         (s.fuel || 0) * 0.6 -
         (s.carbon || 0) * 0.4 -
@@ -666,6 +705,7 @@ export function targetHappiness(s: GameState): number {
         (s.duty || 0) * 0.2 -
         (s.tourism || 0) * 0.15 -
         (s.digital || 0) * 0.25 -
+        (s.wealth || 0) * 0.15 -
         (s.b.fact || 0) * factPenaltyPer +
         (s.b.farm || 0) * 0.8 +
         (s.b.hosp || 0) * hospBonusPer +
@@ -675,8 +715,11 @@ export function targetHappiness(s: GameState): number {
         (s.b.univ || 0) * 0.4 +
         (s.b.space || 0) * 0.8 +
         (s.b.hydro || 0) * 0.6 +
-        (s.b.evplant || 0) * 0.2 -
-        (s.b.data || 0) * 0.3,
+        (s.b.evplant || 0) * 0.2 +
+        (s.b.transit || 0) * 0.6 +
+        (s.b.quantum || 0) * 0.5 -
+        (s.b.data || 0) * 0.3 -
+        (s.b.logistics || 0) * 0.2,
     ),
   );
 }
@@ -853,6 +896,82 @@ export function applyOfflineEarnings(
   };
 }
 
+export function weekKeyFor(nowMs: number): string {
+  const ymd = new Intl.DateTimeFormat('en-CA', {
+    timeZone: TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(nowMs));
+  const [y, m, d] = ymd.split('-').map((n) => Number(n));
+  const utcDate = new Date(Date.UTC(y, m - 1, d));
+  const dayNum = utcDate.getUTCDay() || 7;
+  utcDate.setUTCDate(utcDate.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(utcDate.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((utcDate.getTime() - yearStart.getTime()) / 86_400_000) + 1) / 7);
+  return `${utcDate.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+}
+
+const WEEKLY_PROMO_PCTS = [15, 20, 25, 30, 35] as const;
+
+export function rollWeeklySubPromo(
+  s: GameState,
+  nowMs = Date.now(),
+  rng: () => number = Math.random,
+): { state: GameState; rolled: boolean; promo?: SubPromoState } {
+  const wk = weekKeyFor(nowMs);
+  if (s.subPromo?.weekKey === wk) {
+    return { state: s, rolled: false, promo: s.subPromo };
+  }
+  const tierDef = SUBSCRIPTIONS[Math.floor(rng() * SUBSCRIPTIONS.length) % SUBSCRIPTIONS.length];
+  const pct = WEEKLY_PROMO_PCTS[Math.floor(rng() * WEEKLY_PROMO_PCTS.length) % WEEKLY_PROMO_PCTS.length];
+  const promo: SubPromoState = {
+    weekKey: wk,
+    tier: tierDef.id,
+    pct,
+    exp: nowMs + 72 * 3_600_000,
+  };
+  return {
+    state: { ...s, subPromo: promo },
+    rolled: true,
+    promo,
+  };
+}
+
+export function getSubscriptionPrice(
+  s: GameState,
+  subDef: SubscriptionDef,
+  nowMs = Date.now(),
+): {
+  baseCost: number;
+  finalCost: number;
+  discountPct: number;
+  promoActive: boolean;
+  msLeft: number;
+} {
+  const p = s.subPromo;
+  const promoActive = Boolean(
+    p &&
+      p.tier === subDef.id &&
+      typeof p.pct === 'number' &&
+      Number.isFinite(p.pct) &&
+      p.pct >= 5 &&
+      p.pct <= 40 &&
+      typeof p.exp === 'number' &&
+      p.exp > nowMs,
+  );
+  const discountPct = promoActive ? Math.round(p!.pct!) : 0;
+  const finalCost = promoActive ? Math.max(1, Math.ceil(subDef.cost * (1 - discountPct / 100))) : subDef.cost;
+  const msLeft = promoActive ? Math.max(0, (p!.exp || 0) - nowMs) : 0;
+  return {
+    baseCost: subDef.cost,
+    finalCost,
+    discountPct,
+    promoActive,
+    msLeft,
+  };
+}
+
 export function canBuySubscription(
   s: GameState,
   subDef: SubscriptionDef,
@@ -869,7 +988,8 @@ export function canBuySubscription(
       };
     }
   }
-  if (s.cash < subDef.cost) {
+  const { finalCost } = getSubscriptionPrice(s, subDef, nowMs);
+  if (s.cash < finalCost) {
     return { ok: false, reason: 'Not enough cash' };
   }
   return { ok: true };
@@ -879,14 +999,16 @@ export function applyBuySubscription(
   s: GameState,
   subDef: SubscriptionDef,
   nowMs = Date.now(),
-): { ok: boolean; state: GameState; reason?: string } {
+): { ok: boolean; state: GameState; paidCost?: number; reason?: string } {
   const check = canBuySubscription(s, subDef, nowMs);
   if (!check.ok) return { ok: false, state: s, reason: check.reason };
+  const { finalCost } = getSubscriptionPrice(s, subDef, nowMs);
   return {
     ok: true,
+    paidCost: finalCost,
     state: {
       ...s,
-      cash: s.cash - subDef.cost,
+      cash: s.cash - finalCost,
       sub: {
         tier: subDef.id,
         exp: nowMs + subDef.durMs,
@@ -1154,6 +1276,10 @@ export const QUEST_POOL: QuestDef[] = [
   { id: 'stock1', t: 'Build a Stock Exchange', f: (s) => s.b.stock || 0, g: 1, r: 10 },
   { id: 'evplant1', t: 'Build an EV Gigafactory', f: (s) => s.b.evplant || 0, g: 1, r: 14 },
   { id: 'fusion1', t: 'Build a Fusion Reactor', f: (s) => s.b.fusion || 0, g: 1, r: 28 },
+  { id: 'transit1', t: 'Build a Metro Transit', f: (s) => s.b.transit || 0, g: 1, r: 7 },
+  { id: 'semicon1', t: 'Build a Semiconductor Fab', f: (s) => s.b.semicon || 0, g: 1, r: 16 },
+  { id: 'logistics1', t: 'Build a Logistics Mega-Hub', f: (s) => s.b.logistics || 0, g: 1, r: 20 },
+  { id: 'quantum1', t: 'Build a Quantum Lab', f: (s) => s.b.quantum || 0, g: 1, r: 30 },
 ];
 
 export function selectDailyQuestIds(dateStr: string): number[] {
@@ -1274,4 +1400,164 @@ export function resolveExecutiveDecision(
   next.hap = Math.min(100, next.hap + 7);
   next.appr = Math.min(100, next.appr + 7);
   return { ok: true, state: next, summary: `Heritage Week (−₨ ${formatNumber(quote.spendCost)}): +7% Hap & +7% Appr!` };
+}
+
+const HAPPY_BUILDINGS = new Set(['farm', 'hosp', 'water', 'solar', 'hydro', 'transit', 'stadium', 'space', 'quantum']);
+
+export function getRecommendedBuildings(
+  s: GameState,
+  qty: 1 | 5 = 1,
+  nowMs = Date.now(),
+): Record<string, string> {
+  const rec: Record<string, string> = {};
+  const disc = getDevelopmentDiscount(s, nowMs);
+  const scored = BUILDINGS.map((d) => {
+    const count = s.b?.[d.id] || 0;
+    const cost = bulkBuildingCost(d, count, qty, disc);
+    const upgMult = gxLevelMult(s, d.id);
+    const roi = (d.inc * upgMult * qty) / Math.max(1, cost);
+    return { def: d, cost, roi, count, affordable: s.cash >= cost };
+  });
+
+  const affordable = scored.filter((x) => x.affordable).sort((a, b) => b.roi - a.roi);
+  if (affordable.length > 0) {
+    rec[affordable[0].def.id] = 'Best ROI';
+  }
+
+  if ((s.hap ?? 60) < 55) {
+    const hapPick = affordable.find((x) => HAPPY_BUILDINGS.has(x.def.id) && !rec[x.def.id]);
+    if (hapPick) rec[hapPick.def.id] = 'Happiness Fix';
+  } else if ((s.b?.port || 0) === 0) {
+    const portPick = affordable.find((x) => x.def.id === 'port' && !rec[x.def.id]);
+    if (portPick) rec[portPick.def.id] = 'Gems & Stickers';
+  }
+
+  if (Object.keys(rec).length === 0) {
+    const nextGoal = scored.slice().sort((a, b) => a.cost - b.cost)[0];
+    if (nextGoal) rec[nextGoal.def.id] = 'Next Target';
+  }
+  return rec;
+}
+
+export function getRecommendedBoosters(
+  s: GameState,
+  nowMs = Date.now(),
+): Record<string, string> {
+  const rec: Record<string, string> = {};
+  const ready = BOOSTERS.filter((b) => canBuyBooster(s, b, nowMs).ok);
+  if (ready.length === 0) return rec;
+
+  if ((s.hap ?? 60) < 55) {
+    const hap = ready.find((b) => b.fx === 'hap10');
+    if (hap) rec[hap.id] = 'Happiness Fix';
+  }
+  if ((s.appr ?? 55) < 55) {
+    const rally = ready.find((b) => b.fx === 'rally');
+    if (rally) rec[rally.id] = 'Approval Boost';
+  }
+
+  const baseNet = Math.max(0, calculateIncome(s, { nowMs, ignoreTempBoosters: true }).net);
+  if ((s.taxPool || 0) >= Math.max(500, baseNet * 45)) {
+    const surge = ready.find((b) => b.fx === 'tax15x');
+    if (surge) rec[surge.id] = 'Tax Cashout';
+  }
+
+  const incomeOrder = ['boom_surge', 'golden_treasury', 'quick_profit'];
+  for (const id of incomeOrder) {
+    const pick = ready.find((b) => b.id === id);
+    if (pick) {
+      rec[pick.id] = 'Top Income';
+      break;
+    }
+  }
+  return rec;
+}
+
+export function getRecommendedTech(s: GameState): Record<string, string> {
+  const rec: Record<string, string> = {};
+  const unlockable = TECH_TREE.filter((t) => canUnlockTech(s, t.id).ok);
+  if (unlockable.length > 0) {
+    if ((s.hap ?? 60) < 60) {
+      const civic = unlockable.find((t) => t.cat === 'civic');
+      if (civic) {
+        rec[civic.id] = 'Happiness Fix';
+        return rec;
+      }
+    }
+    rec[unlockable[0].id] = 'Unlock Now';
+    return rec;
+  }
+  const nextLocked = TECH_TREE.find((t) => !hasTech(s, t.id));
+  if (nextLocked) {
+    rec[nextLocked.id] = 'Next Research';
+  }
+  return rec;
+}
+
+export function getRecommendedShopItems(
+  s: GameState,
+  nowMs = Date.now(),
+): {
+  nextRankId: number | null;
+  rankReason: string;
+  subTier: SubscriptionTierId | null;
+  subReason: string;
+} {
+  let nextRankId: number | null = null;
+  let rankReason = '';
+  const candidateRank = (s.rank || 0) + 1;
+  if (candidateRank <= MAX_RANK && canBuyRank(s, candidateRank).ok) {
+    nextRankId = candidateRank;
+    rankReason = 'Ready Upgrade';
+  }
+
+  let subTier: SubscriptionTierId | null = null;
+  let subReason = '';
+  for (const sub of [...SUBSCRIPTIONS].reverse()) {
+    const price = getSubscriptionPrice(s, sub, nowMs);
+    const check = canBuySubscription(s, sub, nowMs);
+    if (price.promoActive && check.ok) {
+      subTier = sub.id;
+      subReason = `Weekly Deal −${price.discountPct}%`;
+      break;
+    }
+  }
+  if (!subTier) {
+    for (const sub of [...SUBSCRIPTIONS].reverse()) {
+      if (canBuySubscription(s, sub, nowMs).ok) {
+        subTier = sub.id;
+        subReason = 'Best Value';
+        break;
+      }
+    }
+  }
+  if (!subTier) {
+    for (const sub of SUBSCRIPTIONS) {
+      const price = getSubscriptionPrice(s, sub, nowMs);
+      if (price.promoActive) {
+        subTier = sub.id;
+        subReason = `Weekly Deal −${price.discountPct}%`;
+        break;
+      }
+    }
+  }
+
+  return { nextRankId, rankReason, subTier, subReason };
+}
+
+export function getRecommendedPolicyHint(
+  s: GameState,
+): { id: 'balanced' | 'revenue' | 'welfare' | null; reason: string } {
+  const ti = taxInfo(s);
+  const hap = targetHappiness(s);
+  if (ti.ev > 0.12) {
+    return { id: 'balanced', reason: 'Cuts High Evasion' };
+  }
+  if (hap < 50) {
+    return { id: 'welfare', reason: 'Boosts Happiness' };
+  }
+  if (s.hap >= 75 && ti.ev === 0 && calculateGdp(s) >= 20_000 && s.tax < 20) {
+    return { id: 'revenue', reason: 'Max Net Yield' };
+  }
+  return { id: null, reason: '' };
 }
