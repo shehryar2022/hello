@@ -169,3 +169,44 @@ test('target happiness stays clamped between 5 and 100 and daily quests determin
     'tradesSent',
   ]);
 });
+
+test('normalizeProject never sets a 1970 deadline when startedAt is null/pending', async () => {
+  const { normalizeProject } = await import('../firebase/api');
+  const fallbackNow = 1_750_000_000_000;
+  const proj = normalizeProject(
+    'proj_1',
+    {
+      uid: 'u1',
+      type: 'school',
+      paid: 1,
+      progressMs: 0,
+      status: 'active',
+      claimed: false,
+      startedAt: null,
+    },
+    fallbackNow,
+  );
+  assert.equal(proj.st, fallbackNow);
+  assert.equal(proj.dl, fallbackNow + proj.t.dur * 0 + proj.t.dl * 60_000);
+  assert.ok(proj.dl > fallbackNow);
+
+  // Even when client clock estimate is hours behind server time, isPending forces server fallback
+  const clientSkewedTs = { toMillis: () => fallbackNow - 10 * 3600_000 };
+  const pendingProj = normalizeProject(
+    'proj_2',
+    {
+      uid: 'u1',
+      type: 'hospital',
+      paid: 1,
+      progressMs: 0,
+      status: 'active',
+      claimed: false,
+      startedAt: clientSkewedTs,
+    },
+    fallbackNow,
+    true,
+  );
+  assert.equal(pendingProj.pending, true);
+  assert.equal(pendingProj.st, fallbackNow);
+  assert.ok(pendingProj.dl > fallbackNow);
+});

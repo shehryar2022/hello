@@ -36,6 +36,7 @@ interface GovtTabProps {
   state: GameState;
   uid: string | null;
   projects: GovProject[];
+  liveProjectProgress: Record<string, number>;
   serverOffsetMs: number;
   isUserActive: boolean;
   onFixInfra: (key: string, full: boolean) => void;
@@ -48,6 +49,7 @@ export const GovtTab: React.FC<GovtTabProps> = ({
   state,
   uid,
   projects,
+  liveProjectProgress,
   serverOffsetMs,
   isUserActive,
   onFixInfra,
@@ -61,6 +63,7 @@ export const GovtTab: React.FC<GovtTabProps> = ({
   const exp = gx.exp;
   const builtBuildings = BUILDINGS.filter((d) => (state.b[d.id] || 0) > 0);
   const nowSrv = Date.now() + serverOffsetMs;
+  const activeCount = projects.filter((p) => p.status === 'active').length;
 
   return (
     <div>
@@ -232,21 +235,24 @@ export const GovtTab: React.FC<GovtTabProps> = ({
       ) : (
         <>
           {projects
+            .filter((p) => p.status === 'active')
             .slice()
             .sort((a, b) => b.st - a.st)
             .map((p) => {
               const capMs = Math.floor((p.t.dur * p.paid) / PROJECT_STAGES);
-              const pct = Math.round((Math.min(p.progressMs, p.t.dur) / p.t.dur) * 100);
+              const liveMs = Math.max(p.progressMs, liveProjectProgress[p.id] ?? p.progressMs);
+              const effectiveMs = Math.min(p.t.dur, Math.min(capMs, liveMs));
+              const pct = Math.round((effectiveMs / p.t.dur) * 100);
               const invested = Math.ceil(p.t.cost / PROJECT_STAGES) * p.paid;
               const stageCost = Math.ceil(p.t.cost / PROJECT_STAGES);
-              const statusText =
-                p.status === 'active'
-                  ? isUserActive && p.progressMs < capMs
+              const stageCapReached = effectiveMs >= capMs && p.paid < PROJECT_STAGES;
+              const statusText = p.pending
+                ? '⏳ Starting…'
+                : stageCapReached
+                  ? `⏸️ Stage ${p.paid}/${PROJECT_STAGES} complete — invest next stage`
+                  : isUserActive
                     ? '🔨 Building'
-                    : '⏸️ Paused'
-                  : p.status === 'done'
-                    ? '✅ Done'
-                    : '❌ Failed';
+                    : '⏸️ Paused';
 
               return (
                 <div key={p.id} className="gxc">
@@ -262,13 +268,9 @@ export const GovtTab: React.FC<GovtTabProps> = ({
                   <p className="dim">
                     Progress {pct}% · Invested ₨ {formatNumber(invested)} / ₨ {formatNumber(p.t.cost)} · Stage{' '}
                     {p.paid}/{PROJECT_STAGES}
-                    {p.status === 'active' && (
-                      <>
-                        <br />⏳ <b>{formatDuration(p.dl - nowSrv)}</b> left
-                      </>
-                    )}
+                    <br />⏳ <b>{formatDuration(p.dl - nowSrv)}</b> left
                   </p>
-                  {p.status === 'active' && p.paid < PROJECT_STAGES && (
+                  {p.paid < PROJECT_STAGES && (
                     <button
                       type="button"
                       className={`btn sm ${state.cash >= stageCost ? 'mint' : 'no'}`}
@@ -286,6 +288,7 @@ export const GovtTab: React.FC<GovtTabProps> = ({
             {(Object.keys(GX_PROJECT_TYPES) as ProjectType[]).map((k) => {
               const def = GX_PROJECT_TYPES[k];
               const stageCost = Math.ceil(def.cost / PROJECT_STAGES);
+              const canStart = activeCount < 3 && state.cash >= stageCost;
               return (
                 <div key={k} className="row" style={{ '--c': '#7c5cff' } as React.CSSProperties}>
                   <div className="em">{def.e}</div>
@@ -301,16 +304,49 @@ export const GovtTab: React.FC<GovtTabProps> = ({
                   </div>
                   <button
                     type="button"
-                    className={`btn sm ${state.cash >= stageCost ? 'mint' : 'no'}`}
-                    disabled={state.cash < stageCost}
+                    className={`btn sm ${canStart ? 'mint' : 'no'}`}
+                    disabled={!canStart}
                     onClick={() => onStartProject(k)}
                   >
-                    Start · ₨ {formatNumber(stageCost)}
+                    {activeCount >= 3 ? 'Max 3 active' : `Start · ₨ ${formatNumber(stageCost)}`}
                   </button>
                 </div>
               );
             })}
           </div>
+
+          {projects.some((p) => p.status !== 'active') && (
+            <details style={{ marginTop: 10 }}>
+              <summary className="dim" style={{ cursor: 'pointer', fontSize: 13 }}>
+                📋 Past projects ({projects.filter((p) => p.status !== 'active').length})
+              </summary>
+              <div style={{ marginTop: 8 }}>
+                {projects
+                  .filter((p) => p.status !== 'active')
+                  .slice()
+                  .sort((a, b) => b.st - a.st)
+                  .slice(0, 8)
+                  .map((p) => {
+                    const invested = Math.ceil(p.t.cost / PROJECT_STAGES) * p.paid;
+                    const pct = Math.round((Math.min(p.t.dur, p.progressMs) / p.t.dur) * 100);
+                    return (
+                      <div key={p.id} className="gxc">
+                        <p>
+                          <b>
+                            {p.t.e} {p.t.n}
+                          </b>{' '}
+                          · {p.status === 'done' ? '✅ Done' : '❌ Failed'}
+                        </p>
+                        <p className="dim">
+                          Progress {pct}% · Invested ₨ {formatNumber(invested)} / ₨ {formatNumber(p.t.cost)} · Stage{' '}
+                          {p.paid}/{PROJECT_STAGES}
+                        </p>
+                      </div>
+                    );
+                  })}
+              </div>
+            </details>
+          )}
         </>
       )}
 

@@ -79,4 +79,10 @@ test('Dirty Dozen security invariants are enforced in firestore.rules', () => {
   // 7. No client-timestamp spoofing on serverTimestamp fields
   assert.match(rules, /incoming\(\)\.createdAt == request\.time/);
   assert.match(rules, /incoming\(\)\.lastSeen == request\.time/);
+
+  // 8. Legacy player updates, heartbeat-only updates, and atomic project completion
+  assert.match(rules, /'createdAt' in incoming\(\)/);
+  assert.match(rules, /affectedOnly\(\['lastSeen'\]\)/);
+  assert.match(rules, /affectedOnly\(\['progressMs', 'lastTickAt', 'status', 'resolvedAt'\]\)/);
+  assert.match(rules, /\(!\('rev' in existing\(\)\) \|\| incoming\(\)\.rev >= existing\(\)\.rev\)/);
 });

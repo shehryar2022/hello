@@ -233,6 +233,7 @@ export interface GovProject {
   st: number;
   dl: number;
   rs: number;
+  pending?: boolean;
 }
 
 export interface ChatMessage {

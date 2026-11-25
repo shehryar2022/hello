@@ -13,6 +13,7 @@ import {
 import {
   doc,
   getDoc,
+  getDocFromServer,
   onSnapshot,
   serverTimestamp,
   setDoc,
@@ -184,6 +185,7 @@ export default function App() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [sentToday, setSentToday] = useState(0);
   const [projects, setProjects] = useState<GovProject[]>([]);
+  const [liveProjectProgress, setLiveProjectProgress] = useState<Record<string, number>>({});
   const [globalChat, setGlobalChat] = useState<ChatMessage[]>([]);
   const [dmMessages, setDmMessages] = useState<ChatMessage[]>([]);
   const [dmRecipient, setDmRecipient] = useState<DmRecipient | null>(null);
@@ -220,6 +222,13 @@ export default function App() {
   kickedRef.current = kicked;
   const completedTradesRef = useRef<number>(0);
   const projBusyRef = useRef<Set<string>>(new Set());
+  const projPayBusyRef = useRef<Set<string>>(new Set());
+  const projCreatingRef = useRef<boolean>(false);
+  const justCreatedProjIdsRef = useRef<Set<string>>(new Set());
+  const projStartedLocalAtRef = useRef<Record<string, number>>({});
+  const projLiveRef = useRef<Record<string, number>>({});
+  const projLastSyncRef = useRef<Record<string, number>>({});
+  const settlingTradesRef = useRef<boolean>(false);
 
   const addToast = useCallback((text: string) => {
     const id = Date.now() + Math.random();
@@ -504,8 +513,10 @@ export default function App() {
           t: serverTimestamp(),
         });
 
-        // Estimate server clock offset via session doc
-        const sesSnap = await getDoc(doc(db, 'players', u.uid, 'private', 'session'));
+        // Estimate server clock offset via session doc from server
+        const sesSnap = await getDocFromServer(doc(db, 'players', u.uid, 'private', 'session')).catch(() =>
+          getDoc(doc(db, 'players', u.uid, 'private', 'session')),
+        );
         if (sesSnap.exists()) {
           const srvMs = timestampToMs(sesSnap.data()?.t);
           if (srvMs > 0) serverOffsetMsRef.current = srvMs - Date.now();
@@ -635,7 +646,7 @@ export default function App() {
         (snap) => {
           const rows = snap.docs
             .map((d) => {
-              const data = d.data() as Omit<PlayerProfile, 'id'>;
+              const data = d.data({ serverTimestamps: 'estimate' }) as Omit<PlayerProfile, 'id'>;
               return { ...data, id: d.id, seen: timestampToMs(data.lastSeen) };
             })
             .filter((p) => p.id === uid || (p.seen && Date.now() - p.seen <= ACTIVE_WINDOW_MS))
@@ -653,7 +664,7 @@ export default function App() {
         queries.tradesQuery(uid),
         (snap) => {
           const list: TradeOffer[] = snap.docs.map((d) => {
-            const x = d.data();
+            const x = d.data({ serverTimestamps: 'estimate' });
             return {
               id: d.id,
               from: String(x.from || ''),
@@ -678,7 +689,18 @@ export default function App() {
             };
           });
           setTrades(list);
-          void settleExpiredTrades(list, uid, sidRef.current, handleKicked);
+          if (!settlingTradesRef.current) {
+            settlingTradesRef.current = true;
+            void settleExpiredTrades(
+              list,
+              uid,
+              sidRef.current,
+              handleKicked,
+              serverOffsetMsRef.current,
+            ).finally(() => {
+              settlingTradesRef.current = false;
+            });
+          }
         },
         () => {},
       ),
@@ -702,7 +724,7 @@ export default function App() {
         queries.notifsQuery(uid),
         (snap) => {
           const items: NotificationItem[] = snap.docs.map((d) => {
-            const x = d.data();
+            const x = d.data({ serverTimestamps: 'estimate' });
             return {
               id: d.id,
               type: (x.type as NotificationItem['type']) || 'dm',
@@ -721,12 +743,40 @@ export default function App() {
       ),
     );
 
-    // 8. Gov projects listener
+    // 8. Gov projects listener (guard pending writes & calibrate server offset only from fresh server writes)
     unsubs.push(
       onSnapshot(
         queries.projectsQuery(uid),
         (snap) => {
-          setProjects(snap.docs.map((d) => normalizeProject(d.id, d.data() as Record<string, unknown>)));
+          for (const ch of snap.docChanges()) {
+            const raw = ch.doc.data();
+            if (!ch.doc.metadata.hasPendingWrites) {
+              if (justCreatedProjIdsRef.current.has(ch.doc.id) && raw.startedAt) {
+                justCreatedProjIdsRef.current.delete(ch.doc.id);
+                const startMs = timestampToMs(raw.startedAt);
+                if (startMs > 0) serverOffsetMsRef.current = startMs - Date.now();
+              } else if (ch.type === 'modified' && raw.lastTickAt) {
+                const tickMs = timestampToMs(raw.lastTickAt);
+                if (tickMs > 0) serverOffsetMsRef.current = tickMs - Date.now();
+              }
+            }
+          }
+          const nowEst = Date.now() + serverOffsetMsRef.current;
+          const normalized = snap.docs.map((d) =>
+            normalizeProject(
+              d.id,
+              d.data({ serverTimestamps: 'estimate' }) as Record<string, unknown>,
+              nowEst,
+              d.metadata.hasPendingWrites,
+            ),
+          );
+          const nextLive: Record<string, number> = {};
+          for (const p of normalized) {
+            nextLive[p.id] = Math.max(projLiveRef.current[p.id] || 0, p.progressMs);
+          }
+          projLiveRef.current = nextLive;
+          setProjects(normalized);
+          setLiveProjectProgress(nextLive);
         },
         () => {},
       ),
@@ -739,7 +789,7 @@ export default function App() {
         (snap) => {
           const msgs: ChatMessage[] = snap.docs
             .map((d) => {
-              const x = d.data();
+              const x = d.data({ serverTimestamps: 'estimate' });
               return {
                 id: d.id,
                 uid: String(x.uid || ''),
@@ -783,7 +833,7 @@ export default function App() {
       (snap) => {
         const msgs = snap.docs
           .map((d) => {
-            const x = d.data();
+            const x = d.data({ serverTimestamps: 'estimate' });
             const isMe = x.from === uid;
             return {
               id: d.id,
@@ -955,27 +1005,50 @@ export default function App() {
       // Tick active Gov Projects in Firestore
       const curUid = uidRef.current;
       if (curUid && projectsRef.current.length > 0) {
+        let liveDirty = false;
         for (const p of projectsRef.current) {
           if (p.status === 'active') {
-            if (nowSrv >= p.dl) {
+            if (
+              !p.pending &&
+              p.st > 0 &&
+              nowSrv >= p.dl &&
+              now - (projStartedLocalAtRef.current[p.id] || 0) >= 30_000
+            ) {
               if (!projBusyRef.current.has(p.id)) {
                 projBusyRef.current.add(p.id);
                 void finishGovProject(curUid, p.id, 'failed').finally(() =>
                   projBusyRef.current.delete(p.id),
                 );
               }
-            } else if (isUserActive) {
+            } else if (isUserActive && !p.pending) {
               const capMs = Math.floor((p.t.dur * p.paid) / PROJECT_STAGES);
-              if (p.progressMs < capMs) {
-                const nextMs = Math.min(capMs, p.progressMs + 1000);
-                if (nextMs >= p.t.dur && !projBusyRef.current.has(p.id)) {
+              const curLive = Math.max(p.progressMs, projLiveRef.current[p.id] || 0);
+              if (curLive < capMs) {
+                const nextMs = Math.min(capMs, curLive + 1000);
+                projLiveRef.current[p.id] = nextMs;
+                liveDirty = true;
+                if (nextMs >= p.t.dur && p.paid >= PROJECT_STAGES && !projBusyRef.current.has(p.id)) {
                   projBusyRef.current.add(p.id);
-                  void tickGovProject(curUid, p.id, p.t.dur)
-                    .then(() => finishGovProject(curUid, p.id, 'done'))
-                    .finally(() => projBusyRef.current.delete(p.id));
-                } else if (tickCountRef.current % 10 === 0) {
-                  void tickGovProject(curUid, p.id, nextMs).catch(() => {});
+                  void finishGovProject(curUid, p.id, 'done', p.t.dur).finally(() =>
+                    projBusyRef.current.delete(p.id),
+                  );
+                } else {
+                  const lastSync = projLastSyncRef.current[p.id] || 0;
+                  const hitStageCap = nextMs >= capMs && p.progressMs < capMs;
+                  if ((hitStageCap || now - lastSync >= 10_000) && !projBusyRef.current.has(p.id)) {
+                    projLastSyncRef.current[p.id] = now;
+                    projBusyRef.current.add(p.id);
+                    void tickGovProject(curUid, p.id, nextMs)
+                      .catch(() => {})
+                      .finally(() => projBusyRef.current.delete(p.id));
+                  }
                 }
+              } else if (p.progressMs < capMs && p.paid < PROJECT_STAGES && !projBusyRef.current.has(p.id)) {
+                projLastSyncRef.current[p.id] = now;
+                projBusyRef.current.add(p.id);
+                void tickGovProject(curUid, p.id, capMs)
+                  .catch(() => {})
+                  .finally(() => projBusyRef.current.delete(p.id));
               }
             }
           } else if (!p.claimed && (p.status === 'done' || p.status === 'failed')) {
@@ -984,16 +1057,22 @@ export default function App() {
               void claimGovProject(curUid, p.id)
                 .then((resStatus) => {
                   if (resStatus === 'done') {
-                    const cashReward = Math.ceil(p.t.cost * 1.4);
+                    const early = p.rs > 0 && p.dl > p.st && (p.dl - p.rs) / (p.dl - p.st) > 0.5;
+                    const profit = Math.ceil(p.t.cost * 0.4 * (early ? 1.5 : 1));
+                    const cashReward = p.t.cost + profit;
                     setState((s) => {
                       const next = {
                         ...s,
                         cash: s.cash + cashReward,
+                        hap: Math.min(100, s.hap + 3),
                         gx: {
                           ...s.gx,
                           pb: Math.min(0.25, (s.gx.pb || 0) + p.t.pb),
                           ph: Math.min(10, (s.gx.ph || 0) + p.t.ph),
-                          log: [`✅ ${p.t.n} completed! +₨ ${formatNumber(cashReward)}`, ...s.gx.log].slice(0, 8),
+                          log: [
+                            `✅ ${p.t.n} completed${early ? ' EARLY' : ''}! +₨ ${formatNumber(cashReward)}`,
+                            ...s.gx.log,
+                          ].slice(0, 8),
                         },
                       };
                       saveLocal(next);
@@ -1022,6 +1101,9 @@ export default function App() {
                 .finally(() => projBusyRef.current.delete(p.id));
             }
           }
+        }
+        if (liveDirty) {
+          setLiveProjectProgress({ ...projLiveRef.current });
         }
       }
     }, 1000);
@@ -1158,7 +1240,7 @@ export default function App() {
   };
 
   const handleStartProject = async (type: ProjectType) => {
-    if (!uid) return;
+    if (!uid || projCreatingRef.current) return;
     const activeCount = projects.filter((p) => p.status === 'active').length;
     if (activeCount >= 3) {
       addToast('Max 3 active projects at once.');
@@ -1170,29 +1252,41 @@ export default function App() {
       addToast('Not enough cash for Stage 1.');
       return;
     }
+    projCreatingRef.current = true;
     try {
-      updateState((prev) => ({ ...prev, cash: prev.cash - stageCost }), 500);
-      await createGovProject(uid, type);
+      await createGovProject(uid, type, (newId) => {
+        justCreatedProjIdsRef.current.add(newId);
+        projStartedLocalAtRef.current[newId] = Date.now();
+      });
+      updateState((prev) => ({ ...prev, cash: Math.max(0, prev.cash - stageCost) }), 500);
       playSfx('buy', !!stateRef.current.set.sfx);
       addToast(`🏗️ Started ${def.n}!`);
     } catch (err) {
       addToast(formatFirebaseError(err));
+    } finally {
+      projCreatingRef.current = false;
     }
   };
 
   const handlePayProjectStage = async (projectId: string) => {
-    if (!uid) return;
+    if (!uid || projPayBusyRef.current.has(projectId)) return;
     const proj = projects.find((p) => p.id === projectId);
     if (!proj || proj.status !== 'active' || proj.paid >= PROJECT_STAGES) return;
     const stageCost = Math.ceil(proj.t.cost / PROJECT_STAGES);
-    if (stateRef.current.cash < stageCost) return;
+    if (stateRef.current.cash < stageCost) {
+      addToast('Not enough cash for next stage.');
+      return;
+    }
+    projPayBusyRef.current.add(projectId);
     try {
       await payGovProjectStage(uid, projectId, proj.paid);
-      updateState((prev) => ({ ...prev, cash: prev.cash - stageCost }), 500);
+      updateState((prev) => ({ ...prev, cash: Math.max(0, prev.cash - stageCost) }), 500);
       playSfx('buy', !!stateRef.current.set.sfx);
       addToast(`💳 Paid stage ${proj.paid + 1}/${PROJECT_STAGES}`);
     } catch (err) {
       addToast(formatFirebaseError(err));
+    } finally {
+      projPayBusyRef.current.delete(projectId);
     }
   };
 
@@ -1537,6 +1631,7 @@ export default function App() {
                 state={state}
                 uid={uid}
                 projects={projects}
+                liveProjectProgress={liveProjectProgress}
                 serverOffsetMs={serverOffsetMsRef.current}
                 isUserActive={Date.now() - lastActivityRef.current < 120_000}
                 onFixInfra={handleFixInfra}
@@ -1628,7 +1723,7 @@ export default function App() {
                 onOpenGiftReview={(tr) => setGiftModal({ mode: 'review', target: null, trade: tr })}
                 onAcceptTrade={async (id) => {
                   try {
-                    await acceptGiftOffer(id, sidRef.current, handleKicked);
+                    await acceptGiftOffer(id, sidRef.current, handleKicked, serverOffsetMsRef.current);
                     addToast('🎁 Gift accepted!');
                   } catch (err) {
                     addToast(formatFirebaseError(err));
@@ -1636,7 +1731,7 @@ export default function App() {
                 }}
                 onRejectTrade={async (id) => {
                   try {
-                    await rejectGiftOffer(id, sidRef.current, handleKicked);
+                    await rejectGiftOffer(id, sidRef.current, handleKicked, serverOffsetMsRef.current);
                     addToast('Gift declined');
                   } catch (err) {
                     addToast(formatFirebaseError(err));
@@ -1644,7 +1739,7 @@ export default function App() {
                 }}
                 onCancelTrade={async (id) => {
                   try {
-                    await endSenderOffer(id, 'cancelled', sidRef.current, handleKicked);
+                    await endSenderOffer(id, 'cancelled', sidRef.current, handleKicked, serverOffsetMsRef.current);
                     addToast('Gift cancelled & refunded');
                   } catch (err) {
                     addToast(formatFirebaseError(err));
@@ -1789,6 +1884,7 @@ export default function App() {
               await createGiftOffer({
                 ...payload,
                 sid: sidRef.current,
+                serverOffsetMs: serverOffsetMsRef.current,
                 onKicked: handleKicked,
               });
               addToast('🎁 Gift sent!');
@@ -1800,7 +1896,7 @@ export default function App() {
           }}
           onAcceptTrade={async (id) => {
             try {
-              await acceptGiftOffer(id, sidRef.current, handleKicked);
+              await acceptGiftOffer(id, sidRef.current, handleKicked, serverOffsetMsRef.current);
               addToast('🎁 Gift accepted!');
             } catch (err) {
               addToast(formatFirebaseError(err));
@@ -1808,7 +1904,7 @@ export default function App() {
           }}
           onRejectTrade={async (id) => {
             try {
-              await rejectGiftOffer(id, sidRef.current, handleKicked);
+              await rejectGiftOffer(id, sidRef.current, handleKicked, serverOffsetMsRef.current);
               addToast('Gift declined');
             } catch (err) {
               addToast(formatFirebaseError(err));
@@ -1816,7 +1912,7 @@ export default function App() {
           }}
           onCancelTrade={async (id) => {
             try {
-              await endSenderOffer(id, 'cancelled', sidRef.current, handleKicked);
+              await endSenderOffer(id, 'cancelled', sidRef.current, handleKicked, serverOffsetMsRef.current);
               addToast('Gift cancelled & refunded');
             } catch (err) {
               addToast(formatFirebaseError(err));

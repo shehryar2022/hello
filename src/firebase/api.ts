@@ -281,9 +281,11 @@ export async function createGiftOffer(params: {
   offerStk: Record<string, number>;
   message: string;
   sid: string;
+  serverOffsetMs?: number;
   onKicked: () => void;
 }): Promise<{ remainingToday: number }> {
   const uid = requireUid();
+  const serverOffsetMs = params.serverOffsetMs || 0;
   const oc = capValue(params.offerCash, 1e12);
   const og = capValue(params.offerGems, 1e9);
   const offerStk = cleanStickersMap(params.offerStk);
@@ -292,7 +294,7 @@ export async function createGiftOffer(params: {
   if (params.toUid === uid) throw makeError('invalid', "You can't send to yourself");
   if (oc + og + stkTotal <= 0) throw makeError('invalid', 'Add something to send first');
 
-  const key = `${uid}_${dayKeyFor(Date.now())}`;
+  const key = `${uid}_${dayKeyFor(Date.now() + serverOffsetMs)}`;
   const trRef = doc(collection(db, 'trades'));
   let remainingToday = 0;
 
@@ -358,8 +360,8 @@ export async function createGiftOffer(params: {
       gdp: Math.max(1, newCash),
       cash: newCash,
       gems: newGems,
-      level: meData.level || 1,
-      rank: meData.rank || 0,
+      level: Math.max(1, Math.floor(Number(meData.level) || 1)),
+      rank: Math.max(0, Math.min(6, Math.floor(Number(meData.rank) || 0))),
       lastSeen: serverTimestamp(),
       stats: sanitizeStats(prevStats, {
         tradesSent: prevStats.tradesSent + 1,
@@ -386,7 +388,7 @@ export async function createGiftOffer(params: {
       status: 'pending',
       refunded: false,
       createdAt: serverTimestamp(),
-      expiresAt: Timestamp.fromMillis(Date.now() + 120_000),
+      expiresAt: Timestamp.fromMillis(Date.now() + serverOffsetMs + 120_000),
     });
 
     tx.set(dlRef, { count: curCount + 1, uid: me });
@@ -401,6 +403,7 @@ export async function acceptGiftOffer(
   tradeId: string,
   sid: string,
   onKicked: () => void,
+  serverOffsetMs = 0,
 ): Promise<{ status: string }> {
   let status = 'accepted';
   await runSessionTx(sid, onKicked, async (tx, me) => {
@@ -413,7 +416,7 @@ export async function acceptGiftOffer(
       status = t.status;
       return;
     }
-    if (timestampToMs(t.expiresAt) <= Date.now()) {
+    if (timestampToMs(t.expiresAt) <= Date.now() + serverOffsetMs) {
       status = 'expired';
       return;
     }
@@ -449,8 +452,8 @@ export async function acceptGiftOffer(
         gdp: Math.max(1, newCash),
         cash: newCash,
         gems: newGems,
-        level: md.level || 1,
-        rank: md.rank || 0,
+        level: Math.max(1, Math.floor(Number(md.level) || 1)),
+        rank: Math.max(0, Math.min(6, Math.floor(Number(md.rank) || 0))),
         lastSeen: serverTimestamp(),
         stats: sanitizeStats(prevStats, {
           completedTrades: prevStats.completedTrades + 1,
@@ -472,6 +475,7 @@ export async function rejectGiftOffer(
   tradeId: string,
   sid: string,
   onKicked: () => void,
+  serverOffsetMs = 0,
 ): Promise<{ status: string }> {
   let status = 'rejected';
   await runSessionTx(sid, onKicked, async (tx, me) => {
@@ -483,7 +487,7 @@ export async function rejectGiftOffer(
       status = t.status;
       return;
     }
-    if (timestampToMs(t.expiresAt) <= Date.now()) {
+    if (timestampToMs(t.expiresAt) <= Date.now() + serverOffsetMs) {
       status = 'expired';
       return;
     }
@@ -499,6 +503,7 @@ export async function endSenderOffer(
   want: 'cancelled' | 'expired',
   sid: string,
   onKicked: () => void,
+  serverOffsetMs = 0,
 ): Promise<string> {
   let status: string = want;
   await runSessionTx(sid, onKicked, async (tx, me) => {
@@ -512,7 +517,7 @@ export async function endSenderOffer(
       status = t.status;
       return;
     }
-    if (want === 'expired' && timestampToMs(t.expiresAt) > Date.now()) {
+    if (want === 'expired' && timestampToMs(t.expiresAt) > Date.now() + serverOffsetMs) {
       status = 'pending';
       return;
     }
@@ -593,11 +598,12 @@ export async function settleExpiredTrades(
   uid: string,
   sid: string,
   onKicked: () => void,
+  serverOffsetMs = 0,
 ): Promise<void> {
-  const now = Date.now();
+  const now = Date.now() + serverOffsetMs;
   for (const t of trades) {
     if (t.from === uid && t.status === 'pending' && t.expMs <= now) {
-      await endSenderOffer(t.id, 'expired', sid, onKicked).catch(() => {});
+      await endSenderOffer(t.id, 'expired', sid, onKicked, serverOffsetMs).catch(() => {});
     } else if (
       t.from === uid &&
       (t.status === 'rejected' || t.status === 'expired') &&
@@ -692,8 +698,13 @@ export async function sendHeartbeat(uid: string): Promise<void> {
   await updateDoc(doc(db, 'players', uid), { lastSeen: serverTimestamp() });
 }
 
-export async function createGovProject(uid: string, type: ProjectType): Promise<void> {
+export async function createGovProject(
+  uid: string,
+  type: ProjectType,
+  onId?: (id: string) => void,
+): Promise<string> {
   const ref = doc(collection(db, 'players', uid, 'projects'));
+  onId?.(ref.id);
   await setDoc(ref, {
     uid,
     type,
@@ -704,6 +715,7 @@ export async function createGovProject(uid: string, type: ProjectType): Promise<
     startedAt: serverTimestamp(),
     lastTickAt: serverTimestamp(),
   });
+  return ref.id;
 }
 
 export async function payGovProjectStage(
@@ -727,9 +739,18 @@ export async function tickGovProject(
   projectId: string,
   nextProgressMs: number,
 ): Promise<void> {
-  await updateDoc(doc(db, 'players', uid, 'projects', projectId), {
-    progressMs: nextProgressMs,
-    lastTickAt: serverTimestamp(),
+  const ref = doc(db, 'players', uid, 'projects', projectId);
+  const clamped = Math.max(0, Math.min(10_000_000, Math.floor(nextProgressMs)));
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    const data = snap.data();
+    if (!data || data.status !== 'active') return;
+    const prev = Math.floor(Number(data.progressMs) || 0);
+    if (clamped < prev) return;
+    tx.update(ref, {
+      progressMs: clamped,
+      lastTickAt: serverTimestamp(),
+    });
   });
 }
 
@@ -737,10 +758,28 @@ export async function finishGovProject(
   uid: string,
   projectId: string,
   status: 'done' | 'failed',
+  finalProgressMs?: number,
 ): Promise<void> {
-  await updateDoc(doc(db, 'players', uid, 'projects', projectId), {
-    status,
-    resolvedAt: serverTimestamp(),
+  const ref = doc(db, 'players', uid, 'projects', projectId);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    const data = snap.data();
+    if (!data || data.status !== 'active') return;
+    if (status === 'done' && typeof finalProgressMs === 'number') {
+      const prev = Math.floor(Number(data.progressMs) || 0);
+      const clamped = Math.max(prev, Math.min(10_000_000, Math.floor(finalProgressMs)));
+      tx.update(ref, {
+        progressMs: clamped,
+        lastTickAt: serverTimestamp(),
+        status: 'done',
+        resolvedAt: serverTimestamp(),
+      });
+    } else {
+      tx.update(ref, {
+        status,
+        resolvedAt: serverTimestamp(),
+      });
+    }
   });
 }
 
@@ -758,22 +797,29 @@ export async function claimGovProject(
   });
 }
 
-export function normalizeProject(id: string, raw: Record<string, unknown>) {
+export function normalizeProject(
+  id: string,
+  raw: Record<string, unknown>,
+  fallbackNowMs = Date.now(),
+  isPending = false,
+) {
   const type = (raw.type as ProjectType) || 'school';
   const def = GX_PROJECT_TYPES[type] || GX_PROJECT_TYPES.school;
-  const st = timestampToMs(raw.startedAt);
+  const parsedSt = timestampToMs(raw.startedAt);
+  const st = !isPending && parsedSt > 0 ? parsedSt : fallbackNowMs;
   return {
     id,
     uid: String(raw.uid || ''),
     type,
     t: def,
-    paid: Math.floor(Number(raw.paid) || 1),
-    progressMs: Number(raw.progressMs) || 0,
+    paid: Math.max(1, Math.min(PROJECT_STAGES, Math.floor(Number(raw.paid) || 1))),
+    progressMs: Math.max(0, Number(raw.progressMs) || 0),
     status: (raw.status as 'active' | 'done' | 'failed') || 'active',
     claimed: Boolean(raw.claimed),
     st,
     dl: st + def.dl * 60_000,
     rs: timestampToMs(raw.resolvedAt),
+    pending: isPending,
   };
 }
 

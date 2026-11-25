@@ -65,7 +65,7 @@ service cloud.firestore {
     function isValidPlayerProfile(data) {
       return data.keys().hasAll([
           'username', 'usernameLower', 'countryCode', 'countryName',
-          'gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'createdAt'
+          'gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats'
         ])
         && data.keys().hasOnly([
           'username', 'usernameLower', 'countryCode', 'countryName',
@@ -85,7 +85,7 @@ service cloud.firestore {
         && data.level is int && data.level >= 1 && data.level <= 10000000
         && data.rank is int && data.rank >= 0 && data.rank <= 6
         && data.lastSeen is timestamp
-        && data.createdAt is timestamp
+        && (!('createdAt' in data) || data.createdAt is timestamp)
         && isValidPlayerStats(data.stats);
     }
 
@@ -139,7 +139,7 @@ service cloud.firestore {
         && data.claimed is bool
         && data.startedAt is timestamp
         && data.lastTickAt is timestamp
-        && (!('resolvedAt' in data) || data.resolvedAt is timestamp);
+        && (!('resolvedAt' in data) || data.resolvedAt == null || data.resolvedAt is timestamp);
     }
 
     function isValidTrade(data) {
@@ -220,20 +220,23 @@ service cloud.firestore {
       allow create: if isOwner(uid)
         && isValidId(uid)
         && isValidPlayerProfile(incoming())
+        && 'createdAt' in incoming()
         && incoming().createdAt == request.time
         && incoming().lastSeen == request.time
         && existsAfter(/databases/$(database)/documents/usernames/$(incoming().usernameLower))
         && existsAfter(/databases/$(database)/documents/players/$(uid)/private/wallet);
       allow update: if isOwner(uid)
         && isValidId(uid)
-        && isValidPlayerProfile(incoming())
         && incoming().username == existing().username
         && incoming().usernameLower == existing().usernameLower
-        && incoming().createdAt == existing().createdAt
+        && (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt)
         && incoming().lastSeen == request.time
         && (
           affectedOnly(['lastSeen']) ||
-          affectedOnly(['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats'])
+          (
+            isValidPlayerProfile(incoming()) &&
+            affectedOnly(['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats'])
+          )
         );
       allow delete: if false;
 
@@ -249,7 +252,7 @@ service cloud.firestore {
           && isValidId(uid)
           && isValidWallet(incoming())
           && incoming().t == request.time
-          && incoming().rev >= existing().rev
+          && (!('rev' in existing()) || incoming().rev >= existing().rev)
           && affectedOnly(['cash', 'gems', 'stk', 'rev', 'sid', 't', 'tradeId']);
         allow delete: if false;
       }
@@ -315,6 +318,7 @@ service cloud.firestore {
             (existing().status == 'active' && affectedOnly(['progressMs', 'lastTickAt']) && incoming().progressMs >= existing().progressMs && incoming().lastTickAt == request.time) ||
             (existing().status == 'active' && affectedOnly(['paid']) && incoming().paid == existing().paid + 1 && incoming().paid <= 3) ||
             (existing().status == 'active' && affectedOnly(['status', 'resolvedAt']) && incoming().status in ['done', 'failed'] && incoming().resolvedAt == request.time) ||
+            (existing().status == 'active' && affectedOnly(['progressMs', 'lastTickAt', 'status', 'resolvedAt']) && incoming().progressMs >= existing().progressMs && incoming().status == 'done' && incoming().lastTickAt == request.time && incoming().resolvedAt == request.time) ||
             (existing().status in ['done', 'failed'] && existing().claimed == false && affectedOnly(['claimed']) && incoming().claimed == true)
           );
         allow delete: if false;
