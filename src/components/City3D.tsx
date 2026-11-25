@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import { BUILDINGS } from '../game/constants';
-import { gxLevelMult, totalBuildings } from '../game/rules';
+import { formatNumber, gxLevelMult, totalBuildings } from '../game/rules';
 import type { GameState } from '../game/types';
 import { BuildingIcon, Hammer, RefreshCw } from './GameIcons';
 
@@ -23,13 +23,32 @@ interface City3DProps {
   onBuildingTap: (clientX?: number, clientY?: number) => void;
 }
 
-export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuildingTap }) => {
+const MAX_ACTIVE_PARTICLES = 8;
+
+function formatRate(val: number): string {
+  if (val >= 1000) return formatNumber(val);
+  if (val >= 100) return String(Math.round(val));
+  return val.toFixed(1);
+}
+
+function mapsEqual(a: Record<string, number> | undefined, b: Record<string, number> | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  for (const d of BUILDINGS) {
+    if ((a[d.id] || 0) !== (b[d.id] || 0)) return false;
+  }
+  return true;
+}
+
+const City3DInner: React.FC<City3DProps> = ({ state, visible, burstKey, onBuildingTap }) => {
   const skyRef = useRef<HTMLDivElement>(null);
   const cityRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef({ active: false, sx: 0, o0: 0, t0: 0, off: 0 });
   const prevLevelsRef = useRef<Record<string, number>>({});
   const [popId, setPopId] = useState<string | null>(null);
+  const [risingIds, setRisingIds] = useState<Record<string, boolean>>({});
   const [rotated, setRotated] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [tip, setTip] = useState<{ id: string; text: string; x: number; y: number; open: boolean }>({
     id: '',
     text: '',
@@ -48,23 +67,13 @@ export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuil
   };
 
   useEffect(() => {
-    if (!visible || !animEnabled) {
-      applyRotation(-35 + dragRef.current.off);
-      return;
-    }
-    let raf = 0;
-    const loop = (t: number) => {
-      raf = requestAnimationFrame(loop);
-      if (dragRef.current.active || document.hidden) return;
-      applyRotation(-35 + dragRef.current.off + Math.sin(t / 3800) * 12);
-    };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
+    applyRotation(-35 + dragRef.current.off);
   }, [visible, animEnabled]);
 
   const spawnParticle = (cls: 'coin' | 'puff', buildingEl: Element | null, text?: string) => {
     const city = cityRef.current;
     if (!city || !buildingEl) return;
+    if (city.querySelectorAll('.coin, .puff').length >= MAX_ACTIVE_PARTICLES) return;
     const style = (buildingEl as HTMLElement).style;
     const k = document.createElement('b');
     k.className = cls;
@@ -75,27 +84,29 @@ export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuil
     const h = parseInt(style.getPropertyValue('--h') || '10', 10);
     k.style.setProperty('--z0', `${h + 14}px`);
     city.appendChild(k);
-    window.setTimeout(() => k.remove(), 2200);
+    window.setTimeout(() => k.remove(), 2000);
   };
 
   useEffect(() => {
     if (!visible || !animEnabled) return;
     const coinTimer = window.setInterval(() => {
       if (document.hidden || !cityRef.current) return;
-      const bs = Array.from(cityRef.current.querySelectorAll('.bd:not(.empty)'));
+      const bs = cityRef.current.querySelectorAll('.bd:not(.empty)');
       if (!bs.length) return;
       spawnParticle('coin', bs[Math.floor(Math.random() * bs.length)], '₨');
-    }, 1600);
+    }, 2200);
 
     const puffTimer = window.setInterval(() => {
       if (document.hidden || !cityRef.current) return;
-      cityRef.current.querySelectorAll('.bd:not(.empty)').forEach((b) => {
-        const id = (b as HTMLElement).dataset.id || '';
-        if (/^(fact|pow|mine)$/.test(id) && Math.random() < 0.65) {
-          spawnParticle('puff', b);
-        }
-      });
-    }, 1000);
+      const emitters = cityRef.current.querySelectorAll(
+        '.bd:not(.empty)[data-id="fact"], .bd:not(.empty)[data-id="pow"], .bd:not(.empty)[data-id="mine"]',
+      );
+      if (!emitters.length) return;
+      const pick = emitters[Math.floor(Math.random() * emitters.length)];
+      if (Math.random() < 0.7) {
+        spawnParticle('puff', pick);
+      }
+    }, 1500);
 
     return () => {
       window.clearInterval(coinTimer);
@@ -105,20 +116,42 @@ export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuil
 
   useEffect(() => {
     if (burstKey <= 0 || !visible || !animEnabled || !cityRef.current) return;
-    const bs = Array.from(cityRef.current.querySelectorAll('.bd:not(.empty)'));
+    const bs = Array.from(cityRef.current.querySelectorAll('.bd:not(.empty)')).slice(0, 6);
     bs.forEach((b, idx) => {
       window.setTimeout(() => {
         spawnParticle('coin', b, '₨');
-      }, idx * 60);
+      }, idx * 70);
     });
   }, [burstKey, visible, animEnabled]);
 
   useEffect(() => {
+    const prev = prevLevelsRef.current;
+    const newlyBuilt: string[] = [];
     const nextPrev: Record<string, number> = {};
     for (const d of BUILDINGS) {
-      nextPrev[d.id] = state.b[d.id] || 0;
+      const curCount = state.b[d.id] || 0;
+      nextPrev[d.id] = curCount;
+      if (prev[d.id] !== undefined && curCount > prev[d.id]) {
+        newlyBuilt.push(d.id);
+      }
     }
     prevLevelsRef.current = nextPrev;
+
+    if (newlyBuilt.length > 0) {
+      setRisingIds((cur) => {
+        const next = { ...cur };
+        for (const id of newlyBuilt) next[id] = true;
+        return next;
+      });
+      const timer = window.setTimeout(() => {
+        setRisingIds((cur) => {
+          const next = { ...cur };
+          for (const id of newlyBuilt) delete next[id];
+          return next;
+        });
+      }, 850);
+      return () => window.clearTimeout(timer);
+    }
   }, [state.b]);
 
   if (!visible) return null;
@@ -132,6 +165,7 @@ export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuil
     dragRef.current.sx = e.clientX;
     dragRef.current.t0 = Date.now();
     dragRef.current.o0 = dragRef.current.off;
+    setDragging(true);
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {
@@ -149,6 +183,7 @@ export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuil
   const handlePointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!dragRef.current.active) return;
     dragRef.current.active = false;
+    setDragging(false);
     if (
       e.type !== 'pointerup' ||
       Math.abs(e.clientX - dragRef.current.sx) > 7 ||
@@ -171,7 +206,7 @@ export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuil
     const mult = gxLevelMult(state, def.id);
     setTip({
       id: def.id,
-      text: `${def.n} · Lv ${lvl}${lvl ? ` · +${(def.inc * lvl * mult).toFixed(1)}/s` : ' · not built'}`,
+      text: `${def.n} · Lv ${lvl}${lvl ? ` · +${formatRate(def.inc * lvl * mult)}/s` : ' · not built'}`,
       x: Math.max(85, Math.min(r.width - 85, e.clientX - r.left)),
       y: Math.max(44, e.clientY - r.top),
       open: true,
@@ -188,6 +223,8 @@ export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuil
     setRotated(false);
     applyRotation(-35);
   };
+
+  const cityClass = `city${animEnabled && !dragging && !rotated ? ' sway' : ''}`;
 
   return (
     <div
@@ -206,7 +243,7 @@ export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuil
         </button>
       )}
 
-      <div className="city" ref={cityRef}>
+      <div className={cityClass} ref={cityRef}>
         <i className="road" style={{ left: -124, top: -1, width: 248, height: 2 }} />
         <i className="road" style={{ left: -124, top: -43, width: 248, height: 2 }} />
         <i className="road" style={{ left: -124, top: 41, width: 248, height: 2 }} />
@@ -225,9 +262,7 @@ export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuil
           const x = Math.round(cx - sz / 2);
           const y = Math.round(cy - sz / 2);
           const h = l ? Math.max(8, Math.round((8 + Math.min(l, 40) * 2.6) * (CHM[d.id] || 0.8))) : 2;
-          const prev = prevLevelsRef.current[d.id];
-          const isUp = prev !== undefined && prev !== l && l > 0;
-          const cls = `bd${l ? '' : ' empty'}${isUp ? ' up' : ''}${popId === d.id ? ' pop' : ''}${h > 62 ? ' tall' : ''}`;
+          const cls = `bd${l ? '' : ' empty'}${risingIds[d.id] ? ' up' : ''}${popId === d.id ? ' pop' : ''}${h > 62 ? ' tall' : ''}`;
           return (
             <div
               key={d.id}
@@ -272,3 +307,13 @@ export const City3D: React.FC<City3DProps> = ({ state, visible, burstKey, onBuil
     </div>
   );
 };
+
+export const City3D = memo(City3DInner, (prev, next) => {
+  return (
+    prev.visible === next.visible &&
+    prev.burstKey === next.burstKey &&
+    prev.state.set.anim === next.state.set.anim &&
+    mapsEqual(prev.state.b, next.state.b) &&
+    mapsEqual(prev.state.gx?.lvl, next.state.gx?.lvl)
+  );
+});

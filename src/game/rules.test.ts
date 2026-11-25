@@ -70,7 +70,7 @@ test('shop boosters are limited: cannot stack multiple income boosters and multi
   const r1 = applyBuyBooster(state, boom, now);
   assert.equal(r1.ok, true);
   state = r1.state;
-  assert.equal(state.cash, 9_000_000);
+  assert.equal(state.cash, 9_650_000);
   assert.equal(state.activeFx.incomeBoostMult, 1.75);
 
   const r2 = canBuyBooster(state, quick, now + 10_000);
@@ -112,8 +112,8 @@ test('tax surge booster bonus is limited to +35% and capped at 2 minutes of unbo
 
 test('building costs scale by 1.25x, bulkBuildingCost matches sum, and upkeep is capped at 35%', () => {
   const farm = BUILDINGS.find((b) => b.id === 'farm')!;
-  assert.equal(buildingCost(farm, 0), 250);
-  assert.equal(buildingCost(farm, 1), 313);
+  assert.equal(buildingCost(farm, 0), 200);
+  assert.equal(buildingCost(farm, 1), 250);
   const sum5 = [0, 1, 2, 3, 4].reduce((a, i) => a + buildingCost(farm, i), 0);
   assert.equal(bulkBuildingCost(farm, 0, 5), sum5);
 
@@ -325,7 +325,7 @@ test('balanced subscriptions grant modest perks & prevent same-day double-claim 
   const sub1 = applyBuySubscription(state, daily, now);
   assert.equal(sub1.ok, true);
   state = sub1.state;
-  assert.equal(state.cash, 595_000_000);
+  assert.equal(state.cash, 596_000_000);
   assert.equal(getDevelopmentDiscount(state, now), 0.03);
   assert.equal(getSubscriptionProjectSpeedMult(state, now), 1.05);
   assert.ok(Math.abs(calculateIncome(state, { nowMs: now }).net / baseInc - 1.04) < 0.001);
@@ -367,7 +367,7 @@ test('government renovation depends strictly on 20% of building development (una
   state.gx.cond.road = 60;
 
   const baseParlFull = gxRepairCost(state, 'parl', true);
-  assert.equal(baseParlFull, 1320);
+  assert.equal(baseParlFull, 1800);
 
   state.boost = 30;
   state.tax = 45;
@@ -408,4 +408,37 @@ test('new buildings (hydro, stock, evplant, fusion) and new policies (tourism, d
   assert.equal(boosted.rd, 20);
   assert.equal(boosted.green, 20);
   assert.ok(calculateIncome(boosted).gross > incBefore);
+});
+
+test('rebalanced economy invariants: starter cash 260, monotonic endgame ROI, +15 Happy Days, and 0% approval taxInfo', () => {
+  const fresh = freshState();
+  assert.equal(fresh.cash, 260);
+
+  const farm = BUILDINGS.find((b) => b.id === 'farm')!;
+  const water = BUILDINGS.find((b) => b.id === 'water')!;
+  const hosp = BUILDINGS.find((b) => b.id === 'hosp')!;
+  const bank = BUILDINGS.find((b) => b.id === 'bank')!;
+  const space = BUILDINGS.find((b) => b.id === 'space')!;
+  const fusion = BUILDINGS.find((b) => b.id === 'fusion')!;
+
+  assert.ok(fresh.cash >= farm.cost, 'Starter cash must allow buying first Farm');
+  assert.ok(bank.cost / bank.inc < water.cost / water.inc);
+  assert.ok(space.cost / space.inc < hosp.cost / hosp.inc);
+  assert.ok(fusion.cost / fusion.inc < bank.cost / bank.inc);
+
+  const happyDays = BOOSTERS.find((b) => b.id === 'happy_days')!;
+  const hapBase = freshState();
+  hapBase.cash = 100_000;
+  hapBase.hap = 60;
+  const hapRes = applyBuyBooster(hapBase, happyDays, 1_750_000_000_000);
+  assert.equal(hapRes.ok, true);
+  assert.equal(hapRes.state.hap, 75);
+
+  const zeroAppr = freshState();
+  zeroAppr.tax = 30;
+  zeroAppr.appr = 0;
+  const halfAppr = freshState();
+  halfAppr.tax = 30;
+  halfAppr.appr = 50;
+  assert.ok(taxInfo(zeroAppr).ev > taxInfo(halfAppr).ev, '0% approval must trigger higher evasion than 50% approval');
 });

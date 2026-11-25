@@ -27,7 +27,7 @@ interface TopBarProps {
   onOpenAuth: () => void;
 }
 
-export const TopBar: React.FC<TopBarProps> = ({
+export const TopBar = React.memo<TopBarProps>(({
   state,
   uid,
   pubProfile,
@@ -87,7 +87,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       </div>
     </header>
   );
-};
+});
 
 interface NavBarProps {
   activeTab: TabId;
@@ -95,7 +95,7 @@ interface NavBarProps {
   onSelectTab: (tab: TabId) => void;
 }
 
-export const NavBar: React.FC<NavBarProps> = ({
+export const NavBar = React.memo<NavBarProps>(({
   activeTab,
   pendingIncomingGifts,
   onSelectTab,
@@ -122,4 +122,4 @@ export const NavBar: React.FC<NavBarProps> = ({
       ))}
     </nav>
   );
-};
+});

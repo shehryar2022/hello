@@ -188,10 +188,12 @@ export default function App() {
   const [pubProfile, setPubProfile] = useState<PlayerProfile | null>(null);
   const [cloudStatus, setCloudStatus] = useState<{ cls: 'ok' | 'warn' | 'bad' | ''; text: string }>({
     cls: '',
-    text: '☁️ Saved',
+    text: 'Saved',
   });
   const [kicked, setKicked] = useState(false);
   const [otherTabLocked, setOtherTabLocked] = useState(false);
+  const otherTabLockedRef = useRef(false);
+  otherTabLockedRef.current = otherTabLocked;
 
   const [leaderboard, setLeaderboard] = useState<PlayerProfile[]>([]);
   const [lbLoaded, setLbLoaded] = useState(false);
@@ -314,12 +316,17 @@ export default function App() {
         // ignore
       }
     };
+    const handleExit = () => {
+      saveLocal(stateRef.current);
+      releaseOwnLock();
+    };
     const claimTab = () => {
       const cur = localStorage.getItem(TAB_LOCK_KEY);
       if (cur && cur !== sidRef.current) {
         try {
           const parsed = JSON.parse(cur) as { id: string; t: number };
           if (parsed.id !== sidRef.current && Date.now() - parsed.t < 7000) {
+            otherTabLockedRef.current = true;
             setOtherTabLocked(true);
             return;
           }
@@ -327,12 +334,13 @@ export default function App() {
           // Malformed
         }
       }
+      otherTabLockedRef.current = false;
       setOtherTabLocked(false);
       localStorage.setItem(TAB_LOCK_KEY, JSON.stringify({ id: sidRef.current, t: Date.now() }));
     };
     claimTab();
     const iv = window.setInterval(() => {
-      if (!otherTabLocked && !kickedRef.current) {
+      if (!otherTabLockedRef.current && !kickedRef.current) {
         localStorage.setItem(TAB_LOCK_KEY, JSON.stringify({ id: sidRef.current, t: Date.now() }));
       }
     }, 2500);
@@ -341,6 +349,7 @@ export default function App() {
         try {
           const parsed = JSON.parse(e.newValue) as { id: string; t: number };
           if (parsed.id !== sidRef.current && Date.now() - parsed.t < 7000) {
+            otherTabLockedRef.current = true;
             setOtherTabLocked(true);
           }
         } catch {
@@ -349,16 +358,16 @@ export default function App() {
       }
     };
     window.addEventListener('storage', onStorage);
-    window.addEventListener('pagehide', releaseOwnLock);
-    window.addEventListener('beforeunload', releaseOwnLock);
+    window.addEventListener('pagehide', handleExit);
+    window.addEventListener('beforeunload', handleExit);
     return () => {
       window.clearInterval(iv);
       window.removeEventListener('storage', onStorage);
-      window.removeEventListener('pagehide', releaseOwnLock);
-      window.removeEventListener('beforeunload', releaseOwnLock);
+      window.removeEventListener('pagehide', handleExit);
+      window.removeEventListener('beforeunload', handleExit);
       releaseOwnLock();
     };
-  }, [otherTabLocked]);
+  }, [saveLocal]);
 
   const handleKicked = useCallback(() => {
     if (kickedRef.current) return;
@@ -376,7 +385,7 @@ export default function App() {
       }
       cloudSyncBusyRef.current = true;
       cloudDirtyRef.current = false;
-      setCloudStatus({ cls: 'warn', text: '☁️ Saving…' });
+      setCloudStatus({ cls: 'warn', text: 'Saving…' });
       try {
         const res = await syncSaveToCloud({
           state: stateRef.current,
@@ -395,12 +404,12 @@ export default function App() {
             stk: res.wallet.stk,
           }));
         }
-        setCloudStatus({ cls: 'ok', text: '☁️ Saved' });
+        setCloudStatus({ cls: 'ok', text: 'Saved' });
       } catch (err) {
         if ((err as { code?: string })?.code === 'aborted') {
-          setCloudStatus({ cls: 'bad', text: '⚠️ Session displaced' });
+          setCloudStatus({ cls: 'bad', text: 'Session displaced' });
         } else {
-          setCloudStatus({ cls: 'bad', text: '⚠️ Sync failed' });
+          setCloudStatus({ cls: 'bad', text: 'Sync failed' });
           if (immediate) addToast(formatFirebaseError(err));
         }
       } finally {
@@ -496,7 +505,7 @@ export default function App() {
         };
       } else if (off.credited >= 1) {
         streakDialog = {
-          title: '🌙 Welcome Back!',
+          title: 'Welcome Back!',
           body: (
             <p>
               Your economy kept running while away!{' '}
@@ -823,9 +832,12 @@ export default function App() {
           for (const p of normalized) {
             nextLive[p.id] = Math.max(projLiveRef.current[p.id] || 0, p.progressMs);
           }
+          const hadPrevLive = Object.keys(projLiveRef.current).length > 0;
           projLiveRef.current = nextLive;
           setProjects(normalized);
-          setLiveProjectProgress(nextLive);
+          if (normalized.length > 0 || hadPrevLive) {
+            setLiveProjectProgress(nextLive);
+          }
         },
         () => {},
       ),
@@ -938,17 +950,23 @@ export default function App() {
       setState((prev) => {
         const inc = calculateIncome(prev, { tradeTier, nowMs: nowSrv });
         const capPool = Math.max(0, inc.net * 1800);
+        const prevPool = prev.taxPool || 0;
         const nextTaxPool =
           inc.net > 0
-            ? Math.min(capPool, (prev.taxPool || 0) + inc.net)
-            : Math.max(0, (prev.taxPool || 0) + inc.net);
+            ? prevPool >= capPool
+              ? prevPool
+              : Math.min(capPool, prevPool + inc.net)
+            : Math.max(0, prevPool + inc.net);
 
         const targHap = targetHappiness(prev);
         const nextHap = Math.max(0, Math.min(100, prev.hap + (targHap - prev.hap) * 0.04));
         const nextAppr = Math.max(0, Math.min(100, prev.appr + (nextHap - prev.appr) * 0.02));
-        const nextPop = Math.max(
-          1,
-          prev.pop + (nextHap - 45) * 0.0005 + ((prev.b.water || 0) * 0.0002 + (prev.b.rail || 0) * 0.0003),
+        const nextPop = Math.min(
+          100_000,
+          Math.max(
+            1,
+            prev.pop + (nextHap - 45) * 0.0005 + ((prev.b.water || 0) * 0.0002 + (prev.b.rail || 0) * 0.0003),
+          ),
         );
 
         let nextCash = prev.cash;
@@ -1010,12 +1028,12 @@ export default function App() {
             if (roll < 0.65) {
               const bonus = Math.max(100, Math.floor(Math.max(1, Math.abs(inc.net)) * 45));
               nextCash += bonus;
-              addToast(`📈 Trade Windfall! +₨ ${formatNumber(bonus)}`);
+              addToast(`Trade Windfall! +₨ ${formatNumber(bonus)}`);
             } else {
               const fine = Math.min(Math.floor(nextCash * 0.05), Math.floor(inc.gross * 25));
               if (fine > 0) {
                 nextCash = Math.max(0, nextCash - fine);
-                addToast(`⚡ Grid Maintenance Fee: −₨ ${formatNumber(fine)}`);
+                addToast(`Grid Maintenance Fee: −₨ ${formatNumber(fine)}`);
               }
             }
           }
@@ -1043,7 +1061,7 @@ export default function App() {
           t: now,
         };
 
-        if (tickCountRef.current % 4 === 0) {
+        if (tickCountRef.current % 8 === 0) {
           saveLocal(updated);
         }
         return updated;
@@ -1125,7 +1143,7 @@ export default function App() {
                           pb: Math.min(0.25, (s.gx.pb || 0) + p.t.pb),
                           ph: Math.min(10, (s.gx.ph || 0) + p.t.ph),
                           log: [
-                            `✅ ${p.t.n} completed${early ? ' EARLY' : ''}! +₨ ${formatNumber(cashReward)}`,
+                            `${p.t.n} completed${early ? ' EARLY' : ''}! +₨ ${formatNumber(cashReward)}`,
                             ...s.gx.log,
                           ].slice(0, 8),
                         },
@@ -1133,7 +1151,7 @@ export default function App() {
                       saveLocal(next);
                       return next;
                     });
-                    addToast(`🏗️ ${p.t.n} finished! +₨ ${formatNumber(cashReward)}`);
+                    addToast(`${p.t.n} finished! +₨ ${formatNumber(cashReward)}`);
                     scheduleCloudSync(500);
                   } else if (resStatus === 'failed') {
                     const refund = Math.ceil((p.t.cost / PROJECT_STAGES) * p.paid * 0.75);
@@ -1143,13 +1161,13 @@ export default function App() {
                         cash: s.cash + refund,
                         gx: {
                           ...s.gx,
-                          log: [`❌ ${p.t.n} missed deadline (75% refunded)`, ...s.gx.log].slice(0, 8),
+                          log: [`${p.t.n} missed deadline (75% refunded)`, ...s.gx.log].slice(0, 8),
                         },
                       };
                       saveLocal(next);
                       return next;
                     });
-                    addToast(`⏳ ${p.t.n} missed deadline — ₨ ${formatNumber(refund)} refunded`);
+                    addToast(`${p.t.n} missed deadline — ₨ ${formatNumber(refund)} refunded`);
                     scheduleCloudSync(500);
                   }
                 })
@@ -1301,7 +1319,7 @@ export default function App() {
         },
       },
     }), 1200);
-    addToast('🔧 Infrastructure repaired!');
+    addToast('Infrastructure repaired!');
   };
 
   const handleUpgradeBuilding = (id: string) => {
@@ -1319,7 +1337,7 @@ export default function App() {
         lvl: { ...prev.gx.lvl, [id]: (prev.gx.lvl[id] || 1) + 1 },
       },
     }), 1200);
-    addToast('⬆️ Building upgraded!');
+    addToast('Building upgraded!');
   };
 
   const handleStartProject = async (type: ProjectType) => {
@@ -1344,7 +1362,7 @@ export default function App() {
         projStartedLocalAtRef.current[newId] = Date.now();
       });
       playSfx('buy', !!stateRef.current.set.sfx);
-      addToast(`🏗️ Started ${def.n}!`);
+      addToast(`Started ${def.n}!`);
     } catch (err) {
       updateState((prev) => ({ ...prev, cash: prev.cash + stageCost }), 500);
       addToast(formatFirebaseError(err));
@@ -1367,7 +1385,7 @@ export default function App() {
     try {
       await payGovProjectStage(uid, projectId, proj.paid);
       playSfx('buy', !!stateRef.current.set.sfx);
-      addToast(`💳 Paid stage ${proj.paid + 1}/${PROJECT_STAGES}`);
+      addToast(`Paid stage ${proj.paid + 1}/${PROJECT_STAGES}`);
     } catch (err) {
       updateState((prev) => ({ ...prev, cash: prev.cash + stageCost }), 500);
       addToast(formatFirebaseError(err));
@@ -1615,8 +1633,8 @@ export default function App() {
 
   const handleResetGame = () => {
     setDialog({
-      title: '♻️ Start New Game?',
-      body: <p>This will reset your local offline nation progress back to ₨ 80. This cannot be undone.</p>,
+      title: 'Start New Game?',
+      body: <p>This will reset your local offline nation progress back to ₨ 260. This cannot be undone.</p>,
       actions: [
         {
           label: 'Yes, Reset',
@@ -1716,7 +1734,7 @@ export default function App() {
     return (
       <div className="modal" role="alertdialog" aria-modal="true">
         <div className="card">
-          <h2>{kicked ? '⚠️ Signed in elsewhere' : '⚠️ Game already open'}</h2>
+          <h2>{kicked ? 'Signed in elsewhere' : 'Game already open'}</h2>
           <p>
             {kicked
               ? 'Another browser session took over this account to prevent duplicate cloud saves.'
@@ -2111,7 +2129,7 @@ export default function App() {
                 serverOffsetMs: serverOffsetMsRef.current,
                 onKicked: handleKicked,
               });
-              addToast('🎁 Gift sent!');
+              addToast('Gift sent!');
               return true;
             } catch (err) {
               addToast(formatFirebaseError(err));
@@ -2121,7 +2139,7 @@ export default function App() {
           onAcceptTrade={async (id) => {
             try {
               await acceptGiftOffer(id, sidRef.current, handleKicked, serverOffsetMsRef.current);
-              addToast('🎁 Gift accepted!');
+              addToast('Gift accepted!');
             } catch (err) {
               addToast(formatFirebaseError(err));
             }

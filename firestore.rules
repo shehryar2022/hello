@@ -120,13 +120,37 @@ service cloud.firestore {
         && (!('rank' in data.save) || (data.save.rank is int && data.save.rank >= 0 && data.save.rank <= 10))
         && (!('boost' in data.save) || (data.save.boost is number && data.save.boost >= 0 && data.save.boost <= 30))
         && (!('crateCd' in data.save) || (data.save.crateCd is number && data.save.crateCd >= 0))
-        && (!('b' in data.save) || (data.save.b is map && data.save.b.size() <= 30))
-        && (!('stk' in data.save) || (data.save.stk is map && data.save.stk.size() <= 40))
-        && (!('milestones' in data.save) || (data.save.milestones is map && data.save.milestones.size() <= 40))
+        && (!('hap' in data.save) || (data.save.hap is number && data.save.hap >= 0 && data.save.hap <= 100))
+        && (!('appr' in data.save) || (data.save.appr is number && data.save.appr >= 0 && data.save.appr <= 100))
+        && (!('pop' in data.save) || (data.save.pop is number && data.save.pop >= 1 && data.save.pop <= 100000))
+        && (!('fused' in data.save) || (data.save.fused is int && data.save.fused >= 0 && data.save.fused <= 1000000))
+        && (!('streak' in data.save) || (data.save.streak is int && data.save.streak >= 0 && data.save.streak <= 10000))
+        && (!('gov' in data.save) || data.save.gov in ['rep', 'tech', 'wlf', 'ind'])
+        && (!('tax' in data.save) || (data.save.tax is number && data.save.tax >= 5 && data.save.tax <= 45))
+        && (!('wel' in data.save) || (data.save.wel is number && data.save.wel >= 0 && data.save.wel <= 50))
+        && (!('edu' in data.save) || (data.save.edu is number && data.save.edu >= 0 && data.save.edu <= 30))
+        && (!('fuel' in data.save) || (data.save.fuel is number && data.save.fuel >= 0 && data.save.fuel <= 50))
+        && (!('carbon' in data.save) || (data.save.carbon is number && data.save.carbon >= 0 && data.save.carbon <= 30))
+        && (!('luxury' in data.save) || (data.save.luxury is number && data.save.luxury >= 0 && data.save.luxury <= 25))
+        && (!('corp' in data.save) || (data.save.corp is number && data.save.corp >= 0 && data.save.corp <= 30))
+        && (!('gst' in data.save) || (data.save.gst is number && data.save.gst >= 0 && data.save.gst <= 25))
+        && (!('prop' in data.save) || (data.save.prop is number && data.save.prop >= 0 && data.save.prop <= 15))
+        && (!('duty' in data.save) || (data.save.duty is number && data.save.duty >= 0 && data.save.duty <= 30))
         && (!('tourism' in data.save) || (data.save.tourism is number && data.save.tourism >= 0 && data.save.tourism <= 20))
         && (!('digital' in data.save) || (data.save.digital is number && data.save.digital >= 0 && data.save.digital <= 20))
         && (!('rd' in data.save) || (data.save.rd is number && data.save.rd >= 0 && data.save.rd <= 25))
         && (!('green' in data.save) || (data.save.green is number && data.save.green >= 0 && data.save.green <= 25))
+        && (!('b' in data.save) || (data.save.b is map && data.save.b.size() <= 30))
+        && (!('stk' in data.save) || (data.save.stk is map && data.save.stk.size() <= 40))
+        && (!('milestones' in data.save) || (data.save.milestones is map && data.save.milestones.size() <= 40))
+        && (!('claimed' in data.save) || (data.save.claimed is map && data.save.claimed.size() <= 20))
+        && (!('boosterCd' in data.save) || (data.save.boosterCd is map && data.save.boosterCd.size() <= 20))
+        && (!('gx' in data.save) || (data.save.gx is map && data.save.gx.size() <= 12))
+        && (!('activeFx' in data.save) || (
+          data.save.activeFx is map
+          && data.save.activeFx.size() <= 10
+          && (!('incomeBoostMult' in data.save.activeFx) || (data.save.activeFx.incomeBoostMult is number && data.save.activeFx.incomeBoostMult >= 1 && data.save.activeFx.incomeBoostMult <= 1.75))
+        ))
         && (!('sub' in data.save) || (
           data.save.sub is map
           && data.save.sub.size() <= 5
@@ -156,7 +180,7 @@ service cloud.firestore {
         && isValidId(data.uid)
         && data.type in ['school', 'hospital', 'bridge', 'highway']
         && data.paid is int && data.paid >= 1 && data.paid <= 3
-        && data.progressMs is number && data.progressMs >= 0 && data.progressMs <= 10000000
+        && data.progressMs is number && data.progressMs >= 0 && data.progressMs <= 2400000
         && data.status in ['active', 'done', 'failed']
         && data.claimed is bool
         && data.startedAt is timestamp
@@ -177,12 +201,13 @@ service cloud.firestore {
         ])
         && isValidId(data.from)
         && isValidId(data.to)
+        && data.from != data.to
         && data.fromName is string && data.fromName.size() >= 1 && data.fromName.size() <= 16
         && data.toName is string && data.toName.size() >= 1 && data.toName.size() <= 16
         && data.fromCountry is string && data.fromCountry.size() <= 3
         && data.toCountry is string && data.toCountry.size() <= 3
         && data.participants is list && data.participants.size() == 2
-        && data.participants[0] is string && data.participants[1] is string
+        && data.participants[0] == data.from && data.participants[1] == data.to
         && data.offerCash is number && data.offerCash >= 0 && data.offerCash <= 1000000000000
         && data.offerGems is int && data.offerGems >= 0 && data.offerGems <= 1000000000
         && data.offerStk is map && data.offerStk.size() <= 40
@@ -253,7 +278,7 @@ service cloud.firestore {
         && isValidId(uid)
         && incoming().username == existing().username
         && incoming().usernameLower == existing().usernameLower
-        && (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt)
+        && (!('createdAt' in existing()) || ('createdAt' in incoming() && incoming().createdAt == existing().createdAt))
         && incoming().lastSeen == request.time
         && (
           affectedOnly(['lastSeen']) ||
@@ -302,10 +327,20 @@ service cloud.firestore {
         allow create: if isSignedIn()
           && isValidId(uid)
           && isValidId(notificationId)
+          && uid != request.auth.uid
           && isValidNotification(incoming())
           && incoming().from == request.auth.uid
           && incoming().read == false
           && incoming().createdAt == request.time
+          && (
+            incoming().type == 'dm' ||
+            (
+              'tradeId' in incoming() &&
+              incoming().tradeId is string &&
+              isValidId(incoming().tradeId) &&
+              existsAfter(/databases/$(database)/documents/trades/$(incoming().tradeId))
+            )
+          )
           && exists(/databases/$(database)/documents/players/$(uid));
         allow update: if isOwner(uid)
           && isValidId(uid)

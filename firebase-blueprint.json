@@ -56,7 +56,7 @@
     },
     "PlayerSave": {
       "title": "PlayerSave",
-      "description": "Owner-only full game state snapshot including buildings, policies, milestones, crateCd, and subscription state.",
+      "description": "Owner-only full game state snapshot including buildings, all 14 bounded policy sliders, government, milestones, crateCd, activeFx, and subscription state.",
       "type": "object",
       "properties": {
         "save": { "type": "object" }
@@ -65,7 +65,7 @@
     },
     "Notification": {
       "title": "Notification",
-      "description": "Real-time notification delivered to a player for gifts and DMs.",
+      "description": "Real-time notification delivered from another player for gifts (linked to tradeId) and DMs.",
       "type": "object",
       "properties": {
         "type": { "type": "string", "enum": ["dm", "new_offer", "accepted", "rejected", "cancelled", "expired"] },
@@ -81,7 +81,7 @@
     },
     "GovProject": {
       "title": "GovProject",
-      "description": "Online-only timed government infrastructure construction project.",
+      "description": "Online-only timed government infrastructure construction project (max progress 2,400,000 ms).",
       "type": "object",
       "properties": {
         "uid": { "type": "string", "minLength": 1, "maxLength": 128 },

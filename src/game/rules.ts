@@ -91,7 +91,7 @@ export function freshState(): GameState {
   }
 
   return {
-    cash: 80,
+    cash: 260,
     gems: 3,
     taxPool: 0,
     day: 0,
@@ -214,6 +214,7 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
   s.taxPool = Math.min(1e13, Math.max(0, s.taxPool));
   s.boost = Math.max(0, Math.min(30, s.boost));
   s.rank = Math.max(0, Math.min(MAX_RANK, Math.floor(s.rank)));
+  s.streak = Math.max(0, Math.min(10_000, Math.floor(s.streak)));
   s.hap = Math.max(0, Math.min(100, s.hap));
   s.appr = Math.max(0, Math.min(100, s.appr));
   s.pop = Math.max(1, Math.min(100_000, s.pop));
@@ -312,12 +313,12 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
 }
 
 export function cleanSavePayload(s: GameState): Record<string, unknown> {
-  const clone = JSON.parse(JSON.stringify(s)) as Record<string, unknown>;
-  delete clone.country;
-  delete clone.deals;
-  delete clone.loan;
-  delete clone._lastBal;
-  return clone;
+  const raw = { ...s } as Record<string, unknown>;
+  delete raw.country;
+  delete raw.deals;
+  delete raw.loan;
+  delete raw._lastBal;
+  return raw;
 }
 
 export function totalBuildings(s: GameState): number {
@@ -421,7 +422,7 @@ export function taxInfo(s: GameState) {
     (dg / 90) * (1 + ((s.b.tech || 0) + (s.b.data || 0)) * 0.05);
   const burden =
     t + co * 0.8 + g + p + d * 0.6 + c * 0.7 + l * 0.5 + f * 0.4 + tr * 0.4 + dg * 0.5;
-  const ev = Math.max(0, Math.min(0.75, (burden - 30) / 70 + Math.max(0, 50 - (s.appr || 50)) / 400));
+  const ev = Math.max(0, Math.min(0.75, (burden - 30) / 70 + Math.max(0, 50 - (s.appr ?? 50)) / 400));
   return { mult: raw * (1 - ev), raw, burden, ev };
 }
 
@@ -692,7 +693,7 @@ export function applyBuyBooster(
   } else if (booster.fx === 'tax15x') {
     next.activeFx.taxSurge = 1;
   } else if (booster.fx === 'hap10') {
-    next.hap = Math.min(100, next.hap + 10);
+    next.hap = Math.min(100, next.hap + 15);
   }
 
   return { ok: true, state: next };

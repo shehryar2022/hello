@@ -161,7 +161,7 @@ export async function createPlayerProfile(
       }
 
       const oldRaw = sSnap.exists() ? (sSnap.data()?.save as Partial<GameState> | undefined) : undefined;
-      const cash = oldRaw ? capValue(oldRaw.cash, 1e13) : 80;
+      const cash = oldRaw ? capValue(oldRaw.cash, 1e13) : 260;
       const gems = oldRaw ? capValue(oldRaw.gems, 1e9) : 3;
       const stk = oldRaw ? cleanStickersMap(oldRaw.stk) : {};
 
@@ -744,7 +744,7 @@ export async function tickGovProject(
   nextProgressMs: number,
 ): Promise<void> {
   const ref = doc(db, 'players', uid, 'projects', projectId);
-  const clamped = Math.max(0, Math.min(10_000_000, Math.floor(nextProgressMs)));
+  const clamped = Math.max(0, Math.min(2_400_000, Math.floor(nextProgressMs)));
   await runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
     const data = snap.data();
@@ -771,7 +771,7 @@ export async function finishGovProject(
     if (!data || data.status !== 'active') return;
     if (status === 'done' && typeof finalProgressMs === 'number') {
       const prev = Math.floor(Number(data.progressMs) || 0);
-      const clamped = Math.max(prev, Math.min(10_000_000, Math.floor(finalProgressMs)));
+      const clamped = Math.max(prev, Math.min(2_400_000, Math.floor(finalProgressMs)));
       tx.update(ref, {
         progressMs: clamped,
         lastTickAt: serverTimestamp(),

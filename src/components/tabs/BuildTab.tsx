@@ -87,7 +87,10 @@ export const BuildTab: React.FC<BuildTabProps> = ({ state, serverOffsetMs = 0, o
                   <span className="lv">Lv {count}</span>
                 </h2>
                 <p>
-                  {d.d} · +{(d.inc * upgMult).toFixed(2)}/s each{upgLvl > 1 ? ` (×${upgMult})` : ''}
+                  {d.d} · +{(() => {
+                    const rate = d.inc * upgMult;
+                    return rate >= 1000 ? formatNumber(rate) : rate >= 100 ? Math.round(rate) : rate.toFixed(2);
+                  })()}/s each{upgLvl > 1 ? ` (×${upgMult})` : ''}
                 </p>
               </div>
               <button

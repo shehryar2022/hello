@@ -89,12 +89,21 @@ test('Dirty Dozen security invariants are enforced in firestore.rules', () => {
   // 9. Save balance/policy/building bounds, non-whitespace text guards, rank 0..10, and nullable trade resolvedAt
   assert.match(rules, /data\.save\.cash >= 0/);
   assert.match(rules, /data\.save\.gems >= 0/);
+  assert.match(rules, /data\.save\.tax >= 5 && data\.save\.tax <= 45/);
+  assert.match(rules, /data\.save\.wel >= 0 && data\.save\.wel <= 50/);
+  assert.match(rules, /data\.save\.hap >= 0 && data\.save\.hap <= 100/);
+  assert.match(rules, /data\.save\.pop >= 1 && data\.save\.pop <= 100000/);
+  assert.match(rules, /data\.save\.gov in \['rep', 'tech', 'wlf', 'ind'\]/);
+  assert.match(rules, /data\.save\.activeFx\.incomeBoostMult <= 1\.75/);
   assert.match(rules, /data\.save\.b\.size\(\) <= 30/);
   assert.match(rules, /data\.save\.milestones\.size\(\) <= 40/);
   assert.match(rules, /data\.save\.crateCd >= 0/);
   assert.match(rules, /data\.save\.rank <= 10/);
   assert.match(rules, /data\.rank <= 10/);
   assert.match(rules, /data\.save\.sub\.tier in \['daily', 'weekly', 'monthly'\]/);
+  assert.match(rules, /data\.progressMs <= 2400000/);
+  assert.match(rules, /data\.participants\[0\] == data\.from && data\.participants\[1\] == data\.to/);
+  assert.match(rules, /uid != request\.auth\.uid[\s\S]*existsAfter\(\/databases\/\$\(database\)\/documents\/trades\/\$\(incoming\(\)\.tradeId\)\)/);
   assert.match(rules, /existing\(\)\.paid == 3/);
   assert.match(rules, /request\.time < existing\(\)\.expiresAt/);
   assert.match(rules, /request\.time >= existing\(\)\.expiresAt/);

@@ -343,6 +343,10 @@ h2, .tabs b {
   height: 0;
   transform-style: preserve-3d;
   transform: rotateX(58deg) rotateZ(var(--rz, -35deg));
+  will-change: transform;
+}
+.city.sway {
+  animation: citySway 9s ease-in-out infinite alternate;
 }
 .city:before {
   content: "";
@@ -369,6 +373,7 @@ h2, .tabs b {
   background: #ffe9a0;
   box-shadow: 0 0 4px 1px #ffd25f;
   pointer-events: none;
+  will-change: transform;
 }
 .car.cb { background: #9fe9ff; box-shadow: 0 0 4px 1px #4cc9ff; }
 
@@ -405,15 +410,52 @@ h2, .tabs b {
   background: linear-gradient(135deg, color-mix(in srgb, var(--cc) 62%, #fff), var(--cc));
   box-shadow: inset 3px 3px 5px rgba(255, 255, 255, 0.4), inset -3px -3px 6px rgba(0, 0, 0, 0.22);
 }
-.bd .fS, .bd .fN, .bd .fE, .bd .fW {
+.bd .fS {
+  left: 0;
+  top: var(--s);
+  width: var(--s);
+  height: var(--h);
+  transform-origin: top;
+  transform: rotateX(90deg);
   background:
-    repeating-linear-gradient(0deg, rgba(255, 238, 175, 0.34) 0 2px, transparent 2px 8px),
-    linear-gradient(color-mix(in srgb, var(--cc) 78%, #fff), var(--cc));
+    repeating-linear-gradient(0deg, rgba(255, 238, 175, 0.32) 0 2px, transparent 2px 8px),
+    linear-gradient(rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0.14)),
+    var(--cc);
 }
-.bd .fS { left: 0; top: var(--s); width: var(--s); height: var(--h); transform-origin: top; transform: rotateX(90deg); filter: brightness(0.95); }
-.bd .fN { left: 0; top: 0; width: var(--s); height: var(--h); transform-origin: top; transform: rotateX(90deg); filter: brightness(0.62); }
-.bd .fE { left: var(--s); top: 0; width: var(--h); height: var(--s); transform-origin: left; transform: rotateY(-90deg); filter: brightness(0.7); }
-.bd .fW { left: 0; top: 0; width: var(--h); height: var(--s); transform-origin: left; transform: rotateY(-90deg); filter: brightness(0.5); }
+.bd .fN {
+  left: 0;
+  top: 0;
+  width: var(--s);
+  height: var(--h);
+  transform-origin: top;
+  transform: rotateX(90deg);
+  background:
+    linear-gradient(rgba(0, 0, 0, 0.36), rgba(0, 0, 0, 0.46)),
+    var(--cc);
+}
+.bd .fE {
+  left: var(--s);
+  top: 0;
+  width: var(--h);
+  height: var(--s);
+  transform-origin: left;
+  transform: rotateY(-90deg);
+  background:
+    repeating-linear-gradient(90deg, rgba(255, 238, 175, 0.26) 0 2px, transparent 2px 8px),
+    linear-gradient(rgba(0, 0, 0, 0.26), rgba(0, 0, 0, 0.36)),
+    var(--cc);
+}
+.bd .fW {
+  left: 0;
+  top: 0;
+  width: var(--h);
+  height: var(--s);
+  transform-origin: left;
+  transform: rotateY(-90deg);
+  background:
+    linear-gradient(rgba(0, 0, 0, 0.45), rgba(0, 0, 0, 0.56)),
+    var(--cc);
+}
 .bd.empty i { opacity: 0.14; background: var(--cc); }
 .bd.empty .fT { box-shadow: none; border: 1px dashed rgba(255, 255, 255, 0.45); }
 .bd.up { animation: crise 0.85s cubic-bezier(0.2, 1.6, 0.4, 1); }
@@ -445,11 +487,15 @@ h2, .tabs b {
   pointer-events: none;
   transform: translateZ(calc(var(--h) + 12px)) rotateZ(calc(-1 * var(--rz, -35deg))) rotateX(-58deg) translate(-50%, -70%);
 }
+.city.sway .em3 {
+  animation: em3CounterSway 9s ease-in-out infinite alternate;
+}
 .coin, .puff {
   position: absolute;
   pointer-events: none;
   left: calc(var(--x) + var(--s) / 2);
   top: calc(var(--y) + var(--s) / 2);
+  will-change: transform, opacity;
 }
 .coin {
   width: 18px;
@@ -467,9 +513,17 @@ h2, .tabs b {
   height: 14px;
   border-radius: 50%;
   background: radial-gradient(circle, rgba(255, 255, 255, 0.65), rgba(201, 181, 255, 0.25) 60%, transparent 70%);
-  animation: cpuff 2.2s ease-out forwards;
+  animation: cpuff 2.0s ease-out forwards;
 }
 
+@keyframes citySway {
+  from { transform: rotateX(58deg) rotateZ(-43deg); }
+  to { transform: rotateX(58deg) rotateZ(-27deg); }
+}
+@keyframes em3CounterSway {
+  from { transform: translateZ(calc(var(--h) + 12px)) rotateZ(43deg) rotateX(-58deg) translate(-50%, -70%); }
+  to { transform: translateZ(calc(var(--h) + 12px)) rotateZ(27deg) rotateX(-58deg) translate(-50%, -70%); }
+}
 @keyframes crise { from { transform: translateZ(-80px) scale(0.5); opacity: 0; } }
 @keyframes cpop { 40% { transform: translateZ(14px) scale(1.12); } }
 @keyframes ccoin {
