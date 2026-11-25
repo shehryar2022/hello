@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo, useMemo } from 'react';
 import { GOV_CHANGE_CD_MS, GOVS, POLICY_PRESETS } from '../../game/constants';
 import {
   calculateIncome,
@@ -69,7 +69,7 @@ const SPENDING_SLIDERS: Array<{
   { key: 'transitSub', label: 'Public transit subsidy', min: 0, max: 25, desc: 'Boosts happiness & multiplies Metro Transit + Railway Hub output.', color: '#22d3ee' },
 ];
 
-export const PolicyTab: React.FC<PolicyTabProps> = ({
+export const PolicyTab: React.FC<PolicyTabProps> = memo(({
   state,
   uid,
   serverOffsetMs,
@@ -79,14 +79,14 @@ export const PolicyTab: React.FC<PolicyTabProps> = ({
   onResetGame,
   onSaveCloudNow,
 }) => {
-  const nowSrv = Date.now() + serverOffsetMs;
-  const ti = taxInfo(state);
-  const inc = calculateIncome(state, { nowMs: nowSrv });
-  const gov = getGovDefinition(state);
+  const nowSrv = (state.t || Date.now()) + serverOffsetMs;
+  const ti = useMemo(() => taxInfo(state), [state]);
+  const inc = useMemo(() => calculateIncome(state, { nowMs: nowSrv }), [state, nowSrv]);
+  const gov = useMemo(() => getGovDefinition(state), [state]);
   const govCd = Math.max(0, (state.govT || 0) + GOV_CHANGE_CD_MS - nowSrv);
   const worldEv = currentWorldEvent(nowSrv);
-  const targHap = Math.round(targetHappiness(state));
-  const recPreset = getRecommendedPolicyHint(state);
+  const targHap = useMemo(() => Math.round(targetHappiness(state)), [state]);
+  const recPreset = useMemo(() => getRecommendedPolicyHint(state), [state]);
 
   const renderSlider = (s: (typeof TAX_SLIDERS)[number]) => {
     const val = Number(state[s.key] || 0);
@@ -268,4 +268,4 @@ export const PolicyTab: React.FC<PolicyTabProps> = ({
       )}
     </div>
   );
-};
+});

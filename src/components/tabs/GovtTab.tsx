@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { memo, useEffect, useMemo, useState } from 'react';
 import {
   BUILDINGS,
   GOV_DAY_SEC,
@@ -72,7 +72,7 @@ interface GovtTabProps {
   onUnlockTech: (techId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
 }
 
-export const GovtTab: React.FC<GovtTabProps> = ({
+export const GovtTab: React.FC<GovtTabProps> = memo(({
   state,
   subTab,
   uid,
@@ -88,18 +88,21 @@ export const GovtTab: React.FC<GovtTabProps> = ({
   onUnlockTech,
 }) => {
   const gx = state.gx;
-  const gbAvg = gxAverageCondition(state, GX_GOV_BUILDINGS);
-  const rdAvg = gxAverageCondition(state, GX_ROADS);
+  const gbAvg = useMemo(() => gxAverageCondition(state, GX_GOV_BUILDINGS), [state]);
+  const rdAvg = useMemo(() => gxAverageCondition(state, GX_ROADS), [state]);
   const exp = gx.exp;
-  const builtBuildings = BUILDINGS.filter((d) => (state.b[d.id] || 0) > 0);
-  const nowSrv = Date.now() + serverOffsetMs;
-  const activeCount = projects.filter((p) => p.status === 'active').length;
-  const disc = getDevelopmentDiscount(state, nowSrv);
-  const projSpeed = getProjectSpeedMult(state, nowSrv);
-  const researchedCount = techCount(state);
-  const readyTechCount = TECH_TREE.filter((t) => canUnlockTech(state, t.id).ok).length;
-  const techRec = getRecommendedTech(state);
-  const ownedBuildings = totalBuildings(state);
+  const builtBuildings = useMemo(() => BUILDINGS.filter((d) => (state.b[d.id] || 0) > 0), [state.b]);
+  const nowSrv = (state.t || Date.now()) + serverOffsetMs;
+  const activeCount = useMemo(() => projects.filter((p) => p.status === 'active').length, [projects]);
+  const disc = useMemo(() => getDevelopmentDiscount(state, nowSrv), [state, nowSrv]);
+  const projSpeed = useMemo(() => getProjectSpeedMult(state, nowSrv), [state, nowSrv]);
+  const researchedCount = useMemo(() => techCount(state), [state]);
+  const readyTechCount = useMemo(
+    () => TECH_TREE.filter((t) => canUnlockTech(state, t.id).ok).length,
+    [state],
+  );
+  const techRec = useMemo(() => getRecommendedTech(state), [state]);
+  const ownedBuildings = useMemo(() => totalBuildings(state), [state]);
 
   const dismissStorageKey = `cet_cleared_proj_${uid || 'offline'}`;
   const [hiddenPastIds, setHiddenPastIds] = useState<string[]>(() => {
@@ -581,4 +584,4 @@ export const GovtTab: React.FC<GovtTabProps> = ({
       )}
     </div>
   );
-};
+});

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { formatNumber } from '../game/rules';
 import { TrendingUp } from './GameIcons';
 
@@ -7,14 +7,16 @@ interface GdpChartProps {
   currentGdp: number;
 }
 
-export const GdpChart: React.FC<GdpChartProps> = ({ history, currentGdp }) => {
+const CHART_SLICES = [12, 36, 60] as const;
+
+export const GdpChart: React.FC<GdpChartProps> = memo(({ history, currentGdp }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [rangeIdx, setRangeIdx] = useState<0 | 1 | 2>(2);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [layoutTick, setLayoutTick] = useState(0);
 
-  const slices = [12, 36, 60] as const;
-  const h = history.slice(-slices[rangeIdx]);
+  const sliceLen = CHART_SLICES[rangeIdx];
+  const h = useMemo(() => history.slice(-sliceLen), [history, sliceLen]);
   const hasData = h.length >= 2;
   const first = hasData ? h[0] : currentGdp;
   const last = hasData ? h[h.length - 1] : currentGdp;
@@ -38,8 +40,12 @@ export const GdpChart: React.FC<GdpChartProps> = ({ history, currentGdp }) => {
     const dpr = Math.min(2, window.devicePixelRatio || 1.5);
     const W = c.clientWidth || 320;
     const H = 220;
-    c.width = W * dpr;
-    c.height = H * dpr;
+    const targetW = Math.round(W * dpr);
+    const targetH = Math.round(H * dpr);
+    if (c.width !== targetW || c.height !== targetH) {
+      c.width = targetW;
+      c.height = targetH;
+    }
 
     const ctx = c.getContext('2d');
     if (!ctx) return;
@@ -191,4 +197,4 @@ export const GdpChart: React.FC<GdpChartProps> = ({ history, currentGdp }) => {
       </div>
     </div>
   );
-};
+});

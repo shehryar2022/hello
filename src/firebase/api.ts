@@ -41,15 +41,23 @@ import type {
   ProjectType,
   TradeOffer,
 } from '../game/types';
-import { auth, db, handleFirestoreError, OperationType } from './config';
+import {
+  auth,
+  buildFirestoreErrorInfo,
+  db,
+  handleFirestoreError,
+  OperationType,
+} from './config';
+
+const KARACHI_DAY_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: TZ,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
 
 export function dayKeyFor(ms: number): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: TZ,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(ms));
+  return KARACHI_DAY_FORMATTER.format(new Date(ms));
 }
 
 export function pairIdFor(a: string, b: string): string {
@@ -79,23 +87,40 @@ function requireUid(): string {
   return u;
 }
 
+function reportAndRethrow(
+  err: unknown,
+  op: OperationType,
+  path: string | null,
+): never {
+  const code = (err as { code?: string })?.code || '';
+  if (code !== 'aborted' && code !== 'already-exists' && code !== 'resource-exhausted') {
+    console.error('Firestore Error: ', JSON.stringify(buildFirestoreErrorInfo(err, op, path)));
+  }
+  throw err;
+}
+
 async function runSessionTx<T>(
   sid: string,
   onKicked: () => void,
   fn: (tx: Transaction, uid: string) => Promise<T>,
   checkSession = true,
+  opPath: string | null = null,
 ): Promise<T> {
   const uid = requireUid();
-  return runTransaction(db, async (tx) => {
-    if (checkSession) {
-      const sesSnap = await tx.get(doc(db, 'players', uid, 'private', 'session'));
-      if (sesSnap.exists() && sesSnap.data()?.sid !== sid) {
-        onKicked();
-        throw makeError('aborted', 'Another session is active');
+  try {
+    return await runTransaction(db, async (tx) => {
+      if (checkSession) {
+        const sesSnap = await tx.get(doc(db, 'players', uid, 'private', 'session'));
+        if (sesSnap.exists() && sesSnap.data()?.sid !== sid) {
+          onKicked();
+          throw makeError('aborted', 'Another session is active');
+        }
       }
-    }
-    return fn(tx, uid);
-  });
+      return fn(tx, uid);
+    });
+  } catch (err) {
+    reportAndRethrow(err, OperationType.WRITE, opPath || `players/${uid}`);
+  }
 }
 
 function writeNotifInTx(
@@ -181,7 +206,7 @@ export async function createPlayerProfile(
         level: 1,
         rank: 0,
         subTier: activeSub ? activeSub.def.id : '',
-        subExp: activeSub ? Math.floor(activeSub.exp) : 0,
+        subExp: activeSub ? Math.max(0, Math.min(1e13, Math.floor(activeSub.exp))) : 0,
         lastSeen: serverTimestamp(),
         stats: sanitizeStats(undefined),
         createdAt: serverTimestamp(),
@@ -199,6 +224,7 @@ export async function createPlayerProfile(
       }
     },
     false,
+    'players',
   );
 }
 
@@ -226,13 +252,17 @@ export async function syncSaveToCloud(params: {
 
   await runSessionTx(sid, onKicked, async (tx, uid) => {
     const wRef = doc(db, 'players', uid, 'private', 'wallet');
-    const wSnap = await tx.get(wRef);
+    const pRef = doc(db, 'players', uid);
+    const [wSnap, pSnap] = await Promise.all([tx.get(wRef), tx.get(pRef)]);
+    if (!pSnap.exists()) {
+      throw makeError('failed-precondition', 'Player profile not initialized');
+    }
     const wData = wSnap.exists() ? wSnap.data() : null;
-    const curRev = wData && Number.isFinite(Number(wData.rev)) ? Number(wData.rev) : 0;
+    const curRev = wData && Number.isFinite(Number(wData.rev)) ? Math.max(0, Math.floor(Number(wData.rev))) : 0;
     const accepted = !wData || curRev === rev;
 
     if (accepted) {
-      const nextRev = curRev + 1;
+      const nextRev = Math.min(1e9, curRev + 1);
       tx.set(wRef, {
         cash,
         gems,
@@ -241,19 +271,24 @@ export async function syncSaveToCloud(params: {
         sid,
         t: serverTimestamp(),
       });
-      const mergedStats = sanitizeStats(pubStats, {
+      const existingStats = (pSnap.data()?.stats as Partial<PlayerStats> | undefined) ?? pubStats;
+      const mergedStats = sanitizeStats(existingStats, {
         buildings: totalBuildings(state),
-        completedTrades: Math.max(pubStats?.completedTrades || 0, completedTradesCount),
+        completedTrades: Math.max(
+          existingStats?.completedTrades || 0,
+          pubStats?.completedTrades || 0,
+          completedTradesCount,
+        ),
       });
       const activeSub = getActiveSubscription(state, Date.now());
-      tx.update(doc(db, 'players', uid), {
+      tx.update(pRef, {
         gdp: gdpVal,
         cash,
         gems,
-        level: playerLevel(state),
+        level: Math.max(1, Math.min(10_000_000, playerLevel(state))),
         rank: Math.max(0, Math.min(MAX_RANK, Math.floor(state.rank || 0))),
         subTier: activeSub ? activeSub.def.id : '',
-        subExp: activeSub ? Math.floor(activeSub.exp) : 0,
+        subExp: activeSub ? Math.max(0, Math.min(1e13, Math.floor(activeSub.exp))) : 0,
         lastSeen: serverTimestamp(),
         stats: mergedStats,
       });
@@ -277,7 +312,7 @@ export async function syncSaveToCloud(params: {
         },
       };
     }
-  });
+  }, true, 'saves');
 
   return result;
 }
@@ -371,7 +406,7 @@ export async function createGiftOffer(params: {
       gdp: Math.max(1, newCash),
       cash: newCash,
       gems: newGems,
-      level: Math.max(1, Math.floor(Number(meData.level) || 1)),
+      level: Math.max(1, Math.min(10_000_000, Math.floor(Number(meData.level) || 1))),
       rank: Math.max(0, Math.min(MAX_RANK, Math.floor(Number(meData.rank) || 0))),
       lastSeen: serverTimestamp(),
       stats: sanitizeStats(prevStats, {
@@ -463,7 +498,7 @@ export async function acceptGiftOffer(
         gdp: Math.max(1, newCash),
         cash: newCash,
         gems: newGems,
-        level: Math.max(1, Math.floor(Number(md.level) || 1)),
+        level: Math.max(1, Math.min(10_000_000, Math.floor(Number(md.level) || 1))),
         rank: Math.max(0, Math.min(MAX_RANK, Math.floor(Number(md.rank) || 0))),
         lastSeen: serverTimestamp(),
         stats: sanitizeStats(prevStats, {

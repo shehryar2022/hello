@@ -119,6 +119,11 @@ test('Dirty Dozen security invariants are enforced in firestore.rules', () => {
   assert.match(rules, /data\.text\.matches\('\(\?s\)\.\*\\\\S\.\*'\)/);
   assert.match(rules, /'resolvedAt' in data\) \|\| data\.resolvedAt == null \|\| data\.resolvedAt is timestamp/);
   assert.match(rules, /data\.subTier in \['', 'daily', 'weekly', 'monthly'\]/);
-  assert.match(rules, /data\.subExp >= 0/);
+  assert.match(rules, /data\.subExp >= 0 && data\.subExp <= 10000000000000/);
   assert.match(rules, /data\.save\.tech\.size\(\) <= 16/);
+  assert.match(rules, /data\.save\.hist is list && data\.save\.hist\.size\(\) <= 60/);
+  assert.match(rules, /data\.save\.questIds is list && data\.save\.questIds\.size\(\) <= 10/);
+  assert.match(rules, /data\.save\.questDay is string && data\.save\.questDay\.size\(\) <= 32/);
+  assert.match(rules, /data\.save\.set is map && data\.save\.set\.size\(\) <= 10/);
 });
+

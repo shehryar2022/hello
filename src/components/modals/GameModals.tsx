@@ -31,6 +31,22 @@ interface ProfileModalProps {
   onSignOut: () => void;
 }
 
+const NOTIF_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
+function useEscapeClose(active: boolean, onClose: () => void) {
+  useEffect(() => {
+    if (!active) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [active, onClose]);
+}
+
 export const ProfileModal: React.FC<ProfileModalProps> = ({
   profile,
   isMe,
@@ -40,6 +56,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   onMessage,
   onSignOut,
 }) => {
+  useEscapeClose(Boolean(profile), onClose);
   if (!profile) return null;
   const rk = RANKS[profile.rank || 0] || RANKS[0];
   const subTier = isProfileSubActive(profile, Date.now());
@@ -161,6 +178,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onRequestReset,
   onClose,
 }) => {
+  useEscapeClose(open, onClose);
   if (!open) return null;
 
   const rows: Array<{ key: 'sfx' | 'vib' | 'anim'; icon: React.ReactNode; label: string }> = [
@@ -231,6 +249,7 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
   onClose,
   onSelectNotification,
 }) => {
+  useEscapeClose(open, onClose);
   if (!open) return null;
 
   return (
@@ -254,7 +273,7 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
                 <div>
                   <p>{n.text}</p>
                   <small>
-                    {n.ms ? new Date(n.ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Now'}
+                    {n.ms ? NOTIF_TIME_FORMATTER.format(new Date(n.ms)) : 'Now'}
                   </small>
                 </div>
               </div>
@@ -408,6 +427,7 @@ export const DialogModal: React.FC<{ dialog: DialogConfig | null; onClose: () =>
   dialog,
   onClose,
 }) => {
+  useEscapeClose(Boolean(dialog), onClose);
   if (!dialog) return null;
   return (
     <div className="modal" role="dialog" aria-modal="true" onClick={onClose}>

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo, useMemo } from 'react';
 import { GDP_TARGET } from '../game/constants';
 import {
   calculateGdp,
@@ -33,7 +33,7 @@ interface HeroPanelProps {
   onCityBuildingTap: (clientX?: number, clientY?: number) => void;
 }
 
-export const HeroPanel: React.FC<HeroPanelProps> = ({
+export const HeroPanel: React.FC<HeroPanelProps> = memo(({
   state,
   tradeTier,
   serverOffsetMs = 0,
@@ -43,12 +43,15 @@ export const HeroPanel: React.FC<HeroPanelProps> = ({
   onActivateGemBoost,
   onCityBuildingTap,
 }) => {
-  const now = Date.now() + serverOffsetMs;
-  const inc = calculateIncome(state, { tradeTier, nowMs: now });
+  const now = (state.t || Date.now()) + serverOffsetMs;
+  const inc = useMemo(
+    () => calculateIncome(state, { tradeTier, nowMs: now }),
+    [state, tradeTier, now],
+  );
   const perMin = inc.net * 60;
-  const shopBoost = getActiveShopIncomeBooster(state, now);
-  const activeSub = getActiveSubscription(state, now);
-  const pGdp = calculateGdp(state);
+  const shopBoost = useMemo(() => getActiveShopIncomeBooster(state, now), [state, now]);
+  const activeSub = useMemo(() => getActiveSubscription(state, now), [state, now]);
+  const pGdp = useMemo(() => calculateGdp(state), [state]);
 
   const statItems = [
     { icon: <Smile size={15} color="#3fe0b0" />, label: 'Happiness', pct: state.hap, color: '#3fe0b0', text: `${Math.round(state.hap)}%` },
@@ -144,4 +147,4 @@ export const HeroPanel: React.FC<HeroPanelProps> = ({
       </div>
     </div>
   );
-};
+});

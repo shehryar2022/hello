@@ -66,7 +66,14 @@ import {
   tickGovProject,
   timestampToMs,
 } from './firebase/api';
-import { auth, db, formatFirebaseError, testFirestoreConnection } from './firebase/config';
+import {
+  auth,
+  buildFirestoreErrorInfo,
+  db,
+  formatFirebaseError,
+  isFirebaseConfigured,
+  OperationType,
+} from './firebase/config';
 import {
   ACTIVE_WINDOW_MS,
   BOOSTERS,
@@ -237,12 +244,20 @@ export default function App() {
 
   const sidRef = useRef<string>(`${Date.now()}_${Math.random().toString(36).slice(2, 10)}`);
   const walletRevRef = useRef<number>(0);
+  const expectedWalletRevRef = useRef<number | null>(null);
+  const [serverOffsetMs, setServerOffsetMs] = useState(0);
   const serverOffsetMsRef = useRef<number>(0);
   const serverTimeVerifiedRef = useRef<boolean>(false);
   const lastActivityRef = useRef<number>(Date.now());
   const cloudSyncTimerRef = useRef<number | null>(null);
+  const syncRetryTimerRef = useRef<number | null>(null);
+  const syncRetryCountRef = useRef<number>(0);
+  const lastSyncedAtRef = useRef<number>(0);
   const cloudSyncBusyRef = useRef<boolean>(false);
   const cloudDirtyRef = useRef<boolean>(false);
+  const pendingDirtyRef = useRef<boolean>(false);
+  const localSaveTimerRef = useRef<number | null>(null);
+  const permWarnShownRef = useRef<boolean>(false);
   const pubProfileRef = useRef<PlayerProfile | null>(null);
   pubProfileRef.current = pubProfile;
   const uidRef = useRef<string | null>(null);
@@ -262,7 +277,17 @@ export default function App() {
   const settlingTradesRef = useRef<boolean>(false);
   const rankPositionRef = useRef<number>(1);
   const modalOpenRef = useRef<boolean>(false);
-  modalOpenRef.current = Boolean(dialog || giftModal || settingsOpen || notifsOpen || profileView);
+  const anyModalOpen = Boolean(dialog || giftModal || settingsOpen || notifsOpen || profileView || needsOnboarding);
+  modalOpenRef.current = anyModalOpen;
+
+  const updateServerOffset = useCallback((srvMs: number) => {
+    if (srvMs > 0 && Number.isFinite(srvMs)) {
+      const next = srvMs - Date.now();
+      serverOffsetMsRef.current = next;
+      serverTimeVerifiedRef.current = true;
+      setServerOffsetMs((prev) => (Math.abs(prev - next) >= 1000 ? next : prev));
+    }
+  }, []);
 
   const addToast = useCallback((text: string) => {
     const id = Date.now() + Math.random();
@@ -284,6 +309,10 @@ export default function App() {
   }, []);
 
   const saveLocal = useCallback((next: GameState) => {
+    if (localSaveTimerRef.current) {
+      window.clearTimeout(localSaveTimerRef.current);
+      localSaveTimerRef.current = null;
+    }
     try {
       const toStore = { ...next, t: Date.now() };
       localStorage.setItem(SAVE_KEY, JSON.stringify(toStore));
@@ -292,10 +321,39 @@ export default function App() {
     }
   }, []);
 
-  // Keep body.noanim synced with state.set.anim
+  const scheduleSaveLocal = useCallback(() => {
+    if (localSaveTimerRef.current) window.clearTimeout(localSaveTimerRef.current);
+    localSaveTimerRef.current = window.setTimeout(() => {
+      localSaveTimerRef.current = null;
+      try {
+        const toStore = { ...stateRef.current, t: Date.now() };
+        localStorage.setItem(SAVE_KEY, JSON.stringify(toStore));
+      } catch {
+        // Ignore quota issues
+      }
+    }, 300);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (localSaveTimerRef.current) window.clearTimeout(localSaveTimerRef.current);
+      if (cloudSyncTimerRef.current) window.clearTimeout(cloudSyncTimerRef.current);
+      if (syncRetryTimerRef.current) window.clearTimeout(syncRetryTimerRef.current);
+    };
+  }, []);
+
+  // Keep body classes synced with animation preference and modal/gate state
   useEffect(() => {
     document.body.classList.toggle('noanim', !state.set.anim);
   }, [state.set.anim]);
+
+  useEffect(() => {
+    document.body.classList.toggle('modal-open', anyModalOpen);
+  }, [anyModalOpen]);
+
+  useEffect(() => {
+    document.body.classList.toggle('gate-open', gateOpen);
+  }, [gateOpen]);
 
   // Track responsive mobile vs desktop viewport
   useEffect(() => {
@@ -392,12 +450,17 @@ export default function App() {
     async (immediate = false) => {
       const currentUid = uidRef.current;
       if (!currentUid || !cloudReady || kickedRef.current || needsOnboarding) return;
+      if (syncRetryTimerRef.current) {
+        window.clearTimeout(syncRetryTimerRef.current);
+        syncRetryTimerRef.current = null;
+      }
       if (cloudSyncBusyRef.current) {
         cloudDirtyRef.current = true;
         return;
       }
       cloudSyncBusyRef.current = true;
       cloudDirtyRef.current = false;
+      expectedWalletRevRef.current = walletRevRef.current + 1;
       setCloudStatus({ cls: 'warn', text: 'Saving…' });
       try {
         const res = await syncSaveToCloud({
@@ -409,35 +472,67 @@ export default function App() {
           onKicked: handleKicked,
         });
         walletRevRef.current = res.wallet.rev;
+        syncRetryCountRef.current = 0;
+        lastSyncedAtRef.current = Date.now();
         if (!res.accepted) {
-          setState((prev) => ({
-            ...prev,
-            cash: res.wallet.cash,
-            gems: res.wallet.gems,
-            stk: res.wallet.stk,
-          }));
+          setState((prev) => {
+            const next = {
+              ...prev,
+              cash: res.wallet.cash,
+              gems: res.wallet.gems,
+              stk: res.wallet.stk,
+            };
+            saveLocal(next);
+            return next;
+          });
+          cloudDirtyRef.current = true;
+        } else {
+          pendingDirtyRef.current = false;
         }
         setCloudStatus({ cls: 'ok', text: 'Saved' });
       } catch (err) {
-        if ((err as { code?: string })?.code === 'aborted') {
+        const code = (err as { code?: string })?.code || '';
+        const msg = err instanceof Error ? err.message : String(err || '');
+        if (code === 'aborted' && msg.includes('Another session')) {
           setCloudStatus({ cls: 'bad', text: 'Session displaced' });
+        } else if (
+          code === 'aborted' ||
+          code === 'unavailable' ||
+          code === 'deadline-exceeded' ||
+          code === 'internal' ||
+          code === 'cancelled'
+        ) {
+          if (syncRetryCountRef.current < 3) {
+            syncRetryCountRef.current += 1;
+            const backoff = 2000 * Math.pow(2, syncRetryCountRef.current - 1);
+            setCloudStatus({ cls: 'warn', text: 'Retrying…' });
+            syncRetryTimerRef.current = window.setTimeout(() => {
+              syncRetryTimerRef.current = null;
+              void performCloudSync(false);
+            }, backoff);
+          } else {
+            setCloudStatus({ cls: 'bad', text: 'Sync paused' });
+            if (immediate) addToast(formatFirebaseError(err));
+          }
         } else {
           setCloudStatus({ cls: 'bad', text: 'Sync failed' });
           if (immediate) addToast(formatFirebaseError(err));
         }
       } finally {
+        expectedWalletRevRef.current = null;
         cloudSyncBusyRef.current = false;
         if (cloudDirtyRef.current) {
           cloudDirtyRef.current = false;
-          window.setTimeout(() => void performCloudSync(false), 1500);
+          window.setTimeout(() => void performCloudSync(false), 900);
         }
       }
     },
-    [addToast, cloudReady, handleKicked, needsOnboarding],
+    [addToast, cloudReady, handleKicked, needsOnboarding, saveLocal],
   );
 
   const scheduleCloudSync = useCallback(
     (delayMs = 2000) => {
+      pendingDirtyRef.current = true;
       if (!uidRef.current || !cloudReady || kickedRef.current || needsOnboarding) return;
       if (cloudSyncTimerRef.current) window.clearTimeout(cloudSyncTimerRef.current);
       cloudSyncTimerRef.current = window.setTimeout(() => {
@@ -500,8 +595,8 @@ export default function App() {
         }
         working = {
           ...working,
-          cash: working.cash + rw.c,
-          gems: working.gems + rw.g,
+          cash: Math.min(1e13, working.cash + rw.c),
+          gems: Math.min(1e9, working.gems + rw.g),
           stk: nextStk,
           streak: nextStreak,
           lastDaily: now,
@@ -551,7 +646,9 @@ export default function App() {
 
   // Firebase bootstrap & auth listener
   useEffect(() => {
-    void testFirestoreConnection();
+    if (!isFirebaseConfigured || !auth || !db) {
+      return;
+    }
     void getRedirectResult(auth).catch((err) => {
       setAuthMsg(formatFirebaseError(err));
     });
@@ -562,6 +659,8 @@ export default function App() {
       if (!u) {
         serverTimeVerifiedRef.current = false;
         serverOffsetMsRef.current = 0;
+        setServerOffsetMs(0);
+        pendingDirtyRef.current = false;
         setCloudReady(false);
         setNeedsOnboarding(false);
         setPubProfile(null);
@@ -585,10 +684,7 @@ export default function App() {
         const sesSnap = await getDocFromServer(doc(db, 'players', u.uid, 'private', 'session')).catch(() => null);
         if (sesSnap && sesSnap.exists()) {
           const srvMs = timestampToMs(sesSnap.data()?.t);
-          if (srvMs > 0) {
-            serverOffsetMsRef.current = srvMs - Date.now();
-            serverTimeVerifiedRef.current = true;
-          }
+          if (srvMs > 0) updateServerOffset(srvMs);
         }
 
         const pSnap = await getDoc(doc(db, 'players', u.uid));
@@ -630,6 +726,14 @@ export default function App() {
         const tier = tierOfCompletedTrades(pData.stats?.completedTrades);
         completedTradesRef.current = pData.stats?.completedTrades || 0;
         const checked = runDailyAndOfflineChecks(loaded, tier, Date.now() + serverOffsetMsRef.current);
+        if (
+          checked.lastDaily !== loaded.lastDaily ||
+          checked.taxPool !== loaded.taxPool ||
+          checked.questDay !== loaded.questDay ||
+          checked.subPromo !== loaded.subPromo
+        ) {
+          pendingDirtyRef.current = true;
+        }
         setState(checked);
         saveLocal(checked);
         setNeedsOnboarding(false);
@@ -640,7 +744,7 @@ export default function App() {
     });
 
     return () => unsub();
-  }, [addToast, runDailyAndOfflineChecks, saveLocal]);
+  }, [addToast, runDailyAndOfflineChecks, saveLocal, updateServerOffset]);
 
   // Run daily check for offline mode on mount if gate is bypassed
   useEffect(() => {
@@ -653,26 +757,53 @@ export default function App() {
     }
   }, [gateOpen, uid, runDailyAndOfflineChecks, saveLocal]);
 
+  // Trigger initial sync after sign-in if daily/offline rewards updated local state
+  useEffect(() => {
+    if (uid && cloudReady && !needsOnboarding && !kicked && pendingDirtyRef.current) {
+      scheduleCloudSync(800);
+    }
+  }, [uid, cloudReady, needsOnboarding, kicked, scheduleCloudSync]);
+
+  const handleSnapshotError = useCallback(
+    (path: string, err: unknown) => {
+      console.error('Firestore Snapshot Error: ', JSON.stringify(buildFirestoreErrorInfo(err, OperationType.GET, path)));
+      const raw = err instanceof Error ? err.message : String(err || '');
+      const code = (err as { code?: string })?.code || '';
+      if (/permission-denied|Missing or insufficient permissions/i.test(code + raw) && !permWarnShownRef.current) {
+        permWarnShownRef.current = true;
+        addToast(formatFirebaseError(err));
+        setCloudStatus({ cls: 'bad', text: 'Rules / Auth error' });
+      }
+    },
+    [addToast],
+  );
+
   // Realtime Firestore listeners when signed in & onboarded
   useEffect(() => {
     if (!uid || !cloudReady || needsOnboarding || kicked) return;
     const unsubs: Unsubscribe[] = [];
     const queries = buildQueryHelpers();
 
-    // 1. Session lock listener
+    // 1. Session lock listener + continuous clock calibration
     unsubs.push(
       onSnapshot(
         doc(db, 'players', uid, 'private', 'session'),
         (snap) => {
-          if (snap.exists() && snap.data()?.sid && snap.data()?.sid !== sidRef.current) {
+          if (!snap.exists()) return;
+          const d = snap.data();
+          if (d?.sid && d.sid !== sidRef.current) {
             handleKicked();
+            return;
+          }
+          if (!snap.metadata.hasPendingWrites && d?.t) {
+            updateServerOffset(timestampToMs(d.t));
           }
         },
-        () => {},
+        (err) => handleSnapshotError(`players/${uid}/private/session`, err),
       ),
     );
 
-    // 2. Wallet listener (authoritative balance updates from gifts)
+    // 2. Wallet listener (authoritative balance updates from gifts, ignoring self-echoes)
     unsubs.push(
       onSnapshot(
         doc(db, 'players', uid, 'private', 'wallet'),
@@ -681,16 +812,26 @@ export default function App() {
           const w = snap.data();
           const newRev = Number(w.rev) || 0;
           if (newRev > walletRevRef.current) {
+            const isOwnInFlightEcho =
+              cloudSyncBusyRef.current &&
+              w.sid === sidRef.current &&
+              expectedWalletRevRef.current === newRev;
             walletRevRef.current = newRev;
-            setState((prev) => ({
-              ...prev,
-              cash: capValue(w.cash, 1e13),
-              gems: capValue(w.gems, 1e9),
-              stk: cleanStickersMap(w.stk),
-            }));
+            if (!isOwnInFlightEcho) {
+              setState((prev) => {
+                const next = {
+                  ...prev,
+                  cash: capValue(w.cash, 1e13),
+                  gems: capValue(w.gems, 1e9),
+                  stk: cleanStickersMap(w.stk),
+                };
+                saveLocal(next);
+                return next;
+              });
+            }
           }
         },
-        () => {},
+        (err) => handleSnapshotError(`players/${uid}/private/wallet`, err),
       ),
     );
 
@@ -704,7 +845,7 @@ export default function App() {
           completedTradesRef.current = d.stats?.completedTrades || 0;
           setPubProfile({ ...d, id: snap.id, seen: timestampToMs(d.lastSeen) });
         },
-        () => {},
+        (err) => handleSnapshotError(`players/${uid}`, err),
       ),
     );
 
@@ -724,7 +865,10 @@ export default function App() {
           setLeaderboard(rows);
           setLbLoaded(true);
         },
-        () => setLbLoaded(true),
+        (err) => {
+          setLbLoaded(true);
+          handleSnapshotError('players', err);
+        },
       ),
     );
 
@@ -772,7 +916,7 @@ export default function App() {
             });
           }
         },
-        () => {},
+        (err) => handleSnapshotError('trades', err),
       ),
     );
 
@@ -784,7 +928,7 @@ export default function App() {
         (snap) => {
           setSentToday(snap.exists() ? Number(snap.data()?.count || 0) : 0);
         },
-        () => {},
+        (err) => handleSnapshotError(`dailyLimits/${dlKey}`, err),
       ),
     );
 
@@ -809,7 +953,7 @@ export default function App() {
           });
           setNotifications(items);
         },
-        () => {},
+        (err) => handleSnapshotError(`players/${uid}/notifications`, err),
       ),
     );
 
@@ -825,8 +969,7 @@ export default function App() {
                 justCreatedProjIdsRef.current.delete(ch.doc.id);
                 const startMs = timestampToMs(raw.startedAt);
                 if (startMs > 0) {
-                  serverOffsetMsRef.current = startMs - Date.now();
-                  serverTimeVerifiedRef.current = true;
+                  updateServerOffset(startMs);
                   projPrevTickMsRef.current[ch.doc.id] = startMs;
                 }
               } else if (ch.type === 'modified' && raw.lastTickAt) {
@@ -834,8 +977,7 @@ export default function App() {
                 const prevTick = projPrevTickMsRef.current[ch.doc.id] || 0;
                 if (tickMs > prevTick) {
                   projPrevTickMsRef.current[ch.doc.id] = tickMs;
-                  serverOffsetMsRef.current = tickMs - Date.now();
-                  serverTimeVerifiedRef.current = true;
+                  updateServerOffset(tickMs);
                 }
               } else if (raw.lastTickAt) {
                 const tickMs = timestampToMs(raw.lastTickAt);
@@ -865,7 +1007,7 @@ export default function App() {
             setLiveProjectProgress(nextLive);
           }
         },
-        () => {},
+        (err) => handleSnapshotError(`players/${uid}/projects`, err),
       ),
     );
 
@@ -890,7 +1032,7 @@ export default function App() {
             .reverse();
           setGlobalChat(msgs);
         },
-        () => {},
+        (err) => handleSnapshotError('globalChat', err),
       ),
     );
 
@@ -906,7 +1048,7 @@ export default function App() {
       window.clearInterval(hb);
       unsubs.forEach((u) => u());
     };
-  }, [uid, cloudReady, needsOnboarding, kicked, handleKicked]);
+  }, [uid, cloudReady, needsOnboarding, kicked, handleKicked, handleSnapshotError, saveLocal, updateServerOffset]);
 
   // Direct messages listener for active DM recipient
   useEffect(() => {
@@ -935,10 +1077,10 @@ export default function App() {
           .reverse();
         setDmMessages(msgs);
       },
-      () => {},
+      (err) => handleSnapshotError(`dms/${dmRecipient.uid}`, err),
     );
     return () => unsub();
-  }, [uid, cloudReady, dmRecipient]);
+  }, [uid, cloudReady, dmRecipient, handleSnapshotError]);
 
   // Collect recent DM contacts from both incoming DM notifications and initiated DMs
   useEffect(() => {
@@ -1000,8 +1142,8 @@ export default function App() {
         const nextTaxPool =
           inc.net > 0
             ? prevPool >= capPool
-              ? prevPool
-              : Math.min(capPool, prevPool + inc.net)
+              ? Math.min(1e13, prevPool)
+              : Math.min(1e13, Math.min(capPool, prevPool + inc.net))
             : Math.max(0, prevPool + inc.net);
 
         const targHap = targetHappiness(prev);
@@ -1078,7 +1220,7 @@ export default function App() {
         if (nextEv <= 0) {
           nextEv = 150;
           if (passiveEvent?.kind === 'bonus') {
-            nextCash += passiveEvent.amt;
+            nextCash = Math.min(1e13, nextCash + passiveEvent.amt);
           } else if (passiveEvent?.kind === 'fine') {
             nextCash = Math.max(0, nextCash - passiveEvent.amt);
           }
@@ -1189,8 +1331,14 @@ export default function App() {
         }
       }
 
-      // Cloud sync every 12s if signed in
-      if (tickCountRef.current % 12 === 0 && uidRef.current) {
+      // Dirty-aware cloud sync every 24s if signed in
+      if (
+        tickCountRef.current % 24 === 0 &&
+        uidRef.current &&
+        (pendingDirtyRef.current ||
+          (now - lastSyncedAtRef.current >= 24_000 &&
+            (isUserActive || calculateIncome(curSnap, { tradeTier, nowMs: nowSrv }).net !== 0)))
+      ) {
         void performCloudSync(false);
       }
 
@@ -1258,7 +1406,7 @@ export default function App() {
                     setState((s) => {
                       const next = {
                         ...s,
-                        cash: s.cash + cashReward,
+                        cash: Math.min(1e13, s.cash + cashReward),
                         hap: Math.min(100, s.hap + 3),
                         gx: {
                           ...s.gx,
@@ -1280,7 +1428,7 @@ export default function App() {
                     setState((s) => {
                       const next = {
                         ...s,
-                        cash: s.cash + refund,
+                        cash: Math.min(1e13, s.cash + refund),
                         gx: {
                           ...s.gx,
                           log: [`${p.t.n} missed deadline (75% refunded)`, ...s.gx.log].slice(0, 8),
@@ -1329,413 +1477,496 @@ export default function App() {
   );
 
   // Actions
-  const handleCollectTax = (e: React.MouseEvent<HTMLButtonElement>) => {
-    const cur = stateRef.current;
-    const res = calculateTaxCollect(cur, tradeTier, Date.now() + serverOffsetMsRef.current);
-    if (res.collected < 1) {
-      addToast('Tax pool is empty — wait a moment!');
-      return;
-    }
-    const portDrop = rollTradePortExport(cur, res.poolAmount, res.baseNet);
-    playSfx('coin', !!cur.set.sfx);
-    triggerBuzz(14, !!cur.set.vib);
-    setBurstKey((k) => k + 1);
-    const rect = e.currentTarget.getBoundingClientRect();
-    spawnFloat(`+₨ ${formatNumber(res.collected)}`, rect.left + rect.width / 2, rect.top, '#3fe0b0');
+  const handleCollectTax = useCallback(
+    (e: React.MouseEvent<HTMLButtonElement>) => {
+      const cur = stateRef.current;
+      const res = calculateTaxCollect(cur, tradeTier, Date.now() + serverOffsetMsRef.current);
+      if (res.collected < 1) {
+        addToast('Tax pool is empty — wait a moment!');
+        return;
+      }
+      const portDrop = rollTradePortExport(cur, res.poolAmount, res.baseNet);
+      playSfx('coin', !!cur.set.sfx);
+      triggerBuzz(14, !!cur.set.vib);
+      setBurstKey((k) => k + 1);
+      const rect = e.currentTarget.getBoundingClientRect();
+      spawnFloat(`+₨ ${formatNumber(res.collected)}`, rect.left + rect.width / 2, rect.top, '#3fe0b0');
 
-    updateState((prev) => {
-      const nextStk = portDrop.sticker
-        ? { ...prev.stk, [portDrop.sticker.id]: (prev.stk[portDrop.sticker.id] || 0) + 1 }
-        : prev.stk;
-      return {
-        ...prev,
-        cash: prev.cash + res.collected,
-        gems: prev.gems + portDrop.gems,
-        stk: nextStk,
-        taxPool: 0,
-        activeFx: res.bonusApplied ? { ...prev.activeFx, taxSurge: 0 } : prev.activeFx,
-      };
-    }, 1000);
+      updateState((prev) => {
+        const nextStk = portDrop.sticker
+          ? { ...prev.stk, [portDrop.sticker.id]: (prev.stk[portDrop.sticker.id] || 0) + 1 }
+          : prev.stk;
+        return {
+          ...prev,
+          cash: Math.min(1e13, prev.cash + res.collected),
+          gems: Math.min(1e9, prev.gems + portDrop.gems),
+          stk: nextStk,
+          taxPool: 0,
+          activeFx: res.bonusApplied ? { ...prev.activeFx, taxSurge: 0 } : prev.activeFx,
+        };
+      }, 1000);
 
-    if (res.bonusApplied) {
-      addToast(`Tax Surge added +₨ ${formatNumber(res.bonusAmount)}!`);
-    }
-    if (portDrop.gems > 0) {
-      addToast(`Trade Port Export: +${portDrop.gems} Gem!`);
-    } else if (portDrop.sticker) {
-      addToast(`Trade Port Export: ${portDrop.sticker.n} sticker!`);
-    }
-  };
+      if (res.bonusApplied) {
+        addToast(`Tax Surge added +₨ ${formatNumber(res.bonusAmount)}!`);
+      }
+      if (portDrop.gems > 0) {
+        addToast(`Trade Port Export: +${portDrop.gems} Gem!`);
+      } else if (portDrop.sticker) {
+        addToast(`Trade Port Export: ${portDrop.sticker.n} sticker!`);
+      }
+    },
+    [tradeTier, addToast, spawnFloat, updateState],
+  );
 
-  const handleActivateGemBoost = () => {
+  const handleActivateGemBoost = useCallback(() => {
     const cur = stateRef.current;
     if (cur.gems < 5 || cur.boost > 0) return;
     playSfx('buy', !!cur.set.sfx);
     triggerBuzz(18, !!cur.set.vib);
-    updateState((prev) => ({
-      ...prev,
-      gems: prev.gems - 5,
-      boost: 30,
-    }), 1000);
+    updateState(
+      (prev) => ({
+        ...prev,
+        gems: prev.gems - 5,
+        boost: 30,
+      }),
+      1000,
+    );
     addToast('×2 Boost active for 30s!');
-  };
+  }, [addToast, updateState]);
 
-  const handleCityBuildingTap = (clientX?: number, clientY?: number) => {
-    const now = Date.now();
-    if (now - lastCityTapRef.current < 600) return;
-    lastCityTapRef.current = now;
-    const cur = stateRef.current;
-    const inc = calculateIncome(cur, {
-      tradeTier,
-      nowMs: now + serverOffsetMsRef.current,
-      ignoreTempBoosters: true,
-    });
-    const bonus = Math.max(5, Math.floor(Math.max(1, inc.net) * 2));
-    playSfx('tap', !!cur.set.sfx);
-    setBurstKey((k) => k + 1);
-    updateState((prev) => ({ ...prev, cash: prev.cash + bonus }), 3000);
-    spawnFloat(
-      `+₨ ${formatNumber(bonus)}`,
-      clientX ?? window.innerWidth / 2,
-      clientY ?? 260,
-      '#ffc23d',
-    );
-  };
-
-  const handleBuyBuilding = (id: string, qty: 1 | 5, e: React.MouseEvent<HTMLButtonElement>) => {
-    const def = BUILDINGS.find((b) => b.id === id);
-    if (!def) return;
-    const cur = stateRef.current;
-    const nowSrv = Date.now() + serverOffsetMsRef.current;
-    const count = cur.b[id] || 0;
-    const cost = bulkBuildingCost(def, count, qty, getDevelopmentDiscount(cur, nowSrv));
-    if (cur.cash < cost) return;
-
-    playSfx('buy', !!cur.set.sfx);
-    triggerBuzz(15, !!cur.set.vib);
-    setBurstKey((k) => k + 1);
-    const rect = e.currentTarget.getBoundingClientRect();
-    spawnFloat(`${def.n} Lv ${count + qty}`, rect.left + rect.width / 2, rect.top, '#ffc23d');
-
-    updateState((prev) => ({
-      ...prev,
-      cash: prev.cash - cost,
-      b: { ...prev.b, [id]: (prev.b[id] || 0) + qty },
-    }), 1200);
-  };
-
-  const handleFixInfra = (key: string, full: boolean) => {
-    const cur = stateRef.current;
-    const nowSrv = Date.now() + serverOffsetMsRef.current;
-    const cost = gxRepairCost(cur, key, full, nowSrv);
-    if (cur.cash < cost || cost <= 0) return;
-    playSfx('buy', !!cur.set.sfx);
-    updateState((prev) => ({
-      ...prev,
-      cash: prev.cash - cost,
-      gx: {
-        ...prev.gx,
-        cond: {
-          ...prev.gx.cond,
-          [key]: full ? 100 : Math.min(100, (prev.gx.cond[key] ?? 100) + 20),
-        },
-      },
-    }), 1200);
-    addToast('Infrastructure repaired!');
-  };
-
-  const handleUpgradeBuilding = (id: string) => {
-    const cur = stateRef.current;
-    const nowSrv = Date.now() + serverOffsetMsRef.current;
-    const cost = gxUpgradeCost(cur, id, nowSrv);
-    const lvl = cur.gx.lvl[id] || 1;
-    if (cur.cash < cost || cost <= 0 || lvl >= 5) return;
-    playSfx('buy', !!cur.set.sfx);
-    updateState((prev) => ({
-      ...prev,
-      cash: prev.cash - cost,
-      gx: {
-        ...prev.gx,
-        lvl: { ...prev.gx.lvl, [id]: (prev.gx.lvl[id] || 1) + 1 },
-      },
-    }), 1200);
-    addToast('Building upgraded!');
-  };
-
-  const handleUnlockTech = (techId: string, e: React.MouseEvent<HTMLButtonElement>) => {
-    const tDef = TECH_TREE.find((x) => x.id === techId);
-    if (!tDef) return;
-    const res = applyUnlockTech(stateRef.current, techId);
-    if (!res.ok) {
-      if (res.reason) addToast(res.reason);
-      return;
-    }
-    playSfx('win', !!stateRef.current.set.sfx);
-    triggerBuzz(18, !!stateRef.current.set.vib);
-    const rect = e.currentTarget.getBoundingClientRect();
-    spawnFloat(tDef.n, rect.left + rect.width / 2, rect.top, '#a88bff');
-    updateState(() => res.state, 700);
-    addToast(`Researched ${tDef.n}!`);
-  };
-
-  const handleStartProject = async (type: ProjectType) => {
-    if (!uid || projCreatingRef.current) return;
-    const activeCount = projectsRef.current.filter((p) => p.status === 'active').length;
-    if (activeCount >= 3) {
-      addToast('Max 3 active projects at once.');
-      return;
-    }
-    const def = GX_PROJECT_TYPES[type];
-    const stageCost = Math.ceil(def.cost / PROJECT_STAGES);
-    if (stateRef.current.cash < stageCost) {
-      addToast('Not enough cash for Stage 1.');
-      return;
-    }
-    projCreatingRef.current = true;
-    // Deduct optimistically so the same cash cannot be concurrently spent while awaiting Firestore
-    updateState((prev) => ({ ...prev, cash: Math.max(0, prev.cash - stageCost) }), 800);
-    try {
-      await createGovProject(uid, type, (newId) => {
-        justCreatedProjIdsRef.current.add(newId);
-        projStartedLocalAtRef.current[newId] = Date.now();
+  const handleCityBuildingTap = useCallback(
+    (clientX?: number, clientY?: number) => {
+      const now = Date.now();
+      if (now - lastCityTapRef.current < 600) return;
+      lastCityTapRef.current = now;
+      const cur = stateRef.current;
+      const inc = calculateIncome(cur, {
+        tradeTier,
+        nowMs: now + serverOffsetMsRef.current,
+        ignoreTempBoosters: true,
       });
+      const bonus = Math.max(5, Math.floor(Math.max(1, inc.net) * 2));
+      playSfx('tap', !!cur.set.sfx);
+      setBurstKey((k) => k + 1);
+      updateState((prev) => ({ ...prev, cash: Math.min(1e13, prev.cash + bonus) }), 3000);
+      spawnFloat(
+        `+₨ ${formatNumber(bonus)}`,
+        clientX ?? window.innerWidth / 2,
+        clientY ?? 260,
+        '#ffc23d',
+      );
+    },
+    [tradeTier, spawnFloat, updateState],
+  );
+
+  const handleBuyBuilding = useCallback(
+    (id: string, qty: 1 | 5, e: React.MouseEvent<HTMLButtonElement>) => {
+      const def = BUILDINGS.find((b) => b.id === id);
+      if (!def) return;
+      const cur = stateRef.current;
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const count = cur.b[id] || 0;
+      const cost = bulkBuildingCost(def, count, qty, getDevelopmentDiscount(cur, nowSrv));
+      if (cur.cash < cost) return;
+
+      playSfx('buy', !!cur.set.sfx);
+      triggerBuzz(15, !!cur.set.vib);
+      setBurstKey((k) => k + 1);
+      const rect = e.currentTarget.getBoundingClientRect();
+      spawnFloat(`${def.n} Lv ${count + qty}`, rect.left + rect.width / 2, rect.top, '#ffc23d');
+
+      updateState(
+        (prev) => ({
+          ...prev,
+          cash: Math.max(0, prev.cash - cost),
+          b: { ...prev.b, [id]: (prev.b[id] || 0) + qty },
+        }),
+        1200,
+      );
+    },
+    [spawnFloat, updateState],
+  );
+
+  const handleFixInfra = useCallback(
+    (key: string, full: boolean) => {
+      const cur = stateRef.current;
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const cost = gxRepairCost(cur, key, full, nowSrv);
+      if (cur.cash < cost || cost <= 0) return;
+      playSfx('buy', !!cur.set.sfx);
+      updateState(
+        (prev) => ({
+          ...prev,
+          cash: Math.max(0, prev.cash - cost),
+          gx: {
+            ...prev.gx,
+            cond: {
+              ...prev.gx.cond,
+              [key]: full ? 100 : Math.min(100, (prev.gx.cond[key] ?? 100) + 20),
+            },
+          },
+        }),
+        1200,
+      );
+      addToast('Infrastructure repaired!');
+    },
+    [addToast, updateState],
+  );
+
+  const handleUpgradeBuilding = useCallback(
+    (id: string) => {
+      const cur = stateRef.current;
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const cost = gxUpgradeCost(cur, id, nowSrv);
+      const lvl = cur.gx.lvl[id] || 1;
+      if (cur.cash < cost || cost <= 0 || lvl >= 5) return;
+      playSfx('buy', !!cur.set.sfx);
+      updateState(
+        (prev) => ({
+          ...prev,
+          cash: Math.max(0, prev.cash - cost),
+          gx: {
+            ...prev.gx,
+            lvl: { ...prev.gx.lvl, [id]: (prev.gx.lvl[id] || 1) + 1 },
+          },
+        }),
+        1200,
+      );
+      addToast('Building upgraded!');
+    },
+    [addToast, updateState],
+  );
+
+  const handleUnlockTech = useCallback(
+    (techId: string, e: React.MouseEvent<HTMLButtonElement>) => {
+      const tDef = TECH_TREE.find((x) => x.id === techId);
+      if (!tDef) return;
+      const res = applyUnlockTech(stateRef.current, techId);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      playSfx('win', !!stateRef.current.set.sfx);
+      triggerBuzz(18, !!stateRef.current.set.vib);
+      const rect = e.currentTarget.getBoundingClientRect();
+      spawnFloat(tDef.n, rect.left + rect.width / 2, rect.top, '#a88bff');
+      updateState(() => res.state, 700);
+      addToast(`Researched ${tDef.n}!`);
+    },
+    [addToast, spawnFloat, updateState],
+  );
+
+  const handleStartProject = useCallback(
+    async (type: ProjectType) => {
+      const currentUid = uidRef.current;
+      if (!currentUid || projCreatingRef.current) return;
+      const activeCount = projectsRef.current.filter((p) => p.status === 'active').length;
+      if (activeCount >= 3) {
+        addToast('Max 3 active projects at once.');
+        return;
+      }
+      const def = GX_PROJECT_TYPES[type];
+      const stageCost = Math.ceil(def.cost / PROJECT_STAGES);
+      if (stateRef.current.cash < stageCost) {
+        addToast('Not enough cash for Stage 1.');
+        return;
+      }
+      projCreatingRef.current = true;
+      // Deduct optimistically so the same cash cannot be concurrently spent while awaiting Firestore
+      updateState((prev) => ({ ...prev, cash: Math.max(0, prev.cash - stageCost) }), 800);
+      try {
+        await createGovProject(currentUid, type, (newId) => {
+          justCreatedProjIdsRef.current.add(newId);
+          projStartedLocalAtRef.current[newId] = Date.now();
+        });
+        playSfx('buy', !!stateRef.current.set.sfx);
+        addToast(`Started ${def.n}!`);
+      } catch (err) {
+        updateState((prev) => ({ ...prev, cash: Math.min(1e13, prev.cash + stageCost) }), 500);
+        addToast(formatFirebaseError(err));
+      } finally {
+        projCreatingRef.current = false;
+      }
+    },
+    [addToast, updateState],
+  );
+
+  const handlePayProjectStage = useCallback(
+    async (projectId: string) => {
+      const currentUid = uidRef.current;
+      if (!currentUid || projPayBusyRef.current.has(projectId)) return;
+      const proj = projectsRef.current.find((p) => p.id === projectId);
+      if (!proj || proj.status !== 'active' || proj.paid >= PROJECT_STAGES) return;
+      const stageCost = Math.ceil(proj.t.cost / PROJECT_STAGES);
+      if (stateRef.current.cash < stageCost) {
+        addToast('Not enough cash for next stage.');
+        return;
+      }
+      projPayBusyRef.current.add(projectId);
+      updateState((prev) => ({ ...prev, cash: Math.max(0, prev.cash - stageCost) }), 800);
+      try {
+        await payGovProjectStage(currentUid, projectId, proj.paid);
+        playSfx('buy', !!stateRef.current.set.sfx);
+        addToast(`Paid stage ${proj.paid + 1}/${PROJECT_STAGES}`);
+      } catch (err) {
+        updateState((prev) => ({ ...prev, cash: Math.min(1e13, prev.cash + stageCost) }), 500);
+        addToast(formatFirebaseError(err));
+      } finally {
+        projPayBusyRef.current.delete(projectId);
+      }
+    },
+    [addToast, updateState],
+  );
+
+  const handlePolicyChange = useCallback(
+    (key: keyof GameState, value: number) => {
+      const bounds = POLICY_BOUNDS[key as string];
+      if (!bounds || !Number.isFinite(value)) return;
+      const clamped = Math.round(Math.max(bounds[0], Math.min(bounds[1], value)));
+      setState((prev) => {
+        if (prev[key] === clamped) return prev;
+        return { ...prev, [key]: clamped };
+      });
+      scheduleSaveLocal();
+      scheduleCloudSync(2200);
+    },
+    [scheduleSaveLocal, scheduleCloudSync],
+  );
+
+  const handleApplyPreset = useCallback(
+    (presetId: 'balanced' | 'revenue' | 'welfare') => {
       playSfx('buy', !!stateRef.current.set.sfx);
-      addToast(`Started ${def.n}!`);
-    } catch (err) {
-      updateState((prev) => ({ ...prev, cash: prev.cash + stageCost }), 500);
-      addToast(formatFirebaseError(err));
-    } finally {
-      projCreatingRef.current = false;
-    }
-  };
+      updateState((prev) => applyPolicyPreset(prev, presetId), 1200);
+      const label = presetId === 'balanced' ? 'Balanced Growth' : presetId === 'revenue' ? 'High Revenue' : 'Citizen Bliss';
+      addToast(`Policy preset applied: ${label}`);
+    },
+    [addToast, updateState],
+  );
 
-  const handlePayProjectStage = async (projectId: string) => {
-    if (!uid || projPayBusyRef.current.has(projectId)) return;
-    const proj = projectsRef.current.find((p) => p.id === projectId);
-    if (!proj || proj.status !== 'active' || proj.paid >= PROJECT_STAGES) return;
-    const stageCost = Math.ceil(proj.t.cost / PROJECT_STAGES);
-    if (stateRef.current.cash < stageCost) {
-      addToast('Not enough cash for next stage.');
-      return;
-    }
-    projPayBusyRef.current.add(projectId);
-    updateState((prev) => ({ ...prev, cash: Math.max(0, prev.cash - stageCost) }), 800);
-    try {
-      await payGovProjectStage(uid, projectId, proj.paid);
+  const handleChangeGov = useCallback(
+    (govId: string) => {
+      const g = GOVS.find((x) => x.id === govId);
+      if (!g) return;
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const cur = stateRef.current;
+      if (cur.gov === govId || (cur.govT || 0) + GOV_CHANGE_CD_MS > nowSrv || cur.cash < g.cost) {
+        return;
+      }
+      playSfx('win', !!cur.set.sfx);
+      updateState(
+        (prev) => ({
+          ...prev,
+          cash: Math.max(0, prev.cash - g.cost),
+          gov: govId,
+          govT: nowSrv,
+        }),
+        1000,
+      );
+      addToast(`Switched government to ${g.n}!`);
+    },
+    [addToast, updateState],
+  );
+
+  const handleFuseSticker = useCallback(
+    (stickerId: string) => {
+      const res = fuseSticker(stateRef.current, stickerId);
+      if (!res.ok || !res.granted) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      playSfx('win', !!stateRef.current.set.sfx);
+      triggerBuzz(20, !!stateRef.current.set.vib);
+      updateState(() => res.state, 1000);
+      setDialog({
+        title: 'Sticker Fused!',
+        body: (
+          <div className="stkcard big">
+            <StickerArt id={res.granted.id} size={40} />
+            <span className="stk-n">{res.granted.n}</span>
+            <span className="stk-r" style={{ color: '#ffc93c' }}>
+              {'★'.repeat(res.granted.r)}
+            </span>
+          </div>
+        ),
+        actions: [{ label: 'Awesome', variant: 'gold', onClick: () => setDialog(null) }],
+      });
+    },
+    [addToast, updateState],
+  );
+
+  const handleBuyStickerCrate = useCallback(
+    (kind: 'cash' | 'gems', e: React.MouseEvent<HTMLButtonElement>) => {
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const res = buyStickerCrate(stateRef.current, kind, nowSrv);
+      if (!res.ok || res.granted.length === 0) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      playSfx('win', !!stateRef.current.set.sfx);
+      triggerBuzz(18, !!stateRef.current.set.vib);
+      const rect = e.currentTarget.getBoundingClientRect();
+      spawnFloat(`+${res.granted.length} Sticker`, rect.left + rect.width / 2, rect.top, '#ffc23d');
+      updateState(() => res.state, 800);
+      setDialog({
+        title: kind === 'gems' ? 'Royal Crate Opened!' : 'Standard Crate Opened!',
+        body: (
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+            {res.granted.map((st, idx) => (
+              <div key={`${st.id}_${idx}`} className="stkcard" style={{ minWidth: 120 }}>
+                <StickerArt id={st.id} size={36} />
+                <span className="stk-n">{st.n}</span>
+                <span className="stk-r" style={{ color: '#ffc93c' }}>
+                  {'★'.repeat(st.r)}
+                </span>
+              </div>
+            ))}
+          </div>
+        ),
+        actions: [{ label: 'Collect', variant: 'gold', onClick: () => setDialog(null) }],
+      });
+    },
+    [addToast, spawnFloat, updateState],
+  );
+
+  const handleClaimQuest = useCallback(
+    (questId: string, _rewardGems: number, e: React.MouseEvent<HTMLButtonElement>) => {
+      const cur = stateRef.current;
+      if (cur.claimed?.[questId]) return;
+      const today = dayKeyFor(Date.now() + serverOffsetMsRef.current);
+      const activeIds =
+        cur.questIds?.length === 3 && cur.questDay === today ? cur.questIds : selectDailyQuestIds(today);
+      const qIndex = QUEST_POOL.findIndex((q) => q.id === questId);
+      if (qIndex < 0 || !activeIds.includes(qIndex)) return;
+      const q = QUEST_POOL[qIndex];
+      if (q.f(cur, { rank: rankPositionRef.current }) < q.g) return;
+
+      const verifiedGems = q.r;
+      playSfx('win', !!cur.set.sfx);
+      triggerBuzz(16, !!cur.set.vib);
+      const rect = e.currentTarget.getBoundingClientRect();
+      spawnFloat(`+${verifiedGems} Gems`, rect.left + rect.width / 2, rect.top, '#5ccbff');
+      updateState(
+        (prev) => ({
+          ...prev,
+          gems: Math.min(1e9, prev.gems + verifiedGems),
+          claimed: { ...prev.claimed, [questId]: 1 },
+        }),
+        1000,
+      );
+    },
+    [spawnFloat, updateState],
+  );
+
+  const handleClaimMilestone = useCallback(
+    (milestoneId: string, e: React.MouseEvent<HTMLButtonElement>) => {
+      const res = claimMilestone(stateRef.current, milestoneId);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      playSfx('win', !!stateRef.current.set.sfx);
+      triggerBuzz(18, !!stateRef.current.set.vib);
+      const rect = e.currentTarget.getBoundingClientRect();
+      spawnFloat(`+${res.gemsAdded} Gems`, rect.left + rect.width / 2, rect.top, '#5ccbff');
+      updateState(() => res.state, 800);
+      addToast(`Milestone completed! +${res.gemsAdded} Gems`);
+    },
+    [addToast, spawnFloat, updateState],
+  );
+
+  const handleBuyRank = useCallback(
+    (rankId: number, e: React.MouseEvent<HTMLButtonElement>) => {
+      const res = applyBuyRank(stateRef.current, rankId);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      const rk = RANKS[rankId];
+      playSfx('win', !!stateRef.current.set.sfx);
+      triggerBuzz(20, !!stateRef.current.set.vib);
+      const rect = e.currentTarget.getBoundingClientRect();
+      spawnFloat(rk.n, rect.left + rect.width / 2, rect.top, '#ffc23d');
+      updateState(() => res.state, 800);
+      addToast(`Promoted to ${rk.n}!`);
+    },
+    [addToast, spawnFloat, updateState],
+  );
+
+  const handleBuySubscription = useCallback(
+    (tierId: SubscriptionTierId, e: React.MouseEvent<HTMLButtonElement>) => {
+      const subDef = SUBSCRIPTIONS.find((x) => x.id === tierId);
+      if (!subDef) return;
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const res = applyBuySubscription(stateRef.current, subDef, nowSrv);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      playSfx('win', !!stateRef.current.set.sfx);
+      triggerBuzz(20, !!stateRef.current.set.vib);
+      const rect = e.currentTarget.getBoundingClientRect();
+      spawnFloat(subDef.n, rect.left + rect.width / 2, rect.top, '#ffc23d');
+      updateState(() => res.state, 600);
+      if (res.paidCost && res.paidCost < subDef.cost) {
+        addToast(`${subDef.n} activated for ₨ ${formatNumber(res.paidCost)} (Weekly Deal)!`);
+      } else {
+        addToast(`${subDef.n} activated!`);
+      }
+    },
+    [addToast, spawnFloat, updateState],
+  );
+
+  const handleClaimSubDaily = useCallback(
+    (e: React.MouseEvent<HTMLButtonElement>) => {
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const today = dayKeyFor(nowSrv);
+      const res = claimSubscriptionDaily(stateRef.current, today, nowSrv);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      playSfx('coin', !!stateRef.current.set.sfx);
+      triggerBuzz(16, !!stateRef.current.set.vib);
+      const rect = e.currentTarget.getBoundingClientRect();
+      spawnFloat(
+        `+₨ ${formatNumber(res.cashAdded)}${res.gemsAdded > 0 ? ` +${res.gemsAdded} Gems` : ''}`,
+        rect.left + rect.width / 2,
+        rect.top,
+        '#3fe0b0',
+      );
+      updateState(() => res.state, 600);
+      addToast(
+        `Subscription stipend: +₨ ${formatNumber(res.cashAdded)}${res.gemsAdded > 0 ? ` + ${res.gemsAdded} Gems` : ''}`,
+      );
+    },
+    [addToast, spawnFloat, updateState],
+  );
+
+  const handleBuyBooster = useCallback(
+    (boosterId: string, e: React.MouseEvent<HTMLButtonElement>) => {
+      const b = BOOSTERS.find((x) => x.id === boosterId);
+      if (!b) return;
+      const res = applyBuyBooster(stateRef.current, b, Date.now() + serverOffsetMsRef.current);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
       playSfx('buy', !!stateRef.current.set.sfx);
-      addToast(`Paid stage ${proj.paid + 1}/${PROJECT_STAGES}`);
-    } catch (err) {
-      updateState((prev) => ({ ...prev, cash: prev.cash + stageCost }), 500);
-      addToast(formatFirebaseError(err));
-    } finally {
-      projPayBusyRef.current.delete(projectId);
-    }
-  };
-
-  const handlePolicyChange = (key: keyof GameState, value: number) => {
-    const bounds = POLICY_BOUNDS[key as string];
-    if (!bounds || !Number.isFinite(value)) return;
-    const clamped = Math.round(Math.max(bounds[0], Math.min(bounds[1], value)));
-    updateState((prev) => ({ ...prev, [key]: clamped }), 2200);
-  };
-
-  const handleApplyPreset = (presetId: 'balanced' | 'revenue' | 'welfare') => {
-    playSfx('buy', !!stateRef.current.set.sfx);
-    updateState((prev) => applyPolicyPreset(prev, presetId), 1200);
-    const label = presetId === 'balanced' ? 'Balanced Growth' : presetId === 'revenue' ? 'High Revenue' : 'Citizen Bliss';
-    addToast(`Policy preset applied: ${label}`);
-  };
-
-  const handleChangeGov = (govId: string) => {
-    const g = GOVS.find((x) => x.id === govId);
-    if (!g) return;
-    const nowSrv = Date.now() + serverOffsetMsRef.current;
-    const cur = stateRef.current;
-    if (cur.gov === govId || (cur.govT || 0) + GOV_CHANGE_CD_MS > nowSrv || cur.cash < g.cost) {
-      return;
-    }
-    playSfx('win', !!cur.set.sfx);
-    updateState((prev) => ({
-      ...prev,
-      cash: prev.cash - g.cost,
-      gov: govId,
-      govT: nowSrv,
-    }), 1000);
-    addToast(`Switched government to ${g.n}!`);
-  };
-
-  const handleFuseSticker = (stickerId: string) => {
-    const res = fuseSticker(stateRef.current, stickerId);
-    if (!res.ok || !res.granted) {
-      if (res.reason) addToast(res.reason);
-      return;
-    }
-    playSfx('win', !!stateRef.current.set.sfx);
-    triggerBuzz(20, !!stateRef.current.set.vib);
-    updateState(() => res.state, 1000);
-    setDialog({
-      title: 'Sticker Fused!',
-      body: (
-        <div className="stkcard big">
-          <StickerArt id={res.granted.id} size={40} />
-          <span className="stk-n">{res.granted.n}</span>
-          <span className="stk-r" style={{ color: '#ffc93c' }}>
-            {'★'.repeat(res.granted.r)}
-          </span>
-        </div>
-      ),
-      actions: [{ label: 'Awesome', variant: 'gold', onClick: () => setDialog(null) }],
-    });
-  };
-
-  const handleBuyStickerCrate = (kind: 'cash' | 'gems', e: React.MouseEvent<HTMLButtonElement>) => {
-    const nowSrv = Date.now() + serverOffsetMsRef.current;
-    const res = buyStickerCrate(stateRef.current, kind, nowSrv);
-    if (!res.ok || res.granted.length === 0) {
-      if (res.reason) addToast(res.reason);
-      return;
-    }
-    playSfx('win', !!stateRef.current.set.sfx);
-    triggerBuzz(18, !!stateRef.current.set.vib);
-    const rect = e.currentTarget.getBoundingClientRect();
-    spawnFloat(`+${res.granted.length} Sticker`, rect.left + rect.width / 2, rect.top, '#ffc23d');
-    updateState(() => res.state, 800);
-    setDialog({
-      title: kind === 'gems' ? 'Royal Crate Opened!' : 'Standard Crate Opened!',
-      body: (
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-          {res.granted.map((st, idx) => (
-            <div key={`${st.id}_${idx}`} className="stkcard" style={{ minWidth: 120 }}>
-              <StickerArt id={st.id} size={36} />
-              <span className="stk-n">{st.n}</span>
-              <span className="stk-r" style={{ color: '#ffc93c' }}>
-                {'★'.repeat(st.r)}
-              </span>
-            </div>
-          ))}
-        </div>
-      ),
-      actions: [{ label: 'Collect', variant: 'gold', onClick: () => setDialog(null) }],
-    });
-  };
-
-  const handleClaimQuest = (
-    questId: string,
-    _rewardGems: number,
-    e: React.MouseEvent<HTMLButtonElement>,
-  ) => {
-    const cur = stateRef.current;
-    if (cur.claimed?.[questId]) return;
-    const today = dayKeyFor(Date.now() + serverOffsetMsRef.current);
-    const activeIds = cur.questIds?.length === 3 && cur.questDay === today ? cur.questIds : selectDailyQuestIds(today);
-    const qIndex = QUEST_POOL.findIndex((q) => q.id === questId);
-    if (qIndex < 0 || !activeIds.includes(qIndex)) return;
-    const q = QUEST_POOL[qIndex];
-    if (q.f(cur, { rank: rankPositionRef.current }) < q.g) return;
-
-    const verifiedGems = q.r;
-    playSfx('win', !!cur.set.sfx);
-    triggerBuzz(16, !!cur.set.vib);
-    const rect = e.currentTarget.getBoundingClientRect();
-    spawnFloat(`+${verifiedGems} Gems`, rect.left + rect.width / 2, rect.top, '#5ccbff');
-    updateState((prev) => ({
-      ...prev,
-      gems: prev.gems + verifiedGems,
-      claimed: { ...prev.claimed, [questId]: 1 },
-    }), 1000);
-  };
-
-  const handleClaimMilestone = (milestoneId: string, e: React.MouseEvent<HTMLButtonElement>) => {
-    const res = claimMilestone(stateRef.current, milestoneId);
-    if (!res.ok) {
-      if (res.reason) addToast(res.reason);
-      return;
-    }
-    playSfx('win', !!stateRef.current.set.sfx);
-    triggerBuzz(18, !!stateRef.current.set.vib);
-    const rect = e.currentTarget.getBoundingClientRect();
-    spawnFloat(`+${res.gemsAdded} Gems`, rect.left + rect.width / 2, rect.top, '#5ccbff');
-    updateState(() => res.state, 800);
-    addToast(`Milestone completed! +${res.gemsAdded} Gems`);
-  };
-
-  const handleBuyRank = (rankId: number, e: React.MouseEvent<HTMLButtonElement>) => {
-    const res = applyBuyRank(stateRef.current, rankId);
-    if (!res.ok) {
-      if (res.reason) addToast(res.reason);
-      return;
-    }
-    const rk = RANKS[rankId];
-    playSfx('win', !!stateRef.current.set.sfx);
-    triggerBuzz(20, !!stateRef.current.set.vib);
-    const rect = e.currentTarget.getBoundingClientRect();
-    spawnFloat(rk.n, rect.left + rect.width / 2, rect.top, '#ffc23d');
-    updateState(() => res.state, 800);
-    addToast(`Promoted to ${rk.n}!`);
-  };
-
-  const handleBuySubscription = (tierId: SubscriptionTierId, e: React.MouseEvent<HTMLButtonElement>) => {
-    const subDef = SUBSCRIPTIONS.find((x) => x.id === tierId);
-    if (!subDef) return;
-    const nowSrv = Date.now() + serverOffsetMsRef.current;
-    const res = applyBuySubscription(stateRef.current, subDef, nowSrv);
-    if (!res.ok) {
-      if (res.reason) addToast(res.reason);
-      return;
-    }
-    playSfx('win', !!stateRef.current.set.sfx);
-    triggerBuzz(20, !!stateRef.current.set.vib);
-    const rect = e.currentTarget.getBoundingClientRect();
-    spawnFloat(subDef.n, rect.left + rect.width / 2, rect.top, '#ffc23d');
-    updateState(() => res.state, 600);
-    if (res.paidCost && res.paidCost < subDef.cost) {
-      addToast(`${subDef.n} activated for ₨ ${formatNumber(res.paidCost)} (Weekly Deal)!`);
-    } else {
-      addToast(`${subDef.n} activated!`);
-    }
-  };
-
-  const handleClaimSubDaily = (e: React.MouseEvent<HTMLButtonElement>) => {
-    const nowSrv = Date.now() + serverOffsetMsRef.current;
-    const today = dayKeyFor(nowSrv);
-    const res = claimSubscriptionDaily(stateRef.current, today, nowSrv);
-    if (!res.ok) {
-      if (res.reason) addToast(res.reason);
-      return;
-    }
-    playSfx('coin', !!stateRef.current.set.sfx);
-    triggerBuzz(16, !!stateRef.current.set.vib);
-    const rect = e.currentTarget.getBoundingClientRect();
-    spawnFloat(
-      `+₨ ${formatNumber(res.cashAdded)}${res.gemsAdded > 0 ? ` +${res.gemsAdded} Gems` : ''}`,
-      rect.left + rect.width / 2,
-      rect.top,
-      '#3fe0b0',
-    );
-    updateState(() => res.state, 600);
-    addToast(
-      `Subscription stipend: +₨ ${formatNumber(res.cashAdded)}${res.gemsAdded > 0 ? ` + ${res.gemsAdded} Gems` : ''}`,
-    );
-  };
-
-  const handleBuyBooster = (boosterId: string, e: React.MouseEvent<HTMLButtonElement>) => {
-    const b = BOOSTERS.find((x) => x.id === boosterId);
-    if (!b) return;
-    const res = applyBuyBooster(stateRef.current, b, Date.now() + serverOffsetMsRef.current);
-    if (!res.ok) {
-      if (res.reason) addToast(res.reason);
-      return;
-    }
-    playSfx('buy', !!stateRef.current.set.sfx);
-    triggerBuzz(16, !!stateRef.current.set.vib);
-    const rect = e.currentTarget.getBoundingClientRect();
-    spawnFloat(b.n, rect.left + rect.width / 2, rect.top, '#3fe0b0');
-    updateState(() => res.state, 800);
-    addToast(`${b.n} activated!`);
-  };
+      triggerBuzz(16, !!stateRef.current.set.vib);
+      const rect = e.currentTarget.getBoundingClientRect();
+      spawnFloat(b.n, rect.left + rect.width / 2, rect.top, '#3fe0b0');
+      updateState(() => res.state, 800);
+      addToast(`${b.n} activated!`);
+    },
+    [addToast, spawnFloat, updateState],
+  );
 
   // Auth handlers
-  const handleGoogleLogin = async () => {
+  const handleGoogleLogin = useCallback(async () => {
+    if (!isFirebaseConfigured || !auth) {
+      setAuthMsg('Cloud sign-in is not configured. Play offline or configure Firebase env vars.');
+      return;
+    }
     setAuthMsg('Signing in with Google…');
     try {
       await signInWithPopup(auth, new GoogleAuthProvider());
@@ -1747,9 +1978,13 @@ export default function App() {
         setAuthMsg(formatFirebaseError(err));
       }
     }
-  };
+  }, []);
 
-  const handleEmailAuth = async (email: string, password: string, register: boolean) => {
+  const handleEmailAuth = useCallback(async (email: string, password: string, register: boolean) => {
+    if (!isFirebaseConfigured || !auth) {
+      setAuthMsg('Cloud sign-in is not configured. Play offline or configure Firebase env vars.');
+      return;
+    }
     if (!email.trim() || password.length < 6) {
       setAuthMsg('Enter a valid email and password (min 6 chars).');
       return;
@@ -1764,16 +1999,18 @@ export default function App() {
     } catch (err) {
       setAuthMsg(formatFirebaseError(err));
     }
-  };
+  }, []);
 
-  const handleSignOut = async () => {
-    await signOut(auth);
+  const handleSignOut = useCallback(async () => {
+    if (auth) {
+      await signOut(auth);
+    }
     setProfileView(null);
     setSettingsOpen(false);
     addToast('Signed out — switched to offline mode');
-  };
+  }, [addToast]);
 
-  const handleResetGame = () => {
+  const handleResetGame = useCallback(() => {
     setDialog({
       title: 'Start New Game?',
       body: <p>This will reset your local offline nation progress back to ₨ 260. This cannot be undone.</p>,
@@ -1793,7 +2030,7 @@ export default function App() {
         { label: 'Cancel', onClick: () => setDialog(null) },
       ],
     });
-  };
+  }, [addToast, saveLocal]);
 
   const rankPosition = useMemo(() => {
     if (uid && lbLoaded && leaderboard.length > 0) {
@@ -1804,26 +2041,42 @@ export default function App() {
   rankPositionRef.current = rankPosition;
 
   const currentSecond = Math.floor(state.t / 1000);
+  const hasPendingGifts = useMemo(
+    () => Boolean(uid && trades.some((t) => t.status === 'pending')),
+    [uid, trades],
+  );
+  const activeGiftsSecond = hasPendingGifts ? currentSecond : 0;
+  const giftsNowSrvMs = useMemo(
+    () => (activeGiftsSecond > 0 ? activeGiftsSecond * 1000 : Date.now()) + serverOffsetMs,
+    [activeGiftsSecond, serverOffsetMs],
+  );
+
+  const hasPendingIncomingGifts = useMemo(
+    () => Boolean(uid && trades.some((t) => t.to === uid && t.status === 'pending')),
+    [uid, trades],
+  );
+  const activeIncomingSecond = hasPendingIncomingGifts ? currentSecond : 0;
   const pendingIncomingGifts = useMemo(() => {
-    if (!uid) return 0;
-    const nowSrv = currentSecond * 1000 + serverOffsetMsRef.current;
+    if (!uid || !hasPendingIncomingGifts) return 0;
+    const nowSrv = activeIncomingSecond * 1000 + serverOffsetMs;
     return trades.filter((t) => t.to === uid && t.status === 'pending' && t.expMs > nowSrv).length;
-  }, [uid, trades, currentSecond]);
+  }, [uid, hasPendingIncomingGifts, trades, activeIncomingSecond, serverOffsetMs]);
 
   const unreadNotifs = useMemo(
     () => notifications.filter((n) => !n.read).length,
     [notifications],
   );
 
-  const openOwnProfile = () => {
+  const openOwnProfile = useCallback(() => {
+    const cur = stateRef.current;
     const nowSrv = Date.now() + serverOffsetMsRef.current;
-    const activeSub = getActiveSubscription(state, nowSrv);
+    const activeSub = getActiveSubscription(cur, nowSrv);
     const liveSubTier = activeSub ? activeSub.def.id : '';
     const liveSubExp = activeSub ? activeSub.exp : 0;
 
-    if (uid && pubProfile) {
+    if (uidRef.current && pubProfileRef.current) {
       setProfileView({
-        ...pubProfile,
+        ...pubProfileRef.current,
         subTier: liveSubTier,
         subExp: liveSubExp,
       });
@@ -1832,17 +2085,17 @@ export default function App() {
         id: 'offline',
         username: 'Offline Leader',
         usernameLower: 'offline',
-        countryCode: state.country[0],
-        countryName: state.country[1],
-        gdp: calculateGdp(state),
-        cash: state.cash,
-        gems: state.gems,
-        level: playerLevel(state),
-        rank: state.rank,
+        countryCode: cur.country[0],
+        countryName: cur.country[1],
+        gdp: calculateGdp(cur),
+        cash: cur.cash,
+        gems: cur.gems,
+        level: playerLevel(cur),
+        rank: cur.rank,
         subTier: liveSubTier,
         subExp: liveSubExp,
         stats: {
-          buildings: Object.values(state.b).reduce((a, b) => a + b, 0),
+          buildings: Object.values(cur.b).reduce((a, b) => a + b, 0),
           completedTrades: 0,
           tradesSent: 0,
           tradesReceived: 0,
@@ -1851,37 +2104,197 @@ export default function App() {
         },
       });
     }
-  };
+  }, []);
 
-  const openPlayerProfile = async (targetUid: string) => {
-    const cached = leaderboard.find((p) => p.id === targetUid);
-    if (cached) {
-      setProfileView(cached);
-      return;
+  const leaderboardRef = useRef<PlayerProfile[]>([]);
+  leaderboardRef.current = leaderboard;
+
+  const openPlayerProfile = useCallback(
+    async (targetUid: string) => {
+      const cached = leaderboardRef.current.find((p) => p.id === targetUid);
+      if (cached) {
+        setProfileView(cached);
+        return;
+      }
+      try {
+        const p = await fetchPlayerProfile(targetUid);
+        if (p) setProfileView(p);
+        else addToast('Player profile not found.');
+      } catch (err) {
+        addToast(formatFirebaseError(err));
+      }
+    },
+    [addToast],
+  );
+
+  const openGiftComposer = useCallback(
+    async (targetUid: string) => {
+      let target = leaderboardRef.current.find((p) => p.id === targetUid) || null;
+      if (!target) {
+        target = await fetchPlayerProfile(targetUid).catch(() => null);
+      }
+      if (!target) {
+        addToast('Could not load recipient.');
+        return;
+      }
+      setGiftModal({ mode: 'compose', target, trade: null });
+    },
+    [addToast],
+  );
+
+  const handleSelectCountry = useCallback(
+    (c: CountryTuple) => updateState((prev) => ({ ...prev, country: c }), 0),
+    [updateState],
+  );
+  const handlePlayOffline = useCallback(() => setGateOpen(false), []);
+  const handleOpenLoginGate = useCallback(() => setGateOpen(true), []);
+  const handleOpenSettings = useCallback(() => setSettingsOpen(true), []);
+  const handleCloseSettings = useCallback(() => setSettingsOpen(false), []);
+  const handleCloseNotifs = useCallback(() => setNotifsOpen(false), []);
+  const handleCloseProfile = useCallback(() => setProfileView(null), []);
+  const handleCloseGiftModal = useCallback(() => setGiftModal(null), []);
+  const handleCloseDialog = useCallback(() => setDialog(null), []);
+  const handleOpenAuth = useCallback(() => {
+    if (uidRef.current) {
+      openOwnProfile();
+    } else {
+      setGateOpen(true);
     }
+  }, [openOwnProfile]);
+  const handleOpenNotifications = useCallback(() => {
+    setNotifsOpen(true);
+    const currentUid = uidRef.current;
+    if (currentUid) {
+      const unreadIds = notifications.filter((n) => !n.read).map((n) => n.id);
+      if (unreadIds.length) void markNotificationsRead(currentUid, unreadIds).catch(() => {});
+    }
+  }, [notifications]);
+  const handleSaveCloudNow = useCallback(() => void performCloudSync(true), [performCloudSync]);
+  const handleStartProjectCb = useCallback(
+    (type: ProjectType) => void handleStartProject(type),
+    [handleStartProject],
+  );
+  const handlePayProjectStageCb = useCallback(
+    (pid: string) => void handlePayProjectStage(pid),
+    [handlePayProjectStage],
+  );
+  const handleOpenPlayerProfileCb = useCallback(
+    (targetUid: string) => void openPlayerProfile(targetUid),
+    [openPlayerProfile],
+  );
+  const handleStartGiftCb = useCallback(
+    (targetUid: string) => void openGiftComposer(targetUid),
+    [openGiftComposer],
+  );
+  const handleOpenDm = useCallback((targetUid: string, name: string, cc: string) => {
+    const rec = { uid: targetUid, name, cc };
+    setSentDmContacts((prev) => (prev.some((x) => x.uid === targetUid) ? prev : [rec, ...prev]));
+    setDmRecipient(rec);
+    setPlayersSubTab('dm');
+  }, []);
+  const handleBackDm = useCallback(() => setDmRecipient(null), []);
+  const handleSendGlobalChat = useCallback(
+    async (text: string) => {
+      const currentUid = uidRef.current;
+      const profile = pubProfileRef.current;
+      const cur = stateRef.current;
+      if (!currentUid || !profile) return false;
+      try {
+        await sendGlobalChatMessage({
+          uid: currentUid,
+          username: profile.username,
+          countryCode: cur.country[0],
+          rank: cur.rank,
+          text,
+        });
+        return true;
+      } catch (err) {
+        addToast(formatFirebaseError(err));
+        return false;
+      }
+    },
+    [addToast],
+  );
+  const handleSendDm = useCallback(
+    async (text: string) => {
+      const currentUid = uidRef.current;
+      const profile = pubProfileRef.current;
+      const cur = stateRef.current;
+      if (!currentUid || !profile || !dmRecipient) return false;
+      try {
+        await sendDirectMessage({
+          fromUid: currentUid,
+          fromName: profile.username,
+          fromCc: cur.country[0],
+          toUid: dmRecipient.uid,
+          text,
+          notify: true,
+        });
+        setSentDmContacts((prev) =>
+          prev.some((x) => x.uid === dmRecipient.uid) ? prev : [dmRecipient, ...prev],
+        );
+        return true;
+      } catch (err) {
+        addToast(formatFirebaseError(err));
+        return false;
+      }
+    },
+    [addToast, dmRecipient],
+  );
+  const handleOpenGiftCompose = useCallback(
+    (target: PlayerProfile) => setGiftModal({ mode: 'compose', target, trade: null }),
+    [],
+  );
+  const handleOpenGiftReview = useCallback(
+    (tr: TradeOffer) => setGiftModal({ mode: 'review', target: null, trade: tr }),
+    [],
+  );
+  const handleAcceptTrade = useCallback(
+    async (id: string) => {
+      try {
+        await acceptGiftOffer(id, sidRef.current, handleKicked, serverOffsetMsRef.current);
+        addToast('Gift accepted!');
+      } catch (err) {
+        addToast(formatFirebaseError(err));
+      }
+    },
+    [addToast, handleKicked],
+  );
+  const handleRejectTrade = useCallback(
+    async (id: string) => {
+      try {
+        await rejectGiftOffer(id, sidRef.current, handleKicked, serverOffsetMsRef.current);
+        addToast('Gift declined');
+      } catch (err) {
+        addToast(formatFirebaseError(err));
+      }
+    },
+    [addToast, handleKicked],
+  );
+  const handleCancelTrade = useCallback(
+    async (id: string) => {
+      try {
+        await endSenderOffer(id, 'cancelled', sidRef.current, handleKicked, serverOffsetMsRef.current);
+        addToast('Gift cancelled & refunded');
+      } catch (err) {
+        addToast(formatFirebaseError(err));
+      }
+    },
+    [addToast, handleKicked],
+  );
+  const handleSearchPlayers = useCallback(async (q: string) => {
+    const currentUid = uidRef.current;
+    if (!currentUid) return [];
     try {
-      const p = await fetchPlayerProfile(targetUid);
-      if (p) setProfileView(p);
-      else addToast('Player profile not found.');
-    } catch (err) {
-      addToast(formatFirebaseError(err));
+      return await searchPlayersByUsername(q, currentUid);
+    } catch {
+      return [];
     }
-  };
-
-  const openGiftComposer = async (targetUid: string) => {
-    let target = leaderboard.find((p) => p.id === targetUid) || null;
-    if (!target) {
-      target = await fetchPlayerProfile(targetUid).catch(() => null);
-    }
-    if (!target) {
-      addToast('Could not load recipient.');
-      return;
-    }
-    setGiftModal({ mode: 'compose', target, trade: null });
-  };
+  }, []);
 
   const currentTabMeta = TAB_META[tab];
-  const dayKey = dayKeyFor(Date.now() + serverOffsetMsRef.current);
+  const srvMinute = Math.floor((state.t + serverOffsetMs) / 60_000);
+  const dayKey = useMemo(() => dayKeyFor(srvMinute * 60_000), [srvMinute]);
 
   if (otherTabLocked || kicked) {
     return (
@@ -1908,10 +2321,10 @@ export default function App() {
       {gateOpen && (
         <LoginGate
           selectedCountry={state.country}
-          onSelectCountry={(c: CountryTuple) => updateState((prev) => ({ ...prev, country: c }), 0)}
+          onSelectCountry={handleSelectCountry}
           onGoogleLogin={handleGoogleLogin}
           onEmailAuth={handleEmailAuth}
-          onPlayOffline={() => setGateOpen(false)}
+          onPlayOffline={handlePlayOffline}
           authMsg={authMsg}
         />
       )}
@@ -1950,21 +2363,9 @@ export default function App() {
           rankPosition={rankPosition}
           unreadNotifs={unreadNotifs}
           onOpenProfile={openOwnProfile}
-          onOpenSettings={() => setSettingsOpen(true)}
-          onOpenNotifications={() => {
-            setNotifsOpen(true);
-            if (uid) {
-              const unreadIds = notifications.filter((n) => !n.read).map((n) => n.id);
-              if (unreadIds.length) void markNotificationsRead(uid, unreadIds).catch(() => {});
-            }
-          }}
-          onOpenAuth={() => {
-            if (uid) {
-              openOwnProfile();
-            } else {
-              setGateOpen(true);
-            }
-          }}
+          onOpenSettings={handleOpenSettings}
+          onOpenNotifications={handleOpenNotifications}
+          onOpenAuth={handleOpenAuth}
         />
 
         <div className="main">
@@ -1972,7 +2373,7 @@ export default function App() {
             <HeroPanel
               state={state}
               tradeTier={tradeTier}
-              serverOffsetMs={serverOffsetMsRef.current}
+              serverOffsetMs={serverOffsetMs}
               showCity={!isMobile || tab === 'build'}
               burstKey={burstKey}
               onCollectTax={handleCollectTax}
@@ -1995,7 +2396,7 @@ export default function App() {
             {tab === 'build' && (
               <BuildTab
                 state={state}
-                serverOffsetMs={serverOffsetMsRef.current}
+                serverOffsetMs={serverOffsetMs}
                 onBuyBuilding={handleBuyBuilding}
               />
             )}
@@ -2006,13 +2407,13 @@ export default function App() {
                 uid={uid}
                 projects={projects}
                 liveProjectProgress={liveProjectProgress}
-                serverOffsetMs={serverOffsetMsRef.current}
-                isUserActive={Date.now() - lastActivityRef.current < 120_000}
+                serverOffsetMs={serverOffsetMs}
+                isUserActive={state.t - lastActivityRef.current < 120_000}
                 onChangeSubTab={setGovtSubTab}
                 onFixInfra={handleFixInfra}
                 onUpgradeBuilding={handleUpgradeBuilding}
-                onStartProject={(type) => void handleStartProject(type)}
-                onPayProjectStage={(pid) => void handlePayProjectStage(pid)}
+                onStartProject={handleStartProjectCb}
+                onPayProjectStage={handlePayProjectStageCb}
                 onUnlockTech={handleUnlockTech}
               />
             )}
@@ -2020,12 +2421,12 @@ export default function App() {
               <PolicyTab
                 state={state}
                 uid={uid}
-                serverOffsetMs={serverOffsetMsRef.current}
+                serverOffsetMs={serverOffsetMs}
                 onPolicyChange={handlePolicyChange}
                 onApplyPreset={handleApplyPreset}
                 onChangeGov={handleChangeGov}
                 onResetGame={handleResetGame}
-                onSaveCloudNow={() => void performCloudSync(true)}
+                onSaveCloudNow={handleSaveCloudNow}
               />
             )}
             {tab === 'rivals' && (
@@ -2036,64 +2437,25 @@ export default function App() {
                 subTab={playersSubTab}
                 leaderboard={leaderboard}
                 lbLoaded={lbLoaded}
-                serverOffsetMs={serverOffsetMsRef.current}
+                serverOffsetMs={serverOffsetMs}
                 globalChat={globalChat}
                 dmMessages={dmMessages}
                 dmRecipient={dmRecipient}
                 recentDms={recentDms}
                 onChangeSubTab={setPlayersSubTab}
-                onOpenLogin={() => setGateOpen(true)}
-                onOpenProfile={(targetUid) => void openPlayerProfile(targetUid)}
-                onStartGift={(targetUid) => void openGiftComposer(targetUid)}
-                onOpenDm={(targetUid, name, cc) => {
-                  const rec = { uid: targetUid, name, cc };
-                  setSentDmContacts((prev) => (prev.some((x) => x.uid === targetUid) ? prev : [rec, ...prev]));
-                  setDmRecipient(rec);
-                  setPlayersSubTab('dm');
-                }}
-                onBackDm={() => setDmRecipient(null)}
-                onSendGlobalChat={async (text) => {
-                  if (!uid || !pubProfile) return false;
-                  try {
-                    await sendGlobalChatMessage({
-                      uid,
-                      username: pubProfile.username,
-                      countryCode: state.country[0],
-                      rank: state.rank,
-                      text,
-                    });
-                    return true;
-                  } catch (err) {
-                    addToast(formatFirebaseError(err));
-                    return false;
-                  }
-                }}
-                onSendDm={async (text) => {
-                  if (!uid || !pubProfile || !dmRecipient) return false;
-                  try {
-                    await sendDirectMessage({
-                      fromUid: uid,
-                      fromName: pubProfile.username,
-                      fromCc: state.country[0],
-                      toUid: dmRecipient.uid,
-                      text,
-                      notify: true,
-                    });
-                    setSentDmContacts((prev) =>
-                      prev.some((x) => x.uid === dmRecipient.uid) ? prev : [dmRecipient, ...prev],
-                    );
-                    return true;
-                  } catch (err) {
-                    addToast(formatFirebaseError(err));
-                    return false;
-                  }
-                }}
+                onOpenLogin={handleOpenLoginGate}
+                onOpenProfile={handleOpenPlayerProfileCb}
+                onStartGift={handleStartGiftCb}
+                onOpenDm={handleOpenDm}
+                onBackDm={handleBackDm}
+                onSendGlobalChat={handleSendGlobalChat}
+                onSendDm={handleSendDm}
               />
             )}
             {tab === 'stickers' && (
               <StickersTab
                 state={state}
-                serverOffsetMs={serverOffsetMsRef.current}
+                serverOffsetMs={serverOffsetMs}
                 onFuseSticker={handleFuseSticker}
                 onBuyCrate={handleBuyStickerCrate}
               />
@@ -2106,43 +2468,15 @@ export default function App() {
                 trades={trades}
                 leaderboard={leaderboard}
                 sentToday={sentToday}
-                serverOffsetMs={serverOffsetMsRef.current}
+                nowSrvMs={giftsNowSrvMs}
                 onChangeSubTab={setGiftsSubTab}
-                onOpenLogin={() => setGateOpen(true)}
-                onOpenGiftCompose={(target) => setGiftModal({ mode: 'compose', target, trade: null })}
-                onOpenGiftReview={(tr) => setGiftModal({ mode: 'review', target: null, trade: tr })}
-                onAcceptTrade={async (id) => {
-                  try {
-                    await acceptGiftOffer(id, sidRef.current, handleKicked, serverOffsetMsRef.current);
-                    addToast('Gift accepted!');
-                  } catch (err) {
-                    addToast(formatFirebaseError(err));
-                  }
-                }}
-                onRejectTrade={async (id) => {
-                  try {
-                    await rejectGiftOffer(id, sidRef.current, handleKicked, serverOffsetMsRef.current);
-                    addToast('Gift declined');
-                  } catch (err) {
-                    addToast(formatFirebaseError(err));
-                  }
-                }}
-                onCancelTrade={async (id) => {
-                  try {
-                    await endSenderOffer(id, 'cancelled', sidRef.current, handleKicked, serverOffsetMsRef.current);
-                    addToast('Gift cancelled & refunded');
-                  } catch (err) {
-                    addToast(formatFirebaseError(err));
-                  }
-                }}
-                onSearchPlayers={async (q) => {
-                  if (!uid) return [];
-                  try {
-                    return await searchPlayersByUsername(q, uid);
-                  } catch {
-                    return [];
-                  }
-                }}
+                onOpenLogin={handleOpenLoginGate}
+                onOpenGiftCompose={handleOpenGiftCompose}
+                onOpenGiftReview={handleOpenGiftReview}
+                onAcceptTrade={handleAcceptTrade}
+                onRejectTrade={handleRejectTrade}
+                onCancelTrade={handleCancelTrade}
+                onSearchPlayers={handleSearchPlayers}
               />
             )}
             {tab === 'quest' && (
@@ -2159,7 +2493,7 @@ export default function App() {
                 state={state}
                 subTab={shopSubTab}
                 dayKey={dayKey}
-                serverOffsetMs={serverOffsetMsRef.current}
+                serverOffsetMs={serverOffsetMs}
                 onChangeSubTab={setShopSubTab}
                 onBuyRank={handleBuyRank}
                 onBuySubscription={handleBuySubscription}
@@ -2182,7 +2516,7 @@ export default function App() {
           type="button"
           id="cloudPill"
           className={cloudStatus.cls}
-          onClick={() => void performCloudSync(true)}
+          onClick={handleSaveCloudNow}
         >
           {cloudStatus.text}
         </button>
@@ -2192,7 +2526,7 @@ export default function App() {
         profile={profileView}
         isMe={!profileView || profileView.id === uid || profileView.id === 'offline'}
         uid={uid}
-        onClose={() => setProfileView(null)}
+        onClose={handleCloseProfile}
         onGift={(p) => {
           setProfileView(null);
           setGiftModal({ mode: 'compose', target: p, trade: null });
@@ -2225,13 +2559,13 @@ export default function App() {
           else setGateOpen(true);
         }}
         onRequestReset={handleResetGame}
-        onClose={() => setSettingsOpen(false)}
+        onClose={handleCloseSettings}
       />
 
       <NotificationsModal
         open={notifsOpen}
         notifications={notifications}
-        onClose={() => setNotifsOpen(false)}
+        onClose={handleCloseNotifs}
         onSelectNotification={(n) => {
           setNotifsOpen(false);
           if (n.type === 'dm' && n.from) {
@@ -2275,8 +2609,8 @@ export default function App() {
           myCountryCode={state.country[0]}
           target={giftModal.target}
           trade={giftModal.trade}
-          serverOffsetMs={serverOffsetMsRef.current}
-          onClose={() => setGiftModal(null)}
+          serverOffsetMs={serverOffsetMs}
+          onClose={handleCloseGiftModal}
           onSendGift={async (payload) => {
             try {
               await createGiftOffer({
@@ -2292,34 +2626,13 @@ export default function App() {
               return false;
             }
           }}
-          onAcceptTrade={async (id) => {
-            try {
-              await acceptGiftOffer(id, sidRef.current, handleKicked, serverOffsetMsRef.current);
-              addToast('Gift accepted!');
-            } catch (err) {
-              addToast(formatFirebaseError(err));
-            }
-          }}
-          onRejectTrade={async (id) => {
-            try {
-              await rejectGiftOffer(id, sidRef.current, handleKicked, serverOffsetMsRef.current);
-              addToast('Gift declined');
-            } catch (err) {
-              addToast(formatFirebaseError(err));
-            }
-          }}
-          onCancelTrade={async (id) => {
-            try {
-              await endSenderOffer(id, 'cancelled', sidRef.current, handleKicked, serverOffsetMsRef.current);
-              addToast('Gift cancelled & refunded');
-            } catch (err) {
-              addToast(formatFirebaseError(err));
-            }
-          }}
+          onAcceptTrade={handleAcceptTrade}
+          onRejectTrade={handleRejectTrade}
+          onCancelTrade={handleCancelTrade}
         />
       )}
 
-      <DialogModal dialog={dialog} onClose={() => setDialog(null)} />
+      <DialogModal dialog={dialog} onClose={handleCloseDialog} />
     </>
   );
 }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { memo, useMemo, useState } from 'react';
 import { BUILDINGS, GX_LEVEL_MULTS } from '../../game/constants';
 import {
   bulkBuildingCost,
@@ -22,14 +22,17 @@ const CATEGORIES: Array<{ id: 'all' | BuildingCategory; label: string }> = [
   { id: 'tech', label: 'Tech & Finance' },
 ];
 
-export const BuildTab: React.FC<BuildTabProps> = ({ state, serverOffsetMs = 0, onBuyBuilding }) => {
+export const BuildTab: React.FC<BuildTabProps> = memo(({ state, serverOffsetMs = 0, onBuyBuilding }) => {
   const [cat, setCat] = useState<'all' | BuildingCategory>('all');
   const [qty, setQty] = useState<1 | 5>(1);
-  const nowSrv = Date.now() + serverOffsetMs;
-  const disc = getDevelopmentDiscount(state, nowSrv);
-  const recMap = getRecommendedBuildings(state, qty, nowSrv);
+  const nowSrv = (state.t || Date.now()) + serverOffsetMs;
+  const disc = useMemo(() => getDevelopmentDiscount(state, nowSrv), [state, nowSrv]);
+  const recMap = useMemo(() => getRecommendedBuildings(state, qty, nowSrv), [state, qty, nowSrv]);
 
-  const visibleBuildings = cat === 'all' ? BUILDINGS : BUILDINGS.filter((b) => b.cat === cat);
+  const visibleBuildings = useMemo(
+    () => (cat === 'all' ? BUILDINGS : BUILDINGS.filter((b) => b.cat === cat)),
+    [cat],
+  );
 
   return (
     <div>
@@ -125,4 +128,4 @@ export const BuildTab: React.FC<BuildTabProps> = ({ state, serverOffsetMs = 0, o
       </div>
     </div>
   );
-};
+});

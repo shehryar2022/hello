@@ -250,7 +250,15 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
     (s as unknown as Record<string, number>)[k] = Math.round(Math.max(mn, Math.min(mx, val)));
   }
 
-  if (!s.claimed || typeof s.claimed !== 'object') s.claimed = {};
+  if (!s.claimed || typeof s.claimed !== 'object') {
+    s.claimed = {};
+  } else {
+    const cleanClaimed: Record<string, number> = {};
+    for (const [k, v] of Object.entries(s.claimed).slice(0, 20)) {
+      if (Number(v) > 0) cleanClaimed[k.slice(0, 32)] = 1;
+    }
+    s.claimed = cleanClaimed;
+  }
   s.milestones = cleanMilestonesMap(s.milestones);
   s.tech = cleanTechMap(s.tech);
   if (!s.activeFx || typeof s.activeFx !== 'object') s.activeFx = {};
@@ -271,19 +279,34 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
       taxSurge: legacyFx.tax2x ? 1 : 0,
     };
   } else {
-    if (legacyFx.tax2x) {
-      s.activeFx = { ...s.activeFx, taxSurge: 1 };
-      delete legacyFx.tax2x;
+    const nextFx: GameState['activeFx'] = {};
+    const endVal = Number(s.activeFx.incomeBoostEnd);
+    const multVal = Number(s.activeFx.incomeBoostMult);
+    if (Number.isFinite(endVal) && endVal > now && Number.isFinite(multVal) && multVal > 1) {
+      nextFx.incomeBoostEnd = Math.min(endVal, now + 250_000);
+      nextFx.incomeBoostMult = Math.max(1, Math.min(1.75, multVal));
+      if (typeof s.activeFx.incomeBoostId === 'string' && s.activeFx.incomeBoostId) {
+        nextFx.incomeBoostId = s.activeFx.incomeBoostId.slice(0, 32);
+      }
     }
-    if (s.activeFx.incomeBoostMult != null) {
-      s.activeFx.incomeBoostMult = Math.max(1, Math.min(1.75, Number(s.activeFx.incomeBoostMult) || 1));
+    if (legacyFx.tax2x || s.activeFx.taxSurge) {
+      nextFx.taxSurge = 1;
     }
-    if (s.activeFx.incomeBoostEnd != null) {
-      s.activeFx.incomeBoostEnd = Math.min(Number(s.activeFx.incomeBoostEnd) || 0, now + 250_000);
-    }
+    s.activeFx = nextFx;
   }
 
-  if (!s.boosterCd || typeof s.boosterCd !== 'object') s.boosterCd = {};
+  if (!s.boosterCd || typeof s.boosterCd !== 'object') {
+    s.boosterCd = {};
+  } else {
+    const cleanCd: Record<string, number> = {};
+    for (const b of BOOSTERS) {
+      const v = Number(s.boosterCd[b.id]);
+      if (Number.isFinite(v) && v >= 0) {
+        cleanCd[b.id] = Math.min(now + 86_400_000, Math.floor(v));
+      }
+    }
+    s.boosterCd = cleanCd;
+  }
   if (!Array.isArray(s.hist)) s.hist = [];
   s.hist = s.hist.filter((v) => typeof v === 'number' && Number.isFinite(v)).slice(-60);
   if (!Array.isArray(s.country) || !s.country[0]) s.country = D.country;
@@ -360,8 +383,48 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
   return s;
 }
 
+function stripUndefinedDeep(value: unknown): unknown {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value !== 'object') {
+    if (typeof value === 'number' && !Number.isFinite(value)) return 0;
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value
+      .filter((item) => item !== undefined)
+      .map((item) => stripUndefinedDeep(item));
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (v === undefined) continue;
+    const cleaned = stripUndefinedDeep(v);
+    if (cleaned !== undefined) {
+      out[k] = cleaned;
+    }
+  }
+  return out;
+}
+
 export function cleanSavePayload(s: GameState): Record<string, unknown> {
-  const raw = { ...s } as Record<string, unknown>;
+  const normalized = migrateState({ ...(s as GameState & Record<string, unknown>) });
+  normalized.cash = Math.min(1e13, Math.max(0, Number(normalized.cash) || 0));
+  normalized.gems = Math.min(1e9, Math.max(0, Math.floor(Number(normalized.gems) || 0)));
+  normalized.taxPool = Math.min(1e13, Math.max(0, Number(normalized.taxPool) || 0));
+  normalized.rank = Math.max(0, Math.min(MAX_RANK, Math.floor(Number(normalized.rank) || 0)));
+  normalized.fused = Math.max(0, Math.min(1_000_000, Math.floor(Number(normalized.fused) || 0)));
+  normalized.streak = Math.max(0, Math.min(10_000, Math.floor(Number(normalized.streak) || 0)));
+  normalized.day = Math.max(0, Math.min(100_000_000, Number(normalized.day) || 0));
+  normalized.ev = Math.max(0, Math.min(1000, Number(normalized.ev) || 0));
+  normalized.crateCd = Math.max(0, Math.min(1e13, Number(normalized.crateCd) || 0));
+  normalized.t = Math.max(0, Math.min(1e13, Number(normalized.t) || 0));
+  normalized.lastDaily = Math.max(0, Math.min(1e13, Number(normalized.lastDaily) || 0));
+  normalized.govT = Math.max(0, Math.min(1e13, Number(normalized.govT) || 0));
+  normalized.questIds = Array.isArray(normalized.questIds)
+    ? normalized.questIds.filter((x) => Number.isFinite(x)).slice(0, 10)
+    : [];
+  normalized.questDay = typeof normalized.questDay === 'string' ? normalized.questDay.slice(0, 32) : '';
+
+  const raw = stripUndefinedDeep(normalized) as Record<string, unknown>;
   delete raw.country;
   delete raw.deals;
   delete raw.loan;
@@ -896,13 +959,15 @@ export function applyOfflineEarnings(
   };
 }
 
+const KARACHI_YMD_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: TZ,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
 export function weekKeyFor(nowMs: number): string {
-  const ymd = new Intl.DateTimeFormat('en-CA', {
-    timeZone: TZ,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(nowMs));
+  const ymd = KARACHI_YMD_FORMATTER.format(new Date(nowMs));
   const [y, m, d] = ymd.split('-').map((n) => Number(n));
   const utcDate = new Date(Date.UTC(y, m - 1, d));
   const dayNum = utcDate.getUTCDay() || 7;
@@ -1037,8 +1102,8 @@ export function claimSubscriptionDaily(
     gemsAdded: active.def.dailyGems,
     state: {
       ...s,
-      cash: s.cash + active.def.dailyCash,
-      gems: s.gems + active.def.dailyGems,
+      cash: Math.min(1e13, s.cash + active.def.dailyCash),
+      gems: Math.min(1e9, Math.floor(s.gems) + active.def.dailyGems),
       sub: {
         ...s.sub,
         tier: active.def.id,
@@ -1112,7 +1177,7 @@ export function fuseSticker(
     state: {
       ...s,
       stk: nextStk,
-      fused: (s.fused || 0) + 1,
+      fused: Math.min(1_000_000, Math.floor(s.fused || 0) + 1),
     },
   };
 }
@@ -1219,7 +1284,7 @@ export function claimMilestone(
     gemsAdded: m.r,
     state: {
       ...s,
-      gems: s.gems + m.r,
+      gems: Math.min(1e9, Math.floor(s.gems) + m.r),
       milestones: { ...(s.milestones || {}), [milestoneId]: 1 },
     },
   };
@@ -1305,18 +1370,23 @@ export function sanitizeStats(
   raw: Partial<PlayerStats> | undefined,
   overrides?: Partial<PlayerStats>,
 ): PlayerStats {
-  const base: PlayerStats = {
-    buildings: Math.max(0, Math.floor(Number(raw?.buildings) || 0)),
-    completedTrades: Math.max(0, Math.floor(Number(raw?.completedTrades) || 0)),
-    tradesSent: Math.max(0, Math.floor(Number(raw?.tradesSent) || 0)),
-    tradesReceived: Math.max(0, Math.floor(Number(raw?.tradesReceived) || 0)),
-    cashTraded: Math.max(0, Math.floor(Number(raw?.cashTraded) || 0)),
-    gemsTraded: Math.max(0, Math.floor(Number(raw?.gemsTraded) || 0)),
+  const capStat = (val: unknown, max: number) => Math.max(0, Math.min(max, Math.floor(Number(val) || 0)));
+  const merged = {
+    buildings: overrides?.buildings ?? raw?.buildings,
+    completedTrades: overrides?.completedTrades ?? raw?.completedTrades,
+    tradesSent: overrides?.tradesSent ?? raw?.tradesSent,
+    tradesReceived: overrides?.tradesReceived ?? raw?.tradesReceived,
+    cashTraded: overrides?.cashTraded ?? raw?.cashTraded,
+    gemsTraded: overrides?.gemsTraded ?? raw?.gemsTraded,
   };
-  if (overrides) {
-    Object.assign(base, overrides);
-  }
-  return base;
+  return {
+    buildings: capStat(merged.buildings, 1_000_000),
+    completedTrades: capStat(merged.completedTrades, 1_000_000),
+    tradesSent: capStat(merged.tradesSent, 1_000_000),
+    tradesReceived: capStat(merged.tradesReceived, 1_000_000),
+    cashTraded: capStat(merged.cashTraded, 1e14),
+    gemsTraded: capStat(merged.gemsTraded, 1e12),
+  };
 }
 
 export function tierOfCompletedTrades(count: number | undefined): number {

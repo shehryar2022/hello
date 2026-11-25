@@ -59,6 +59,9 @@ const City3DInner: React.FC<City3DProps> = ({ state, visible, burstKey, onBuildi
     open: false,
   });
   const tipTimerRef = useRef<number | null>(null);
+  const activeParticlesRef = useRef(0);
+  const particleTimersRef = useRef<Set<number>>(new Set());
+  const buildingRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const animEnabled = !!state.set.anim;
 
@@ -72,10 +75,20 @@ const City3DInner: React.FC<City3DProps> = ({ state, visible, burstKey, onBuildi
     applyRotation(-35 + dragRef.current.off);
   }, [visible, animEnabled]);
 
+  useEffect(() => {
+    const timers = particleTimersRef.current;
+    return () => {
+      if (tipTimerRef.current) window.clearTimeout(tipTimerRef.current);
+      for (const id of timers) window.clearTimeout(id);
+      timers.clear();
+      activeParticlesRef.current = 0;
+    };
+  }, []);
+
   const spawnParticle = (cls: 'coin' | 'puff', buildingEl: Element | null, text?: string) => {
     const city = cityRef.current;
     if (!city || !buildingEl) return;
-    if (city.querySelectorAll('.coin, .puff').length >= MAX_ACTIVE_PARTICLES) return;
+    if (activeParticlesRef.current >= MAX_ACTIVE_PARTICLES) return;
     const style = (buildingEl as HTMLElement).style;
     const k = document.createElement('b');
     k.className = cls;
@@ -86,27 +99,35 @@ const City3DInner: React.FC<City3DProps> = ({ state, visible, burstKey, onBuildi
     const h = parseInt(style.getPropertyValue('--h') || '10', 10);
     k.style.setProperty('--z0', `${h + 14}px`);
     city.appendChild(k);
-    window.setTimeout(() => k.remove(), 2000);
+    activeParticlesRef.current += 1;
+    const tid = window.setTimeout(() => {
+      particleTimersRef.current.delete(tid);
+      k.remove();
+      activeParticlesRef.current = Math.max(0, activeParticlesRef.current - 1);
+    }, 2000);
+    particleTimersRef.current.add(tid);
   };
+
+  const bRef = useRef(state.b);
+  bRef.current = state.b;
 
   useEffect(() => {
     if (!visible || !animEnabled) return;
     const coinTimer = window.setInterval(() => {
-      if (document.hidden || !cityRef.current) return;
-      const bs = cityRef.current.querySelectorAll('.bd:not(.empty)');
-      if (!bs.length) return;
-      spawnParticle('coin', bs[Math.floor(Math.random() * bs.length)], '₨');
+      if (document.hidden || !cityRef.current || document.body.classList.contains('modal-open')) return;
+      const activeIds = Object.keys(bRef.current).filter((id) => (bRef.current[id] || 0) > 0);
+      if (!activeIds.length) return;
+      const pickId = activeIds[Math.floor(Math.random() * activeIds.length)];
+      spawnParticle('coin', buildingRefs.current[pickId] || null, '₨');
     }, 2200);
 
     const puffTimer = window.setInterval(() => {
-      if (document.hidden || !cityRef.current) return;
-      const emitters = cityRef.current.querySelectorAll(
-        '.bd:not(.empty)[data-id="fact"], .bd:not(.empty)[data-id="pow"], .bd:not(.empty)[data-id="mine"]',
-      );
-      if (!emitters.length) return;
-      const pick = emitters[Math.floor(Math.random() * emitters.length)];
+      if (document.hidden || !cityRef.current || document.body.classList.contains('modal-open')) return;
+      const emitterIds = ['fact', 'pow', 'mine'].filter((id) => (bRef.current[id] || 0) > 0);
+      if (!emitterIds.length) return;
+      const pickId = emitterIds[Math.floor(Math.random() * emitterIds.length)];
       if (Math.random() < 0.7) {
-        spawnParticle('puff', pick);
+        spawnParticle('puff', buildingRefs.current[pickId] || null);
       }
     }, 1500);
 
@@ -118,12 +139,19 @@ const City3DInner: React.FC<City3DProps> = ({ state, visible, burstKey, onBuildi
 
   useEffect(() => {
     if (burstKey <= 0 || !visible || !animEnabled || !cityRef.current) return;
-    const bs = Array.from(cityRef.current.querySelectorAll('.bd:not(.empty)')).slice(0, 6);
-    bs.forEach((b, idx) => {
-      window.setTimeout(() => {
-        spawnParticle('coin', b, '₨');
+    const activeIds = Object.keys(bRef.current)
+      .filter((id) => (bRef.current[id] || 0) > 0)
+      .slice(0, 6);
+    const timers: number[] = [];
+    activeIds.forEach((id, idx) => {
+      const tid = window.setTimeout(() => {
+        spawnParticle('coin', buildingRefs.current[id] || null, '₨');
       }, idx * 70);
+      timers.push(tid);
     });
+    return () => {
+      for (const tid of timers) window.clearTimeout(tid);
+    };
   }, [burstKey, visible, animEnabled]);
 
   useEffect(() => {
@@ -269,6 +297,9 @@ const City3DInner: React.FC<City3DProps> = ({ state, visible, burstKey, onBuildi
           return (
             <div
               key={d.id}
+              ref={(el) => {
+                buildingRefs.current[d.id] = el;
+              }}
               className={cls}
               data-id={d.id}
               style={

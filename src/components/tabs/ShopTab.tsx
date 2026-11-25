@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo, useMemo } from 'react';
 import { BOOSTERS, RANKS, SUBSCRIPTIONS } from '../../game/constants';
 import {
   canBuyBooster,
@@ -48,7 +48,7 @@ interface ShopTabProps {
   onBuyBooster: (boosterId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
 }
 
-export const ShopTab: React.FC<ShopTabProps> = ({
+export const ShopTab: React.FC<ShopTabProps> = memo(({
   state,
   subTab,
   dayKey,
@@ -59,17 +59,23 @@ export const ShopTab: React.FC<ShopTabProps> = ({
   onClaimSubDaily,
   onBuyBooster,
 }) => {
-  const nowMs = Date.now() + serverOffsetMs;
+  const nowMs = (state.t || Date.now()) + serverOffsetMs;
   const currentRank = RANKS[state.rank || 0] || RANKS[0];
-  const activeIncomeBoost = getActiveShopIncomeBooster(state, nowMs);
-  const activeSub = getActiveSubscription(state, nowMs);
+  const activeIncomeBoost = useMemo(() => getActiveShopIncomeBooster(state, nowMs), [state, nowMs]);
+  const activeSub = useMemo(() => getActiveSubscription(state, nowMs), [state, nowMs]);
   const canClaimDaily = !!activeSub && activeSub.lastClaimDay !== dayKey;
 
-  const shopRec = getRecommendedShopItems(state, nowMs);
-  const boosterRec = getRecommendedBoosters(state, nowMs);
+  const shopRec = useMemo(() => getRecommendedShopItems(state, nowMs), [state, nowMs]);
+  const boosterRec = useMemo(() => getRecommendedBoosters(state, nowMs), [state, nowMs]);
 
-  const activePromoSub = SUBSCRIPTIONS.find((sub) => getSubscriptionPrice(state, sub, nowMs).promoActive);
-  const activePromoPrice = activePromoSub ? getSubscriptionPrice(state, activePromoSub, nowMs) : null;
+  const activePromoSub = useMemo(
+    () => SUBSCRIPTIONS.find((sub) => getSubscriptionPrice(state, sub, nowMs).promoActive),
+    [state, nowMs],
+  );
+  const activePromoPrice = useMemo(
+    () => (activePromoSub ? getSubscriptionPrice(state, activePromoSub, nowMs) : null),
+    [activePromoSub, state, nowMs],
+  );
 
   return (
     <div>
@@ -367,4 +373,4 @@ export const ShopTab: React.FC<ShopTabProps> = ({
       )}
     </div>
   );
-};
+});

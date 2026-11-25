@@ -33,7 +33,7 @@ export const GoogleIcon: React.FC = () => (
   </svg>
 );
 
-export const LoginGate: React.FC<LoginGateProps> = ({
+export const LoginGate: React.FC<LoginGateProps> = React.memo(({
   selectedCountry,
   onSelectCountry,
   onGoogleLogin,
@@ -43,6 +43,7 @@ export const LoginGate: React.FC<LoginGateProps> = ({
 }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const isBusyMsg = /…$/.test(authMsg.trim());
 
   return (
     <div id="gate">
@@ -136,9 +137,9 @@ export const LoginGate: React.FC<LoginGateProps> = ({
             <Zap size={14} color="#ffc23d" />
             <span>Play offline (no leaderboard, no gifting)</span>
           </button>
-          {authMsg && <small className="dim">{authMsg}</small>}
+          {authMsg && <small className={isBusyMsg ? 'dim' : 'bad'}>{authMsg}</small>}
         </div>
       </div>
     </div>
   );
-};
+});

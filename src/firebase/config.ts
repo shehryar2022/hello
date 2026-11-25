@@ -1,17 +1,26 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
+import { getAuth, type Auth } from 'firebase/auth';
+import { doc, getDocFromServer, getFirestore, type Firestore } from 'firebase/firestore';
+
+const env = (import.meta as { env?: Record<string, string | undefined> }).env ?? {};
 
 export const FIREBASE_CONFIG = {
-  apiKey: 'AIzaSyADfvhFfSuJYVGHqubAR8foY237MQ2QIdc',
-  authDomain: 'pakora-tab.firebaseapp.com',
-  projectId: 'pakora-tab',
-  appId: '1:88621916854:web:95ceacc2bced7e6530bc17',
+  apiKey: env.VITE_FIREBASE_API_KEY || '',
+  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || '',
+  projectId: env.VITE_FIREBASE_PROJECT_ID || '',
+  appId: env.VITE_FIREBASE_APP_ID || '',
 };
 
-const app = initializeApp(FIREBASE_CONFIG);
-export const auth = getAuth(app);
-export const db = getFirestore(app);
+export const isFirebaseConfigured = Boolean(
+  FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId && FIREBASE_CONFIG.appId,
+);
+
+const app = isFirebaseConfigured ? initializeApp(FIREBASE_CONFIG) : null;
+export const auth = (app ? getAuth(app) : null) as Auth;
+const databaseId = env.VITE_FIREBASE_DATABASE_ID?.trim();
+export const db = (
+  app ? (databaseId ? getFirestore(app, databaseId) : getFirestore(app)) : null
+) as Firestore;
 
 export enum OperationType {
   CREATE = 'create',
@@ -39,21 +48,21 @@ export interface FirestoreErrorInfo {
   };
 }
 
-export function handleFirestoreError(
+export function buildFirestoreErrorInfo(
   error: unknown,
   operationType: OperationType,
   path: string | null,
-): never {
-  const errInfo: FirestoreErrorInfo = {
+): FirestoreErrorInfo {
+  return {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
+      userId: auth?.currentUser?.uid,
+      email: auth?.currentUser?.email,
+      emailVerified: auth?.currentUser?.emailVerified,
+      isAnonymous: auth?.currentUser?.isAnonymous,
+      tenantId: auth?.currentUser?.tenantId,
       providerInfo:
-        auth.currentUser?.providerData?.map((p) => ({
+        auth?.currentUser?.providerData?.map((p) => ({
           providerId: p.providerId,
           email: p.email,
         })) || [],
@@ -61,6 +70,14 @@ export function handleFirestoreError(
     operationType,
     path,
   };
+}
+
+export function handleFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null,
+): never {
+  const errInfo = buildFirestoreErrorInfo(error, operationType, path);
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
@@ -78,16 +95,16 @@ export function formatFirebaseError(err: unknown): string {
     return '⚠️ Permission denied — publish the updated firestore.rules in Firebase Console.';
   }
   if (/aborted/i.test(code + raw)) {
-    return raw.includes('Another session') ? raw : 'Transaction conflict — please try again.';
+    return raw.includes('Another session') ? raw : 'Transaction conflict — retrying automatically.';
   }
   if (/already-exists/i.test(code + raw)) {
     return 'Username is already taken.';
   }
   if (/resource-exhausted/i.test(code + raw)) {
-    return 'Daily limit reached.';
+    return 'Daily limit or quota reached.';
   }
   if (/internal|cancelled|deadline/i.test(code + raw)) {
-    return '⚠️ Server error — retry in a moment.';
+    return '⚠️ Server timeout — retry in a moment.';
   }
   try {
     const parsed = JSON.parse(raw) as FirestoreErrorInfo;
@@ -99,8 +116,9 @@ export function formatFirebaseError(err: unknown): string {
 }
 
 export async function testFirestoreConnection(): Promise<void> {
+  if (!isFirebaseConfigured || !db || !auth?.currentUser) return;
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
+    await getDocFromServer(doc(db, 'players', auth.currentUser.uid));
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
       console.error('Please check your Firebase configuration.');

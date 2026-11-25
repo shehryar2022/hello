@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo, useMemo } from 'react';
 import { CRATE_COST_CASH, CRATE_COST_GEMS, RARITY_META, STICKERS } from '../../game/constants';
 import { formatNumber, stickerBonus, stickerUniqueCount } from '../../game/rules';
 import type { GameState } from '../../game/types';
@@ -17,17 +17,17 @@ interface StickersTabProps {
   onBuyCrate: (kind: 'cash' | 'gems', e: React.MouseEvent<HTMLButtonElement>) => void;
 }
 
-export const StickersTab: React.FC<StickersTabProps> = ({
+export const StickersTab: React.FC<StickersTabProps> = memo(({
   state,
   serverOffsetMs = 0,
   onFuseSticker,
   onBuyCrate,
 }) => {
-  const unique = stickerUniqueCount(state);
-  const bonusPct = (stickerBonus(state) * 100).toFixed(1);
-  const fusable = STICKERS.filter((s) => (state.stk[s.id] || 0) >= 3);
+  const unique = useMemo(() => stickerUniqueCount(state), [state]);
+  const bonusPct = useMemo(() => (stickerBonus(state) * 100).toFixed(1), [state]);
+  const fusable = useMemo(() => STICKERS.filter((s) => (state.stk[s.id] || 0) >= 3), [state.stk]);
 
-  const nowSrv = Date.now() + serverOffsetMs;
+  const nowSrv = (state.t || Date.now()) + serverOffsetMs;
   const cdLeftSec = Math.max(0, Math.ceil(((state.crateCd || 0) - nowSrv) / 1000));
   const canBuyCashCrate = cdLeftSec <= 0 && state.cash >= CRATE_COST_CASH;
   const canBuyGemCrate = state.gems >= CRATE_COST_GEMS;
@@ -145,4 +145,4 @@ export const StickersTab: React.FC<StickersTabProps> = ({
       </div>
     </div>
   );
-};
+});

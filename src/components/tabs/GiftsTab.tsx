@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { memo, useMemo, useState } from 'react';
 import { DAILY_GIFT_MAX } from '../../game/constants';
 import { formatNumber } from '../../game/rules';
 import type { GiftsSubTab, PlayerProfile, TradeOffer } from '../../game/types';
@@ -20,14 +20,14 @@ interface GiftsTabProps {
   trades: TradeOffer[];
   leaderboard: PlayerProfile[];
   sentToday: number;
-  serverOffsetMs: number;
+  nowSrvMs: number;
   onChangeSubTab: (sub: GiftsSubTab) => void;
   onOpenLogin: () => void;
   onOpenGiftCompose: (target: PlayerProfile) => void;
   onOpenGiftReview: (trade: TradeOffer) => void;
-  onAcceptTrade: (tradeId: string) => void;
-  onRejectTrade: (tradeId: string) => void;
-  onCancelTrade: (tradeId: string) => void;
+  onAcceptTrade: (tradeId: string) => Promise<void> | void;
+  onRejectTrade: (tradeId: string) => Promise<void> | void;
+  onCancelTrade: (tradeId: string) => Promise<void> | void;
   onSearchPlayers: (q: string) => Promise<PlayerProfile[]>;
 }
 
@@ -40,14 +40,14 @@ function summarizeGift(t: TradeOffer): string {
   return parts.length ? parts.join(' · ') : 'Empty gift';
 }
 
-export const GiftsTab: React.FC<GiftsTabProps> = ({
+export const GiftsTab: React.FC<GiftsTabProps> = memo(({
   uid,
   ready,
   subTab,
   trades,
   leaderboard,
   sentToday,
-  serverOffsetMs,
+  nowSrvMs,
   onChangeSubTab,
   onOpenLogin,
   onOpenGiftCompose,
@@ -60,6 +60,38 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
   const [searchText, setSearchText] = useState('');
   const [searchResults, setSearchResults] = useState<PlayerProfile[] | null>(null);
   const [searching, setSearching] = useState(false);
+  const [busyIds, setBusyIds] = useState<Record<string, boolean>>({});
+
+  const runTradeAction = async (id: string, fn: (tradeId: string) => Promise<void> | void) => {
+    if (busyIds[id]) return;
+    setBusyIds((prev) => ({ ...prev, [id]: true }));
+    try {
+      await fn(id);
+    } finally {
+      setBusyIds((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    }
+  };
+
+  const incoming = useMemo(
+    () => (uid ? trades.filter((t) => t.to === uid && t.status === 'pending' && t.expMs > nowSrvMs) : []),
+    [trades, uid, nowSrvMs],
+  );
+  const outgoing = useMemo(
+    () => (uid ? trades.filter((t) => t.from === uid && t.status === 'pending' && t.expMs > nowSrvMs) : []),
+    [trades, uid, nowSrvMs],
+  );
+  const history = useMemo(
+    () =>
+      trades
+        .filter((t) => t.status !== 'pending' || t.expMs <= nowSrvMs)
+        .slice()
+        .sort((a, b) => (b.resMs || b.createdMs) - (a.resMs || a.createdMs)),
+    [trades, nowSrvMs],
+  );
 
   if (!uid) {
     return (
@@ -80,13 +112,7 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
     return <p className="dim">Loading…</p>;
   }
 
-  const nowSrv = Date.now() + serverOffsetMs;
-  const incoming = trades.filter((t) => t.to === uid && t.status === 'pending' && t.expMs > nowSrv);
-  const outgoing = trades.filter((t) => t.from === uid && t.status === 'pending' && t.expMs > nowSrv);
-  const history = trades
-    .filter((t) => t.status !== 'pending' || t.expMs <= nowSrv)
-    .slice()
-    .sort((a, b) => (b.resMs || b.createdMs) - (a.resMs || a.createdMs));
+  const nowSrv = nowSrvMs || Date.now();
 
   const handleSearch = async (val: string) => {
     setSearchText(val);
@@ -168,19 +194,21 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
                       <button
                         type="button"
                         className="btn sm mint"
+                        disabled={!!busyIds[t.id]}
                         onClick={(e) => {
                           e.stopPropagation();
-                          onAcceptTrade(t.id);
+                          void runTradeAction(t.id, onAcceptTrade);
                         }}
                       >
-                        Accept
+                        {busyIds[t.id] ? '…' : 'Accept'}
                       </button>
                       <button
                         type="button"
                         className="btn sm red"
+                        disabled={!!busyIds[t.id]}
                         onClick={(e) => {
                           e.stopPropagation();
-                          onRejectTrade(t.id);
+                          void runTradeAction(t.id, onRejectTrade);
                         }}
                       >
                         Decline
@@ -229,12 +257,13 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
                     <button
                       type="button"
                       className="btn sm red"
+                      disabled={!!busyIds[t.id]}
                       onClick={(e) => {
                         e.stopPropagation();
-                        onCancelTrade(t.id);
+                        void runTradeAction(t.id, onCancelTrade);
                       }}
                     >
-                      Cancel
+                      {busyIds[t.id] ? '…' : 'Cancel'}
                     </button>
                   </div>
                 );
@@ -341,4 +370,4 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
       )}
     </div>
   );
-};
+});

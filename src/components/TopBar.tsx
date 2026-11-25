@@ -27,6 +27,8 @@ interface TopBarProps {
   onOpenAuth: () => void;
 }
 
+const MONTH_YEAR_FORMATTER = new Intl.DateTimeFormat('en', { month: 'long', year: 'numeric' });
+
 export const TopBar = React.memo<TopBarProps>(({
   state,
   uid,
@@ -39,7 +41,7 @@ export const TopBar = React.memo<TopBarProps>(({
   onOpenAuth,
 }) => {
   const dt = new Date(2000, 0, 1 + Math.floor(state.day));
-  const dateLabel = `${dt.toLocaleDateString('en', { month: 'long', year: 'numeric' })} · GDP Rank #${rankPosition}`;
+  const dateLabel = `${MONTH_YEAR_FORMATTER.format(dt)} · GDP Rank #${rankPosition}`;
   const cc = state.country?.[0];
 
   return (

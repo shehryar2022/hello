@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo, useMemo } from 'react';
 import { MILESTONES, QUEST_POOL, selectDailyQuestIds } from '../../game/rules';
 import type { GameState } from '../../game/types';
 import { CheckCircle2, GemDiamondIcon, Target, Trophy } from '../GameIcons';
@@ -11,16 +11,17 @@ interface QuestsTabProps {
   onClaimMilestone: (milestoneId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
 }
 
-export const QuestsTab: React.FC<QuestsTabProps> = ({
+export const QuestsTab: React.FC<QuestsTabProps> = memo(({
   state,
   dayKey,
   rankPosition,
   onClaimQuest,
   onClaimMilestone,
 }) => {
-  const ids = state.questIds?.length === 3 && state.questDay === dayKey
-    ? state.questIds
-    : selectDailyQuestIds(dayKey);
+  const ids = useMemo(
+    () => (state.questIds?.length === 3 && state.questDay === dayKey ? state.questIds : selectDailyQuestIds(dayKey)),
+    [state.questIds, state.questDay, dayKey],
+  );
 
   return (
     <div className="list">
@@ -136,4 +137,4 @@ export const QuestsTab: React.FC<QuestsTabProps> = ({
       })}
     </div>
   );
-};
+});

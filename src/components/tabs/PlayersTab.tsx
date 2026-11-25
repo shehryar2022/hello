@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { ACTIVE_WINDOW_MS, RANKS, SUBSCRIPTIONS } from '../../game/constants';
 import { calculateGdp, formatNumber, isProfileSubActive } from '../../game/rules';
 import type { ChatMessage, DmRecipient, GameState, PlayerProfile, PlayersSubTab } from '../../game/types';
@@ -38,17 +38,19 @@ interface PlayersTabProps {
   onSendDm: (text: string) => Promise<boolean>;
 }
 
+const WHEN_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
 function formatWhen(ms: number): string {
   if (!ms) return '';
-  return new Date(ms).toLocaleString([], {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return WHEN_FORMATTER.format(new Date(ms));
 }
 
-export const PlayersTab: React.FC<PlayersTabProps> = ({
+export const PlayersTab: React.FC<PlayersTabProps> = memo(({
   state,
   uid,
   ready,
@@ -73,6 +75,8 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
   const [dmInput, setDmInput] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
 
+  const currentGdp = useMemo(() => calculateGdp(state), [state]);
+
   useEffect(() => {
     if (listRef.current) {
       listRef.current.scrollTop = listRef.current.scrollHeight;
@@ -96,12 +100,12 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
             Sign in
           </button>
         </div>
-        <GdpChart history={state.hist} currentGdp={calculateGdp(state)} />
+        <GdpChart history={state.hist} currentGdp={currentGdp} />
       </div>
     );
   }
 
-  const nowSrv = Date.now() + serverOffsetMs;
+  const nowSrv = (state.t || Date.now()) + serverOffsetMs;
 
   const handleSendChat = async () => {
     const trimmed = chatInput.trim();
@@ -234,7 +238,7 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
               </p>
             </>
           )}
-          <GdpChart history={state.hist} currentGdp={calculateGdp(state)} />
+          <GdpChart history={state.hist} currentGdp={currentGdp} />
         </>
       ) : subTab === 'chat' ? (
         <div className="chbox">
@@ -387,4 +391,4 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
       )}
     </div>
   );
-};
+});

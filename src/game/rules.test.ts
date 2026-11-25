@@ -29,6 +29,7 @@ import {
   canBuySubscription,
   claimMilestone,
   claimSubscriptionDaily,
+  cleanSavePayload,
   freshState,
   fuseSticker,
   getActiveSubscription,
@@ -634,8 +635,10 @@ test('36 stickers, monotonic endgame building ROI, and smart recommendation high
   assert.equal(boostRecs.tax_surge, 'Tax Cashout');
   assert.equal(boostRecs.quick_profit, 'Top Income');
 
-  const techRecs = getRecommendedTech(s);
-  assert.equal(techRecs.healthcare_act, 'Happiness Fix');
+  const techRecs1 = getRecommendedTech({ ...s, cash: 2_000_000 });
+  assert.equal(techRecs1.eco_catalysis, 'Happiness Fix');
+  const techRecs2 = getRecommendedTech({ ...s, cash: 2_000_000, tech: { eco_catalysis: 1 } });
+  assert.equal(techRecs2.healthcare_act, 'Happiness Fix');
 
   const highEv = { ...s, tax: 45, prop: 15, corp: 30 };
   assert.equal(getRecommendedPolicyHint(highEv).id, 'balanced');
@@ -649,5 +652,38 @@ test('36 stickers, monotonic endgame building ROI, and smart recommendation high
   assert.equal(shopRec.subTier, 'weekly');
   assert.equal(shopRec.subReason, 'Weekly Deal −25%');
 });
+
+test('cleanSavePayload strips undefined/country fields and clamps all values within Firestore rules limits', () => {
+  const dirty = freshState() as unknown as Record<string, unknown>;
+  dirty.cash = 9e15;
+  dirty.gems = 9e12 + 0.75;
+  dirty.taxPool = 9e15;
+  dirty.rank = 99;
+  dirty.fused = 5_000_000.9;
+  dirty.streak = 99_999.4;
+  dirty.activeFx = {
+    incomeBoostEnd: undefined,
+    incomeBoostMult: undefined,
+    incomeBoostId: undefined,
+    taxSurge: 1,
+  };
+  dirty.boosterCd = Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`b_${i}`, 123]));
+  const cleaned = cleanSavePayload(dirty as never);
+
+  assert.equal('country' in cleaned, false);
+  assert.equal(cleaned.cash, 1e13);
+  assert.equal(cleaned.gems, 1e9);
+  assert.equal(cleaned.taxPool, 1e13);
+  assert.equal(cleaned.rank, MAX_RANK);
+  assert.equal(cleaned.fused, 1_000_000);
+  assert.equal(cleaned.streak, 10_000);
+  const fx = cleaned.activeFx as Record<string, unknown>;
+  assert.equal('incomeBoostEnd' in fx, false);
+  assert.equal('incomeBoostMult' in fx, false);
+  assert.equal(fx.taxSurge, 1);
+  assert.ok(Object.keys(cleaned.boosterCd as Record<string, unknown>).length <= 20);
+  assert.ok(Object.keys(cleaned).length <= 72);
+});
+
 
 
