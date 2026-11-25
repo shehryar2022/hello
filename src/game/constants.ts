@@ -2,6 +2,7 @@ import type {
   BoosterDef,
   BuildingDef,
   CountryTuple,
+  ExecDecisionDef,
   GameState,
   GovDef,
   ProjectType,
@@ -9,6 +10,7 @@ import type {
   RankDef,
   StickerDef,
   SubscriptionDef,
+  TechDef,
 } from './types';
 
 export const SAVE_KEY = 'cet_save_v1';
@@ -65,25 +67,25 @@ export const BUILDINGS: BuildingDef[] = [
 
 export const RANKS: RankDef[] = [
   { id: 0, n: 'No Rank', e: '', c: '#a79fd0', cost: 0 },
-  { id: 1, n: 'Bronze Baron', e: '🥉', c: '#cd7f32', cost: 250_000 },
-  { id: 2, n: 'Silver Sovereign', e: '🥈', c: '#c0c8d8', cost: 600_000 },
-  { id: 3, n: 'Gold Emperor', e: '🥇', c: '#ffd700', cost: 1_500_000 },
-  { id: 4, n: 'Platinum King', e: '💍', c: '#e2e8f0', cost: 3_500_000 },
-  { id: 5, n: 'Diamond Deity', e: '💎', c: '#67e8f9', cost: 8_000_000 },
-  { id: 6, n: 'Cosmic Overlord', e: '🌌', c: '#e879f9', cost: 18_000_000 },
-  { id: 7, n: 'Astral Viceroy', e: '🌠', c: '#818cf8', cost: 45_000_000 },
-  { id: 8, n: 'Imperial Titan', e: '🛡️', c: '#fb923c', cost: 100_000_000 },
-  { id: 9, n: 'Grand Chancellor', e: '⚜️', c: '#34d399', cost: 250_000_000 },
-  { id: 10, n: 'Global Hegemon', e: '👑', c: '#f43f5e', cost: 600_000_000 },
+  { id: 1, n: 'Bronze Baron', e: '🥉', c: '#cd7f32', cost: 400_000 },
+  { id: 2, n: 'Silver Sovereign', e: '🥈', c: '#c0c8d8', cost: 1_000_000 },
+  { id: 3, n: 'Gold Emperor', e: '🥇', c: '#ffd700', cost: 2_500_000 },
+  { id: 4, n: 'Platinum King', e: '💍', c: '#e2e8f0', cost: 6_000_000 },
+  { id: 5, n: 'Diamond Deity', e: '💎', c: '#67e8f9', cost: 14_000_000 },
+  { id: 6, n: 'Cosmic Overlord', e: '🌌', c: '#e879f9', cost: 32_000_000 },
+  { id: 7, n: 'Astral Viceroy', e: '🌠', c: '#818cf8', cost: 70_000_000 },
+  { id: 8, n: 'Imperial Titan', e: '🛡️', c: '#fb923c', cost: 150_000_000 },
+  { id: 9, n: 'Grand Chancellor', e: '⚜️', c: '#34d399', cost: 320_000_000 },
+  { id: 10, n: 'Global Hegemon', e: '👑', c: '#f43f5e', cost: 650_000_000 },
 ];
 
 export const MAX_RANK = RANKS.length - 1;
 
 /**
- * Balanced, limited shop boosters:
+ * Balanced, limited shop boosters with high-average pricing:
  * - Only 1 shop income multiplier booster can be active at a time (no stacking).
  * - Multipliers & durations are capped (+25%, +50%, +75%).
- * - Tax Surge gives +35% bonus capped at 2 min of unboosted base income (never massive instant payouts).
+ * - Tax Surge gives +35% bonus capped at 2 min of unboosted base income.
  */
 export const BOOSTERS: BoosterDef[] = [
   {
@@ -91,7 +93,7 @@ export const BOOSTERS: BoosterDef[] = [
     n: 'Quick Profit',
     e: '💹',
     tier: 'common',
-    cost: 45_000,
+    cost: 120_000,
     cd: 300,
     dur: 120,
     d: '+25% income for 2 min (1 income boost at a time)',
@@ -103,7 +105,7 @@ export const BOOSTERS: BoosterDef[] = [
     n: 'Tax Surge',
     e: '💰',
     tier: 'common',
-    cost: 60_000,
+    cost: 180_000,
     cd: 300,
     dur: 0,
     d: '+35% bonus on next tax collect (capped at 2 min base income)',
@@ -114,40 +116,51 @@ export const BOOSTERS: BoosterDef[] = [
     n: 'Happy Days',
     e: '😊',
     tier: 'common',
-    cost: 40_000,
+    cost: 95_000,
     cd: 300,
     dur: 0,
     d: '+15 happiness instantly',
     fx: 'hap10',
   },
   {
-    id: 'boom_surge',
-    n: 'Boom Surge',
-    e: '🚀',
-    tier: 'rare',
-    cost: 350_000,
-    cd: 2700,
-    dur: 120,
-    d: '+75% income for 2 min (1 income boost at a time)',
-    fx: 'income75',
-    isIncomeBoost: true,
+    id: 'civic_rally',
+    n: 'Civic Rally',
+    e: '🏛️',
+    tier: 'common',
+    cost: 160_000,
+    cd: 450,
+    dur: 0,
+    d: '+10 happiness & +12% approval instantly',
+    fx: 'rally',
   },
   {
     id: 'golden_treasury',
     n: 'Treasury Rush',
     e: '👑',
     tier: 'rare',
-    cost: 300_000,
-    cd: 2700,
+    cost: 650_000,
+    cd: 2400,
     dur: 240,
     d: '+50% income for 4 min (1 income boost at a time)',
     fx: 'income50',
     isIncomeBoost: true,
   },
+  {
+    id: 'boom_surge',
+    n: 'Boom Surge',
+    e: '🚀',
+    tier: 'rare',
+    cost: 850_000,
+    cd: 2400,
+    dur: 120,
+    d: '+75% income for 2 min (1 income boost at a time)',
+    fx: 'income75',
+    isIncomeBoost: true,
+  },
 ];
 
 /**
- * Economy-balanced national subscriptions:
+ * Economy-balanced national subscriptions (high-average rates, modest perks):
  * Modest convenience perks so core building & policy choices remain primary.
  */
 export const SUBSCRIPTIONS: SubscriptionDef[] = [
@@ -156,7 +169,7 @@ export const SUBSCRIPTIONS: SubscriptionDef[] = [
     n: 'Daily Pass',
     e: '📅',
     periodLabel: 'Daily',
-    cost: 4_000_000,
+    cost: 3_500_000,
     durMs: 86_400_000,
     incomeMult: 1.04,
     discountRate: 0.03,
@@ -170,7 +183,7 @@ export const SUBSCRIPTIONS: SubscriptionDef[] = [
     n: 'Weekly Charter',
     e: '📆',
     periodLabel: 'Weekly',
-    cost: 35_000_000,
+    cost: 24_000_000,
     durMs: 7 * 86_400_000,
     incomeMult: 1.08,
     discountRate: 0.06,
@@ -184,7 +197,7 @@ export const SUBSCRIPTIONS: SubscriptionDef[] = [
     n: 'Monthly Sovereignty',
     e: '💳',
     periodLabel: 'Monthly',
-    cost: 220_000_000,
+    cost: 120_000_000,
     durMs: 30 * 86_400_000,
     incomeMult: 1.12,
     discountRate: 0.1,
@@ -192,6 +205,111 @@ export const SUBSCRIPTIONS: SubscriptionDef[] = [
     dailyCash: 2_500_000,
     dailyGems: 2,
     d: '+12% income, 10% build/upgrade discount, +15% project speed, ₨ 2.5M + 2 gems/day',
+  },
+];
+
+export const TECH_TREE: TechDef[] = [
+  {
+    id: 'smart_grid',
+    n: 'Smart Power Grid',
+    cat: 'infra',
+    cost: 250_000,
+    reqBuildings: 8,
+    d: 'Automated transmission & sensors lift national productivity.',
+    effectLabel: '+4% income · −20% govt decay',
+  },
+  {
+    id: 'eco_catalysis',
+    n: 'Eco Catalysis',
+    cat: 'civic',
+    cost: 750_000,
+    reqBuildings: 15,
+    d: 'Clean industrial scrubbers cut factory smog across every district.',
+    effectLabel: '−30% factory unhappiness · +2 hap',
+  },
+  {
+    id: 'healthcare_act',
+    n: 'Universal Care Act',
+    cat: 'civic',
+    cost: 1_800_000,
+    reqBuildings: 22,
+    d: 'Nationwide clinics improve workforce morale and hospital output.',
+    effectLabel: '+5 target happiness · +25% Hospital hap',
+  },
+  {
+    id: 'auto_customs',
+    n: 'Automated Customs',
+    cat: 'economy',
+    cost: 4_500_000,
+    reqBuildings: 30,
+    d: 'Digital port manifests speed up freight and rare export drops.',
+    effectLabel: '+8% Trade Port drop chance · +3% income',
+  },
+  {
+    id: 'civil_corps',
+    n: 'Civil Engineering Corps',
+    cat: 'infra',
+    cost: 9_000_000,
+    reqBuildings: 38,
+    d: 'Permanent public works crews lower construction & repair costs.',
+    effectLabel: '−5% build/repair cost · +15% project speed',
+  },
+  {
+    id: 'sovereign_vault',
+    n: 'Sovereign Reserve',
+    cat: 'economy',
+    cost: 22_000_000,
+    reqBuildings: 48,
+    d: 'Deepens central treasury vaults to store more uncollected tax.',
+    effectLabel: '40m Tax Pool cap (up from 30m) · +4% income',
+  },
+];
+
+export const EXEC_DECISIONS: ExecDecisionDef[] = [
+  {
+    id: 'tech_expo',
+    title: 'Global Tech Expo',
+    summary: 'International innovators want to host a summit in your capital this quarter.',
+    options: [
+      { label: 'Sponsor Pavilion', hint: 'Spend cash · +8% Happiness, +6% Approval & +1 Gem', variant: 'mint' },
+      { label: 'Levy Booth Fees', hint: '+Cash windfall · −4% Happiness', variant: 'gold' },
+    ],
+  },
+  {
+    id: 'grid_crunch',
+    title: 'Peak Energy Demand',
+    summary: 'Summer factories are straining the national grid during peak hours.',
+    options: [
+      { label: 'Subsidize Clean Grid', hint: 'Spend cash · +6% Happiness & +12% Infra condition', variant: 'mint' },
+      { label: 'Industrial Surcharge', hint: '+Cash windfall · −5% Happiness & −4% Approval', variant: 'gold' },
+    ],
+  },
+  {
+    id: 'port_backlog',
+    title: 'Port Freight Surge',
+    summary: 'Container ships are queued outside your main trade terminals.',
+    options: [
+      { label: 'Fast-Track Customs', hint: 'Spend cash · +1 Sticker & +5% Approval', variant: 'mint' },
+      { label: 'Emergency Tariffs', hint: '+Cash windfall · −3% Happiness', variant: 'gold' },
+    ],
+  },
+  {
+    id: 'green_bonds',
+    title: 'Sovereign Green Bond',
+    summary: 'Institutional investors offer to back clean transit and city parks.',
+    options: [
+      { label: 'Co-Fund Parks', hint: 'Spend cash · +10% Happiness & Tax Pool boost', variant: 'mint' },
+      { label: 'Capture Brokerage Fee', hint: '+Cash windfall · −3% Approval', variant: 'gold' },
+    ],
+  },
+  {
+    id: 'tourism_wave',
+    title: 'World Heritage Week',
+    summary: 'Record tourist arrivals present a choice for your treasury.',
+    options: [
+      { label: 'Free Cultural Pass', hint: 'Spend cash · +7% Happiness, +7% Approval', variant: 'mint' },
+      { label: 'Peak Tourist Tax', hint: '+Cash windfall · −4% Happiness', variant: 'gold' },
+    ],
   },
 ];
 
@@ -342,7 +460,7 @@ export const TAB_META: Record<
   { emoji: string; label: string; subtitle: string }
 > = {
   build: { emoji: '🏗️', label: 'Build', subtitle: 'Grow your economy' },
-  gov: { emoji: '🏛️', label: 'Govt', subtitle: 'Infrastructure, upgrades & projects' },
+  gov: { emoji: '🏛️', label: 'Govt', subtitle: 'Infrastructure, projects & research' },
   policy: { emoji: '📌', label: 'Policy', subtitle: 'Taxes, welfare and government' },
   rivals: { emoji: '📢', label: 'Players', subtitle: 'Live GDP rankings & chat' },
   stickers: { emoji: '🪪', label: 'Stickers', subtitle: 'Collect, fuse, crates & gift' },

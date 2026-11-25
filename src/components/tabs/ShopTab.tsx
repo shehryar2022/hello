@@ -130,7 +130,7 @@ export const ShopTab: React.FC<ShopTabProps> = ({
         </div>
       ) : subTab === 'sub' ? (
         <div>
-          <div className="gxc" style={{ marginBottom: 10 }}>
+          <div className={`gxc ${activeSub ? `sub-card sub-card--${activeSub.def.id}` : ''}`} style={{ marginBottom: 10 }}>
             <p style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <Calendar size={15} color="#5ccbff" />
               <b>Balanced National Subscriptions</b>
@@ -140,9 +140,13 @@ export const ShopTab: React.FC<ShopTabProps> = ({
             </p>
             {activeSub ? (
               <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
-                <span className="ok" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  <SubIcon tier={activeSub.def.id} size={15} />
-                  Active: <b>{activeSub.def.n}</b> · {formatSubRemaining(activeSub.leftMs)} left
+                <span className={`sub-crest sub-crest--${activeSub.def.id}`}>
+                  <span className="sub-crest-ic">
+                    <SubIcon tier={activeSub.def.id} size={13} />
+                  </span>
+                  <span>
+                    {activeSub.def.n} · {formatSubRemaining(activeSub.leftMs)} left
+                  </span>
                 </span>
                 <button
                   type="button"
@@ -186,18 +190,20 @@ export const ShopTab: React.FC<ShopTabProps> = ({
               return (
                 <div
                   key={sub.id}
-                  className={`row ${isCurrent ? 'me' : ''}`}
+                  className={`row sub-card sub-card--${sub.id} ${isCurrent ? 'me' : ''}`}
                   style={{ '--c': sub.id === 'monthly' ? '#ffc23d' : sub.id === 'weekly' ? '#3fe0b0' : '#5ccbff' } as React.CSSProperties}
                 >
                   <div className="em">
-                    <SubIcon tier={sub.id} size={23} />
+                    <span className="sub-crest-ic">
+                      <SubIcon tier={sub.id} size={23} />
+                    </span>
                   </div>
                   <div>
                     <h2>
-                      {sub.n}
-                      <span className="lv">{sub.periodLabel}</span>
+                      <span>{sub.n}</span>
+                      <span className={`sub-crest sub-crest--${sub.id}`}>{sub.periodLabel}</span>
                     </h2>
-                    <p>{sub.d}</p>
+                    <p>{sub.d} · Visible animated frame on Leaderboard</p>
                   </div>
                   {isCurrent ? (
                     <span className="lv" style={{ background: 'var(--mint)', color: '#04332a' }}>

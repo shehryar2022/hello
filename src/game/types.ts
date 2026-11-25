@@ -11,6 +11,7 @@ export type TabId =
 export type PlayersSubTab = 'lb' | 'chat' | 'dm';
 export type GiftsSubTab = 'in' | 'out' | 'hist' | 'find';
 export type ShopSubTab = 'rank' | 'sub' | 'boost';
+export type GovtSubTab = 'infra' | 'projects' | 'research';
 
 export type CountryTuple = [code: string, name: string, realGdp?: number];
 
@@ -35,7 +36,7 @@ export interface RankDef {
   cost: number;
 }
 
-export type BoosterFxType = 'income25' | 'income50' | 'income75' | 'tax15x' | 'hap10';
+export type BoosterFxType = 'income25' | 'income50' | 'income75' | 'tax15x' | 'hap10' | 'rally';
 
 export interface BoosterDef {
   id: string;
@@ -48,6 +49,31 @@ export interface BoosterDef {
   d: string;
   fx: BoosterFxType;
   isIncomeBoost?: boolean;
+}
+
+export type TechCategory = 'economy' | 'civic' | 'infra';
+
+export interface TechDef {
+  id: string;
+  n: string;
+  cat: TechCategory;
+  cost: number;
+  reqBuildings: number;
+  d: string;
+  effectLabel: string;
+}
+
+export interface ExecDecisionOption {
+  label: string;
+  hint: string;
+  variant?: 'gold' | 'mint' | 'red' | '';
+}
+
+export interface ExecDecisionDef {
+  id: string;
+  title: string;
+  summary: string;
+  options: [ExecDecisionOption, ExecDecisionOption];
 }
 
 export interface StickerDef {
@@ -169,6 +195,7 @@ export interface GameState {
   govT: number;
   gx: GovExtensionState;
   sub?: SubscriptionState;
+  tech?: Record<string, number>;
 }
 
 export interface PlayerStats {
@@ -191,6 +218,8 @@ export interface PlayerProfile {
   gems: number;
   level: number;
   rank: number;
+  subTier?: SubscriptionTierId | '';
+  subExp?: number;
   lastSeen?: unknown;
   seen?: number;
   stats: PlayerStats;

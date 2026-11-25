@@ -73,6 +73,7 @@ import {
   BUILDINGS,
   COUNTRIES,
   DAILY_REWARDS,
+  EXEC_DECISIONS,
   GOV_CHANGE_CD_MS,
   GOV_DAY_SEC,
   GOVS,
@@ -86,6 +87,7 @@ import {
   STICKERS,
   SUBSCRIPTIONS,
   TAB_META,
+  TECH_TREE,
 } from './game/constants';
 import {
   applyBuyBooster,
@@ -93,6 +95,7 @@ import {
   applyBuySubscription,
   applyOfflineEarnings,
   applyPolicyPreset,
+  applyUnlockTech,
   bulkBuildingCost,
   buyStickerCrate,
   calculateGdp,
@@ -106,14 +109,19 @@ import {
   formatNumber,
   freshState,
   fuseSticker,
+  getActiveSubscription,
   getDevelopmentDiscount,
-  getSubscriptionProjectSpeedMult,
+  getExecDecisionQuote,
+  getInfraDecayMult,
+  getProjectSpeedMult,
+  getTaxPoolCapSeconds,
   gxRepairCost,
   gxUpgradeCost,
   migrateState,
   playerLevel,
   POLICY_BOUNDS,
   QUEST_POOL,
+  resolveExecutiveDecision,
   rollTradePortExport,
   selectDailyQuestIds,
   targetHappiness,
@@ -126,6 +134,7 @@ import type {
   DmRecipient,
   GameState,
   GiftsSubTab,
+  GovtSubTab,
   GovProject,
   NotificationItem,
   PlayerProfile,
@@ -170,6 +179,7 @@ export default function App() {
   stateRef.current = state;
 
   const [tab, setTab] = useState<TabId>('build');
+  const [govtSubTab, setGovtSubTab] = useState<GovtSubTab>('infra');
   const [playersSubTab, setPlayersSubTab] = useState<PlayersSubTab>('lb');
   const [giftsSubTab, setGiftsSubTab] = useState<GiftsSubTab>('in');
   const [shopSubTab, setShopSubTab] = useState<ShopSubTab>('rank');
@@ -250,6 +260,8 @@ export default function App() {
   const lastCityTapRef = useRef<number>(0);
   const settlingTradesRef = useRef<boolean>(false);
   const rankPositionRef = useRef<number>(1);
+  const modalOpenRef = useRef<boolean>(false);
+  modalOpenRef.current = Boolean(dialog || giftModal || settingsOpen || notifsOpen || profileView);
 
   const addToast = useCallback((text: string) => {
     const id = Date.now() + Math.random();
@@ -947,9 +959,29 @@ export default function App() {
       const isUserActive = !document.hidden && now - lastActivityRef.current < 120_000;
       tickCountRef.current += 1;
 
+      // Pre-roll event outside setState so React state setters never fire inside updater callbacks
+      let triggerDecisionId: string | null = null;
+      let passiveEvent: { kind: 'bonus' | 'fine'; amt: number } | null = null;
+      const curSnap = stateRef.current;
+      if (curSnap.ev - 1 <= 0) {
+        const curInc = calculateIncome(curSnap, { tradeTier, nowMs: nowSrv });
+        if (curInc.gross > 8 && isUserActive && !modalOpenRef.current && Math.random() < 0.55) {
+          const pick = EXEC_DECISIONS[Math.floor(Math.random() * EXEC_DECISIONS.length)];
+          triggerDecisionId = pick.id;
+        } else if (curInc.gross > 5 && Math.random() < 0.65) {
+          if (Math.random() < 0.65) {
+            const bonus = Math.max(100, Math.floor(Math.max(1, Math.abs(curInc.net)) * 45));
+            passiveEvent = { kind: 'bonus', amt: bonus };
+          } else {
+            const fine = Math.min(Math.floor(curSnap.cash * 0.05), Math.floor(curInc.gross * 25));
+            if (fine > 0) passiveEvent = { kind: 'fine', amt: fine };
+          }
+        }
+      }
+
       setState((prev) => {
         const inc = calculateIncome(prev, { tradeTier, nowMs: nowSrv });
-        const capPool = Math.max(0, inc.net * 1800);
+        const capPool = Math.max(0, inc.net * getTaxPoolCapSeconds(prev));
         const prevPool = prev.taxPool || 0;
         const nextTaxPool =
           inc.net > 0
@@ -971,7 +1003,7 @@ export default function App() {
 
         let nextCash = prev.cash;
         let nextGx = prev.gx;
-        let nextDay = prev.day + 1 / 12;
+        const nextDay = prev.day + 1 / 12;
         let nextEv = prev.ev - 1;
 
         // Clear expired shop income boost cleanly using server clock
@@ -988,8 +1020,9 @@ export default function App() {
           const acc = (prev.gx.acc || 0) + 1;
           const nextCond = { ...prev.gx.cond };
           if (tickCountRef.current % 15 === 0) {
+            const decayStep = 0.15 * getInfraDecayMult(prev);
             for (const [k] of [...GX_GOV_BUILDINGS, ...GX_ROADS]) {
-              nextCond[k] = Math.max(0, (nextCond[k] ?? 100) - 0.15);
+              nextCond[k] = Math.max(0, (nextCond[k] ?? 100) - decayStep);
             }
           }
           let blk = prev.gx.blk || 0;
@@ -1020,22 +1053,13 @@ export default function App() {
           }
         }
 
-        // Random economic event (~every 150s) — bug-fixed for negative net & saves cleanly
+        // Apply pre-rolled passive windfall/fine or reset executive event countdown
         if (nextEv <= 0) {
           nextEv = 150;
-          if (Math.random() < 0.65 && inc.gross > 5) {
-            const roll = Math.random();
-            if (roll < 0.65) {
-              const bonus = Math.max(100, Math.floor(Math.max(1, Math.abs(inc.net)) * 45));
-              nextCash += bonus;
-              addToast(`Trade Windfall! +₨ ${formatNumber(bonus)}`);
-            } else {
-              const fine = Math.min(Math.floor(nextCash * 0.05), Math.floor(inc.gross * 25));
-              if (fine > 0) {
-                nextCash = Math.max(0, nextCash - fine);
-                addToast(`Grid Maintenance Fee: −₨ ${formatNumber(fine)}`);
-              }
-            }
+          if (passiveEvent?.kind === 'bonus') {
+            nextCash += passiveEvent.amt;
+          } else if (passiveEvent?.kind === 'fine') {
+            nextCash = Math.max(0, nextCash - passiveEvent.amt);
           }
         }
 
@@ -1067,6 +1091,82 @@ export default function App() {
         return updated;
       });
 
+      if (passiveEvent?.kind === 'bonus') {
+        addToast(`Trade Windfall! +₨ ${formatNumber(passiveEvent.amt)}`);
+      } else if (passiveEvent?.kind === 'fine') {
+        addToast(`Grid Maintenance Fee: −₨ ${formatNumber(passiveEvent.amt)}`);
+      } else if (triggerDecisionId) {
+        const dec = EXEC_DECISIONS.find((d) => d.id === triggerDecisionId);
+        if (dec) {
+          const quote = getExecDecisionQuote(curSnap, dec.id, tradeTier, nowSrv);
+          setDialog({
+            title: `Cabinet Briefing: ${dec.title}`,
+            body: (
+              <div>
+                <p style={{ margin: '0 0 10px', fontSize: 13 }}>{dec.summary}</p>
+                <div className="notifs" style={{ marginBottom: 4 }}>
+                  <div className="notif unread">
+                    <b>{dec.options[0].label}</b>
+                    <small>
+                      Cost: ₨ {formatNumber(quote.spendCost)} · {dec.options[0].hint}
+                    </small>
+                  </div>
+                  <div className="notif">
+                    <b>{dec.options[1].label}</b>
+                    <small>
+                      Gain: +₨ {formatNumber(quote.gainCash)} · {dec.options[1].hint}
+                    </small>
+                  </div>
+                </div>
+              </div>
+            ),
+            actions: [
+              {
+                label: `${dec.options[0].label} (−₨ ${formatNumber(quote.spendCost)})`,
+                variant: dec.options[0].variant,
+                onClick: () => {
+                  const res = resolveExecutiveDecision(
+                    stateRef.current,
+                    dec.id,
+                    0,
+                    tradeTier,
+                    Date.now() + serverOffsetMsRef.current,
+                  );
+                  if (!res.ok) {
+                    addToast(res.summary);
+                    return;
+                  }
+                  playSfx('win', !!stateRef.current.set.sfx);
+                  triggerBuzz(16, !!stateRef.current.set.vib);
+                  updateState(() => res.state, 800);
+                  addToast(res.summary);
+                  setDialog(null);
+                },
+              },
+              {
+                label: `${dec.options[1].label} (+₨ ${formatNumber(quote.gainCash)})`,
+                variant: dec.options[1].variant,
+                onClick: () => {
+                  const res = resolveExecutiveDecision(
+                    stateRef.current,
+                    dec.id,
+                    1,
+                    tradeTier,
+                    Date.now() + serverOffsetMsRef.current,
+                  );
+                  if (res.ok) {
+                    playSfx('coin', !!stateRef.current.set.sfx);
+                    updateState(() => res.state, 800);
+                    addToast(res.summary);
+                  }
+                  setDialog(null);
+                },
+              },
+            ],
+          });
+        }
+      }
+
       // Cloud sync every 12s if signed in
       if (tickCountRef.current % 12 === 0 && uidRef.current) {
         void performCloudSync(false);
@@ -1076,7 +1176,7 @@ export default function App() {
       const curUid = uidRef.current;
       if (curUid && projectsRef.current.length > 0) {
         let liveDirty = false;
-        const speedMult = getSubscriptionProjectSpeedMult(stateRef.current, nowSrv);
+        const speedMult = getProjectSpeedMult(stateRef.current, nowSrv);
         const stepMs = Math.max(1000, Math.floor(1000 * speedMult));
         for (const p of projectsRef.current) {
           if (p.status === 'active') {
@@ -1338,6 +1438,22 @@ export default function App() {
       },
     }), 1200);
     addToast('Building upgraded!');
+  };
+
+  const handleUnlockTech = (techId: string, e: React.MouseEvent<HTMLButtonElement>) => {
+    const tDef = TECH_TREE.find((x) => x.id === techId);
+    if (!tDef) return;
+    const res = applyUnlockTech(stateRef.current, techId);
+    if (!res.ok) {
+      if (res.reason) addToast(res.reason);
+      return;
+    }
+    playSfx('win', !!stateRef.current.set.sfx);
+    triggerBuzz(18, !!stateRef.current.set.vib);
+    const rect = e.currentTarget.getBoundingClientRect();
+    spawnFloat(tDef.n, rect.left + rect.width / 2, rect.top, '#a88bff');
+    updateState(() => res.state, 700);
+    addToast(`Researched ${tDef.n}!`);
   };
 
   const handleStartProject = async (type: ProjectType) => {
@@ -1674,8 +1790,17 @@ export default function App() {
   );
 
   const openOwnProfile = () => {
+    const nowSrv = Date.now() + serverOffsetMsRef.current;
+    const activeSub = getActiveSubscription(state, nowSrv);
+    const liveSubTier = activeSub ? activeSub.def.id : '';
+    const liveSubExp = activeSub ? activeSub.exp : 0;
+
     if (uid && pubProfile) {
-      setProfileView(pubProfile);
+      setProfileView({
+        ...pubProfile,
+        subTier: liveSubTier,
+        subExp: liveSubExp,
+      });
     } else {
       setProfileView({
         id: 'offline',
@@ -1688,6 +1813,8 @@ export default function App() {
         gems: state.gems,
         level: playerLevel(state),
         rank: state.rank,
+        subTier: liveSubTier,
+        subExp: liveSubExp,
         stats: {
           buildings: Object.values(state.b).reduce((a, b) => a + b, 0),
           completedTrades: 0,
@@ -1849,15 +1976,18 @@ export default function App() {
             {tab === 'gov' && (
               <GovtTab
                 state={state}
+                subTab={govtSubTab}
                 uid={uid}
                 projects={projects}
                 liveProjectProgress={liveProjectProgress}
                 serverOffsetMs={serverOffsetMsRef.current}
                 isUserActive={Date.now() - lastActivityRef.current < 120_000}
+                onChangeSubTab={setGovtSubTab}
                 onFixInfra={handleFixInfra}
                 onUpgradeBuilding={handleUpgradeBuilding}
                 onStartProject={(type) => void handleStartProject(type)}
                 onPayProjectStage={(pid) => void handlePayProjectStage(pid)}
+                onUnlockTech={handleUnlockTech}
               />
             )}
             {tab === 'policy' && (

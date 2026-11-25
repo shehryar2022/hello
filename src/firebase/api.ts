@@ -28,6 +28,7 @@ import {
   calculateGdp,
   cleanSavePayload,
   cleanStickersMap,
+  getActiveSubscription,
   playerLevel,
   sanitizeCountryCode,
   sanitizeStats,
@@ -168,6 +169,7 @@ export async function createPlayerProfile(
       if (!uSnap.exists()) {
         tx.set(uRef, { uid });
       }
+      const activeSub = getActiveSubscription(state, Date.now());
       tx.set(doc(db, 'players', uid), {
         username,
         usernameLower: lower,
@@ -178,6 +180,8 @@ export async function createPlayerProfile(
         gems,
         level: 1,
         rank: 0,
+        subTier: activeSub ? activeSub.def.id : '',
+        subExp: activeSub ? Math.floor(activeSub.exp) : 0,
         lastSeen: serverTimestamp(),
         stats: sanitizeStats(undefined),
         createdAt: serverTimestamp(),
@@ -241,12 +245,15 @@ export async function syncSaveToCloud(params: {
         buildings: totalBuildings(state),
         completedTrades: Math.max(pubStats?.completedTrades || 0, completedTradesCount),
       });
+      const activeSub = getActiveSubscription(state, Date.now());
       tx.update(doc(db, 'players', uid), {
         gdp: gdpVal,
         cash,
         gems,
         level: playerLevel(state),
         rank: Math.max(0, Math.min(MAX_RANK, Math.floor(state.rank || 0))),
+        subTier: activeSub ? activeSub.def.id : '',
+        subExp: activeSub ? Math.floor(activeSub.exp) : 0,
         lastSeen: serverTimestamp(),
         stats: mergedStats,
       });

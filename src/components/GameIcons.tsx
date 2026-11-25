@@ -248,6 +248,8 @@ export const BoosterIcon: React.FC<{ id: string; size?: number }> = ({ id, size 
       return <Coins {...props} />;
     case 'happy_days':
       return <Smile {...props} />;
+    case 'civic_rally':
+      return <Vote {...props} />;
     case 'boom_surge':
       return <Rocket {...props} />;
     case 'golden_treasury':
@@ -518,6 +520,7 @@ export {
   Coins,
   Crown,
   Flame,
+  FlaskConical,
   Gem,
   Gift,
   Globe,

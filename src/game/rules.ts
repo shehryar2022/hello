@@ -7,6 +7,7 @@ import {
   CRATE_COST_GEMS,
   EV_LEN_MS,
   EV_SLOT_MS,
+  EXEC_DECISIONS,
   GOV_DAY_SEC,
   GOVS,
   GX_GOV_BUILDINGS,
@@ -21,6 +22,7 @@ import {
   REAL_GDP_SCALED,
   STICKERS,
   SUBSCRIPTIONS,
+  TECH_TREE,
   WORLD_EVENTS,
 } from './constants';
 import type {
@@ -32,6 +34,7 @@ import type {
   QuestDef,
   StickerDef,
   SubscriptionDef,
+  SubscriptionTierId,
 } from './types';
 
 export function formatNumber(n: number): string {
@@ -144,6 +147,7 @@ export function freshState(): GameState {
       exp: null,
     },
     sub: {},
+    tech: {},
   };
 }
 
@@ -164,6 +168,17 @@ export function cleanMilestonesMap(raw: unknown): Record<string, number> {
   if (!raw || typeof raw !== 'object') return out;
   for (const [k, val] of Object.entries(raw as Record<string, unknown>)) {
     if (MILESTONES.some((m) => m.id === k) && Number(val) > 0) {
+      out[k] = 1;
+    }
+  }
+  return out;
+}
+
+export function cleanTechMap(raw: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [k, val] of Object.entries(raw as Record<string, unknown>)) {
+    if (TECH_TREE.some((t) => t.id === k) && Number(val) > 0) {
       out[k] = 1;
     }
   }
@@ -230,6 +245,7 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
 
   if (!s.claimed || typeof s.claimed !== 'object') s.claimed = {};
   s.milestones = cleanMilestonesMap(s.milestones);
+  s.tech = cleanTechMap(s.tech);
   if (!s.activeFx || typeof s.activeFx !== 'object') s.activeFx = {};
   // Migrate legacy activeFx (income15 / income3x / tax2x) safely to bounded fields
   const legacyFx = s.activeFx as Record<string, number>;
@@ -426,6 +442,61 @@ export function taxInfo(s: GameState) {
   return { mult: raw * (1 - ev), raw, burden, ev };
 }
 
+export function hasTech(s: GameState, techId: string): boolean {
+  return Boolean(s.tech && s.tech[techId] > 0);
+}
+
+export function techCount(s: GameState): number {
+  return Object.keys(s.tech || {}).filter((id) => TECH_TREE.some((t) => t.id === id) && (s.tech?.[id] || 0) > 0).length;
+}
+
+export function canUnlockTech(s: GameState, techId: string): { ok: boolean; reason?: string } {
+  const def = TECH_TREE.find((t) => t.id === techId);
+  if (!def) return { ok: false, reason: 'Unknown doctrine' };
+  if (hasTech(s, techId)) return { ok: false, reason: 'Already researched' };
+  const ownedBldgs = totalBuildings(s);
+  if (ownedBldgs < def.reqBuildings) {
+    return { ok: false, reason: `Requires ${def.reqBuildings} total buildings (${ownedBldgs}/${def.reqBuildings})` };
+  }
+  if (s.cash < def.cost) {
+    return { ok: false, reason: 'Not enough cash' };
+  }
+  return { ok: true };
+}
+
+export function applyUnlockTech(
+  s: GameState,
+  techId: string,
+): { ok: boolean; state: GameState; reason?: string } {
+  const check = canUnlockTech(s, techId);
+  if (!check.ok) return { ok: false, state: s, reason: check.reason };
+  const def = TECH_TREE.find((t) => t.id === techId)!;
+  return {
+    ok: true,
+    state: {
+      ...s,
+      cash: s.cash - def.cost,
+      tech: { ...(s.tech || {}), [techId]: 1 },
+    },
+  };
+}
+
+export function getTechIncomeMult(s: GameState): number {
+  let bonus = 0;
+  if (hasTech(s, 'smart_grid')) bonus += 0.04;
+  if (hasTech(s, 'auto_customs')) bonus += 0.03;
+  if (hasTech(s, 'sovereign_vault')) bonus += 0.04;
+  return 1 + bonus;
+}
+
+export function getInfraDecayMult(s: GameState): number {
+  return hasTech(s, 'smart_grid') ? 0.8 : 1;
+}
+
+export function getTaxPoolCapSeconds(s: GameState): number {
+  return hasTech(s, 'sovereign_vault') ? 2400 : 1800;
+}
+
 export function getActiveSubscription(s: GameState, nowMs = Date.now()) {
   const sub = s.sub;
   if (!sub?.tier || !sub.exp || sub.exp <= nowMs) return null;
@@ -439,14 +510,30 @@ export function getActiveSubscription(s: GameState, nowMs = Date.now()) {
   };
 }
 
+export function isProfileSubActive(
+  profile: Pick<PlayerProfile, 'subTier' | 'subExp'> | null | undefined,
+  nowMs = Date.now(),
+): SubscriptionTierId | null {
+  if (!profile?.subTier || !profile.subExp || profile.subExp <= nowMs) return null;
+  return SUBSCRIPTIONS.some((x) => x.id === profile.subTier) ? (profile.subTier as SubscriptionTierId) : null;
+}
+
 export function getDevelopmentDiscount(s: GameState, nowMs = Date.now()): number {
   const active = getActiveSubscription(s, nowMs);
-  return active ? active.def.discountRate : 0;
+  const subDisc = active ? active.def.discountRate : 0;
+  const techDisc = hasTech(s, 'civil_corps') ? 0.05 : 0;
+  return Math.min(0.35, subDisc + techDisc);
 }
 
 export function getSubscriptionProjectSpeedMult(s: GameState, nowMs = Date.now()): number {
   const active = getActiveSubscription(s, nowMs);
   return active ? active.def.projectSpeedMult : 1;
+}
+
+export function getProjectSpeedMult(s: GameState, nowMs = Date.now()): number {
+  const subMult = getSubscriptionProjectSpeedMult(s, nowMs);
+  const techBonus = hasTech(s, 'civil_corps') ? 0.15 : 0;
+  return subMult + techBonus;
 }
 
 export function getActiveShopIncomeBooster(s: GameState, nowMs = Date.now()) {
@@ -485,7 +572,7 @@ export function calculateIncome(
   // Cap combined temporary shop + gem boost multiplier to 2.5x so cash stays balanced
   const tempMult = Math.min(2.5, shopBoost * gemBoost);
 
-  const permMult = gxMultiplier(s) * evMult * gov.inc * subMult;
+  const permMult = gxMultiplier(s) * evMult * gov.inc * subMult * getTechIncomeMult(s);
   const taxMult = taxInfo(s).mult;
 
   const cleanGreenCount = (s.b.solar || 0) + (s.b.hydro || 0) + (s.b.fusion || 0);
@@ -552,11 +639,17 @@ export function playerLevel(s: GameState): number {
 export function targetHappiness(s: GameState): number {
   const carbonOffset = (s.b.solar || 0) * 3 + (s.b.hydro || 0) * 2 + (s.b.fusion || 0) * 5 + (s.green || 0) * 0.5;
   const carbonPen = Math.max(0, (s.carbon || 0) - carbonOffset) * 0.5;
+  const ecoTech = hasTech(s, 'eco_catalysis');
+  const careTech = hasTech(s, 'healthcare_act');
+  const factPenaltyPer = ecoTech ? 1.05 : 1.5;
+  const hospBonusPer = careTech ? 1.5 : 1.2;
+  const techFlatHap = (ecoTech ? 2 : 0) + (careTech ? 5 : 0);
   return Math.max(
     5,
     Math.min(
       100,
       40 +
+        techFlatHap +
         gxHappinessMod(s) +
         s.wel * 1.5 +
         s.edu * 0.6 +
@@ -573,9 +666,9 @@ export function targetHappiness(s: GameState): number {
         (s.duty || 0) * 0.2 -
         (s.tourism || 0) * 0.15 -
         (s.digital || 0) * 0.25 -
-        (s.b.fact || 0) * 1.5 +
+        (s.b.fact || 0) * factPenaltyPer +
         (s.b.farm || 0) * 0.8 +
-        (s.b.hosp || 0) * 1.2 +
+        (s.b.hosp || 0) * hospBonusPer +
         (s.b.stadium || 0) * 0.8 +
         (s.b.solar || 0) * 0.5 +
         (s.b.water || 0) * 0.7 +
@@ -623,7 +716,9 @@ export function rollTradePortExport(
   if (ports <= 0 || poolCollected < Math.max(50, baseNet * 30)) {
     return { gems: 0, sticker: null };
   }
-  const chance = Math.min(0.25, 0.05 + ports * 0.02);
+  const maxCap = hasTech(s, 'auto_customs') ? 0.33 : 0.25;
+  const bonus = hasTech(s, 'auto_customs') ? 0.08 : 0;
+  const chance = Math.min(maxCap, 0.05 + ports * 0.02 + bonus);
   if (rng() >= chance) {
     return { gems: 0, sticker: null };
   }
@@ -656,6 +751,9 @@ export function canBuyBooster(
   }
   if (booster.fx === 'hap10' && s.hap >= 100) {
     return { ok: false, reason: 'Happiness is already at 100%', cooldownLeftSec: 0 };
+  }
+  if (booster.fx === 'rally' && s.hap >= 100 && s.appr >= 100) {
+    return { ok: false, reason: 'Happiness & Approval are already at 100%', cooldownLeftSec: 0 };
   }
   if (s.cash < booster.cost) {
     return { ok: false, reason: 'Not enough cash', cooldownLeftSec: 0 };
@@ -694,6 +792,9 @@ export function applyBuyBooster(
     next.activeFx.taxSurge = 1;
   } else if (booster.fx === 'hap10') {
     next.hap = Math.min(100, next.hap + 15);
+  } else if (booster.fx === 'rally') {
+    next.hap = Math.min(100, next.hap + 10);
+    next.appr = Math.min(100, next.appr + 12);
   }
 
   return { ok: true, state: next };
@@ -740,7 +841,7 @@ export function applyOfflineEarnings(
     return { state: { ...s, t: nowMs }, credited: 0, awaySec: away, wasCapped: rawAway > OFFLINE_CAP_SEC };
   }
 
-  const capPool = net * 1800;
+  const capPool = net * getTaxPoolCapSeconds(s);
   const prevPool = s.taxPool || 0;
   const newPool = prevPool >= capPool ? prevPool : Math.min(capPool, prevPool + credited);
 
@@ -974,6 +1075,7 @@ export const MILESTONES: QuestDef[] = [
   { id: 'm_infra_5', t: 'Master Architect (Upgrade any building to Lv 5)', f: (s) => Math.max(1, ...Object.values(s.gx?.lvl || { farm: 1 })), g: 5, r: 12 },
   { id: 'm_stk_10', t: 'Curator (Collect 10 unique stickers)', f: (s) => stickerUniqueCount(s), g: 10, r: 10 },
   { id: 'm_rank_4', t: 'Royal Charter (Reach Platinum King rank)', f: (s) => s.rank || 0, g: 4, r: 15 },
+  { id: 'm_tech_3', t: 'Chief Scientist (Unlock 3 Research doctrines)', f: (s) => techCount(s), g: 3, r: 12 },
   { id: 'm_gdp_100m', t: 'Economic Powerhouse (GDP ₨ 100M)', f: (s) => calculateGdp(s), g: 100_000_000, r: 25 },
   { id: 'm_rank_10', t: 'World Dominance (Reach Global Hegemon)', f: (s) => s.rank || 0, g: MAX_RANK, r: 45 },
 ];
@@ -1094,4 +1196,82 @@ export function sanitizeStats(
 export function tierOfCompletedTrades(count: number | undefined): number {
   const c = count || 0;
   return [1, 3, 8].filter((t) => c >= t).length;
+}
+
+export function getExecDecisionQuote(
+  s: GameState,
+  decisionId: string,
+  tradeTier = 0,
+  nowMs = Date.now(),
+): { spendCost: number; gainCash: number; poolBonus: number } {
+  const baseNet = Math.max(10, calculateIncome(s, { tradeTier, nowMs, ignoreTempBoosters: true }).net);
+  const spendCost = Math.min(Math.floor(s.cash * 0.12), Math.max(250, Math.floor(baseNet * 35)));
+  const gainCash = Math.max(200, Math.floor(baseNet * 48));
+  const poolBonus = Math.max(150, Math.floor(baseNet * 30));
+  void decisionId;
+  return { spendCost, gainCash, poolBonus };
+}
+
+export function resolveExecutiveDecision(
+  s: GameState,
+  decisionId: string,
+  choiceIdx: 0 | 1,
+  tradeTier = 0,
+  nowMs = Date.now(),
+  rng: () => number = Math.random,
+): { ok: boolean; state: GameState; summary: string } {
+  const def = EXEC_DECISIONS.find((d) => d.id === decisionId);
+  if (!def) return { ok: false, state: s, summary: '' };
+  const quote = getExecDecisionQuote(s, decisionId, tradeTier, nowMs);
+
+  if (choiceIdx === 1) {
+    const hapPen = decisionId === 'grid_crunch' ? 5 : decisionId === 'green_bonds' ? 0 : 4;
+    const apprPen = decisionId === 'grid_crunch' ? 4 : decisionId === 'green_bonds' ? 3 : 0;
+    const next: GameState = {
+      ...s,
+      cash: Math.min(1e13, s.cash + quote.gainCash),
+      hap: Math.max(0, s.hap - hapPen),
+      appr: Math.max(0, s.appr - apprPen),
+    };
+    return {
+      ok: true,
+      state: next,
+      summary: `${def.title}: +₨ ${formatNumber(quote.gainCash)}${hapPen ? `, −${hapPen}% Hap` : ''}${apprPen ? `, −${apprPen}% Appr` : ''}`,
+    };
+  }
+
+  if (s.cash < quote.spendCost) {
+    return { ok: false, state: s, summary: 'Not enough cash for this option' };
+  }
+
+  const next: GameState = { ...s, cash: Math.max(0, s.cash - quote.spendCost) };
+  if (decisionId === 'tech_expo') {
+    next.hap = Math.min(100, next.hap + 8);
+    next.appr = Math.min(100, next.appr + 6);
+    next.gems = Math.min(1e9, next.gems + 1);
+    return { ok: true, state: next, summary: `Sponsored Tech Expo (−₨ ${formatNumber(quote.spendCost)}): +8% Hap, +6% Appr, +1 Gem!` };
+  }
+  if (decisionId === 'grid_crunch') {
+    next.hap = Math.min(100, next.hap + 6);
+    const cond = { ...next.gx.cond };
+    for (const k of Object.keys(cond)) cond[k] = Math.min(100, (cond[k] ?? 100) + 12);
+    next.gx = { ...next.gx, cond };
+    return { ok: true, state: next, summary: `Grid Subsidized (−₨ ${formatNumber(quote.spendCost)}): +6% Hap & +12% Infra condition!` };
+  }
+  if (decisionId === 'port_backlog') {
+    next.appr = Math.min(100, next.appr + 5);
+    const pool = STICKERS.filter((x) => x.r <= 2);
+    const picked = pool[Math.floor(rng() * pool.length) % pool.length];
+    next.stk = { ...(next.stk || {}), [picked.id]: (next.stk?.[picked.id] || 0) + 1 };
+    return { ok: true, state: next, summary: `Customs Cleared (−₨ ${formatNumber(quote.spendCost)}): +5% Appr & ${picked.n} sticker!` };
+  }
+  if (decisionId === 'green_bonds') {
+    next.hap = Math.min(100, next.hap + 10);
+    const capPool = Math.max(0, calculateIncome(next, { tradeTier, nowMs, ignoreTempBoosters: true }).net * getTaxPoolCapSeconds(next));
+    next.taxPool = next.taxPool >= capPool ? next.taxPool : Math.min(capPool, next.taxPool + quote.poolBonus);
+    return { ok: true, state: next, summary: `Green Bonds (−₨ ${formatNumber(quote.spendCost)}): +10% Hap & +₨ ${formatNumber(quote.poolBonus)} Tax Pool!` };
+  }
+  next.hap = Math.min(100, next.hap + 7);
+  next.appr = Math.min(100, next.appr + 7);
+  return { ok: true, state: next, summary: `Heritage Week (−₨ ${formatNumber(quote.spendCost)}): +7% Hap & +7% Appr!` };
 }

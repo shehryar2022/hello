@@ -1339,6 +1339,127 @@ input[type=range]::-webkit-slider-thumb {
 }
 @keyframes fl { to { transform: translateY(-90px) scale(1.18); opacity: 0; } }
 
+/* Animated Subscription Tier Visuals (GPU compositor transform & opacity only) */
+.sub-card {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.sub-card > * {
+  position: relative;
+  z-index: 1;
+}
+.sub-card::after {
+  content: "";
+  position: absolute;
+  inset: -20% -60%;
+  width: 55%;
+  background: linear-gradient(
+    105deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.14) 50%,
+    transparent 80%
+  );
+  transform: translate3d(-120%, 0, 0) skewX(-18deg);
+  animation: subSweep 3.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  pointer-events: none;
+  z-index: 0;
+  will-change: transform, opacity;
+}
+.sub-card--daily {
+  background: linear-gradient(135deg, rgba(92, 203, 255, 0.15), var(--clay2) 68%);
+  box-shadow: 0 0 0 1.5px rgba(92, 203, 255, 0.52), var(--sm), var(--in);
+}
+.sub-card--daily::after {
+  background: linear-gradient(105deg, transparent 20%, rgba(92, 203, 255, 0.22) 50%, transparent 80%);
+}
+.sub-card--weekly {
+  background: linear-gradient(135deg, rgba(63, 224, 176, 0.18), var(--clay2) 68%);
+  box-shadow: 0 0 0 1.5px rgba(63, 224, 176, 0.62), var(--sm), var(--in);
+}
+.sub-card--weekly::after {
+  background: linear-gradient(105deg, transparent 20%, rgba(63, 224, 176, 0.26) 50%, transparent 80%);
+  animation-duration: 3.3s;
+}
+.sub-card--monthly {
+  background: linear-gradient(135deg, rgba(255, 194, 61, 0.2), rgba(255, 111, 165, 0.08) 45%, var(--clay2) 78%);
+  box-shadow: 0 0 0 1.5px rgba(255, 194, 61, 0.78), var(--sm), var(--in);
+}
+.sub-card--monthly::after {
+  background: linear-gradient(105deg, transparent 18%, rgba(255, 222, 128, 0.3) 50%, transparent 82%);
+  animation-duration: 2.8s;
+}
+.row.me.sub-card--daily {
+  box-shadow: 0 0 0 2.5px rgba(92, 203, 255, 0.85), var(--sm), var(--in);
+}
+.row.me.sub-card--weekly {
+  box-shadow: 0 0 0 2.5px rgba(63, 224, 176, 0.9), var(--sm), var(--in);
+}
+.row.me.sub-card--monthly {
+  box-shadow: 0 0 0 2.5px rgba(255, 194, 61, 0.95), var(--sm), var(--in);
+}
+
+.sub-crest {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font: 700 10.5px/1.2 var(--d);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  flex-shrink: 0;
+  animation: subCrestPulse 2.4s ease-in-out infinite alternate;
+  will-change: transform, opacity;
+}
+.sub-crest-ic {
+  display: inline-grid;
+  place-items: center;
+  animation: subCrestFloat 2.1s ease-in-out infinite alternate;
+  will-change: transform;
+}
+.sub-crest--daily {
+  background: rgba(92, 203, 255, 0.2);
+  color: #9ce4ff;
+  border: 1px solid rgba(92, 203, 255, 0.45);
+}
+.sub-crest--weekly {
+  background: rgba(63, 224, 176, 0.2);
+  color: #7bf5cf;
+  border: 1px solid rgba(63, 224, 176, 0.5);
+}
+.sub-crest--monthly {
+  background: linear-gradient(90deg, rgba(255, 194, 61, 0.28), rgba(255, 111, 165, 0.22));
+  color: #ffe28a;
+  border: 1px solid rgba(255, 194, 61, 0.65);
+}
+
+@keyframes subSweep {
+  0% {
+    transform: translate3d(-120%, 0, 0) skewX(-18deg);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  55% {
+    transform: translate3d(260%, 0, 0) skewX(-18deg);
+    opacity: 0.85;
+  }
+  65%, 100% {
+    transform: translate3d(260%, 0, 0) skewX(-18deg);
+    opacity: 0;
+  }
+}
+@keyframes subCrestFloat {
+  from { transform: translate3d(0, 0.8px, 0) scale(1); }
+  to { transform: translate3d(0, -1.6px, 0) scale(1.08); }
+}
+@keyframes subCrestPulse {
+  from { opacity: 0.88; transform: scale(1); }
+  to { opacity: 1; transform: scale(1.03); }
+}
+
 .noanim *, .noanim :before, .noanim :after,
 .hid *, .hid :before, .hid :after {
   animation: none !important;

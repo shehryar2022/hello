@@ -7,22 +7,28 @@ import {
   GX_PROJECT_TYPES,
   GX_ROADS,
   PROJECT_STAGES,
+  TECH_TREE,
 } from '../../game/constants';
 import {
+  canUnlockTech,
   formatNumber,
   getDevelopmentDiscount,
-  getSubscriptionProjectSpeedMult,
+  getProjectSpeedMult,
   gxAverageCondition,
   gxRepairCost,
   gxUpgradeCost,
+  hasTech,
+  techCount,
+  totalBuildings,
 } from '../../game/rules';
-import type { GameState, GovProject, ProjectType } from '../../game/types';
+import type { GameState, GovtSubTab, GovProject, ProjectType } from '../../game/types';
 import {
   Bell,
   BuildingIcon,
   CheckCircle2,
   Clock,
   Coins,
+  FlaskConical,
   Hammer,
   InfraIcon,
   Landmark,
@@ -51,28 +57,34 @@ function conditionColor(c: number): string {
 
 interface GovtTabProps {
   state: GameState;
+  subTab: GovtSubTab;
   uid: string | null;
   projects: GovProject[];
   liveProjectProgress: Record<string, number>;
   serverOffsetMs: number;
   isUserActive: boolean;
+  onChangeSubTab: (sub: GovtSubTab) => void;
   onFixInfra: (key: string, full: boolean) => void;
   onUpgradeBuilding: (id: string) => void;
   onStartProject: (type: ProjectType) => void;
   onPayProjectStage: (projectId: string) => void;
+  onUnlockTech: (techId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
 }
 
 export const GovtTab: React.FC<GovtTabProps> = ({
   state,
+  subTab,
   uid,
   projects,
   liveProjectProgress,
   serverOffsetMs,
   isUserActive,
+  onChangeSubTab,
   onFixInfra,
   onUpgradeBuilding,
   onStartProject,
   onPayProjectStage,
+  onUnlockTech,
 }) => {
   const gx = state.gx;
   const gbAvg = gxAverageCondition(state, GX_GOV_BUILDINGS);
@@ -82,7 +94,10 @@ export const GovtTab: React.FC<GovtTabProps> = ({
   const nowSrv = Date.now() + serverOffsetMs;
   const activeCount = projects.filter((p) => p.status === 'active').length;
   const disc = getDevelopmentDiscount(state, nowSrv);
-  const projSpeed = getSubscriptionProjectSpeedMult(state, nowSrv);
+  const projSpeed = getProjectSpeedMult(state, nowSrv);
+  const researchedCount = techCount(state);
+  const readyTechCount = TECH_TREE.filter((t) => canUnlockTech(state, t.id).ok).length;
+  const ownedBuildings = totalBuildings(state);
 
   const dismissStorageKey = `cet_cleared_proj_${uid || 'offline'}`;
   const [hiddenPastIds, setHiddenPastIds] = useState<string[]>(() => {
@@ -121,45 +136,64 @@ export const GovtTab: React.FC<GovtTabProps> = ({
 
   return (
     <div>
+      <div className="subtabs">
+        <button type="button" className={subTab === 'infra' ? 'on' : ''} onClick={() => onChangeSubTab('infra')}>
+          <Landmark size={14} />
+          <span>Infra &amp; Upgrades</span>
+        </button>
+        <button type="button" className={subTab === 'projects' ? 'on' : ''} onClick={() => onChangeSubTab('projects')}>
+          <Hammer size={14} />
+          <span>Projects</span>
+          {activeCount > 0 && <em>{activeCount}</em>}
+        </button>
+        <button type="button" className={subTab === 'research' ? 'on' : ''} onClick={() => onChangeSubTab('research')}>
+          <FlaskConical size={14} />
+          <span>Research Lab</span>
+          {readyTechCount > 0 && <em>{readyTechCount}</em>}
+        </button>
+      </div>
+
       {(disc > 0 || projSpeed > 1) && (
         <div className="tradelim">
           <span>
             <Sparkles size={14} color="#3fe0b0" />
-            Subscription Perks Active
+            National Bonuses Active
           </span>
           <b className="ok">
-            −{Math.round(disc * 100)}% repair/upgrade · ×{projSpeed.toFixed(2)} project speed
+            −{Math.round(disc * 100)}% build/repair · ×{projSpeed.toFixed(2)} project speed
           </b>
         </div>
       )}
 
-      <div className="gxc">
-        <p style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <Coins size={15} color="#ffc23d" />
-          <b>Daily Government Expenses</b>{' '}
-          <span className="dim">
-            · next in <b>{Math.max(0, GOV_DAY_SEC - Math.floor(gx.acc))}s</b> of active play
-          </span>
-        </p>
-        {exp ? (
-          <p className="dim">
-            Day {exp.n}: Salaries ₨ {formatNumber(exp.sal)} · Electricity ₨ {formatNumber(exp.el)} · Infrastructure ₨{' '}
-            {formatNumber(exp.inf)}
-            <br />
-            <b>Total ₨ {formatNumber(exp.total)}</b> (paid ₨ {formatNumber(exp.paid)})
-          </p>
-        ) : (
-          <p className="dim">
-            First report arrives after one government day (5 min active play). Salaries 3% + electricity 1.5% +
-            infrastructure 1.5% of daily gross income.
-          </p>
-        )}
-        <p className="dim">
-          Buildings avg {Math.round(gbAvg)}% · Transport efficiency {Math.round(92 + (8 * rdAvg) / 100)}% ·{' '}
-          {gx.blk > 0 ? 'Blackout −15% income' : 'Power OK'}
-          {gx.pb > 0 ? ` · Projects bonus +${(gx.pb * 100).toFixed(0)}% income` : ''}
-        </p>
-      </div>
+      {subTab === 'infra' && (
+        <>
+          <div className="gxc">
+            <p style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <Coins size={15} color="#ffc23d" />
+              <b>Daily Government Expenses</b>{' '}
+              <span className="dim">
+                · next in <b>{Math.max(0, GOV_DAY_SEC - Math.floor(gx.acc))}s</b> of active play
+              </span>
+            </p>
+            {exp ? (
+              <p className="dim">
+                Day {exp.n}: Salaries ₨ {formatNumber(exp.sal)} · Electricity ₨ {formatNumber(exp.el)} · Infrastructure ₨{' '}
+                {formatNumber(exp.inf)}
+                <br />
+                <b>Total ₨ {formatNumber(exp.total)}</b> (paid ₨ {formatNumber(exp.paid)})
+              </p>
+            ) : (
+              <p className="dim">
+                First report arrives after one government day (5 min active play). Salaries 3% + electricity 1.5% +
+                infrastructure 1.5% of daily gross income.
+              </p>
+            )}
+            <p className="dim">
+              Buildings avg {Math.round(gbAvg)}% · Transport efficiency {Math.round(92 + (8 * rdAvg) / 100)}% ·{' '}
+              {gx.blk > 0 ? 'Blackout −15% income' : 'Power OK'}
+              {gx.pb > 0 ? ` · Projects bonus +${(gx.pb * 100).toFixed(0)}% income` : ''}
+            </p>
+          </div>
 
       <div className="gxh">
         <Landmark size={15} color="#ffc23d" />
@@ -308,11 +342,15 @@ export const GovtTab: React.FC<GovtTabProps> = ({
       ) : (
         <p className="dim">Buy buildings in the Build tab first.</p>
       )}
+        </>
+      )}
 
-      <div className="gxh">
-        <Hammer size={15} color="#a58cff" />
-        <span>Government Projects</span>
-      </div>
+      {subTab === 'projects' && (
+        <>
+          <div className="gxh" style={{ marginTop: 4 }}>
+            <Hammer size={15} color="#a58cff" />
+            <span>Government Projects</span>
+          </div>
       <p className="dim" style={{ marginBottom: 10 }}>
         Pay in {PROJECT_STAGES} stages. Construction advances while you are online &amp; active (24h–96h deadlines; 75% refund if missed). Max 3 active.
       </p>
@@ -458,6 +496,75 @@ export const GovtTab: React.FC<GovtTabProps> = ({
             ))}
           </div>
         </>
+      )}
+        </>
+      )}
+
+      {subTab === 'research' && (
+        <div>
+          <div className="tradelim">
+            <span>
+              <FlaskConical size={14} color="#5ccbff" />
+              National Research Doctrines
+            </span>
+            <b>
+              {researchedCount} / {TECH_TREE.length} Unlocked · {ownedBuildings} Buildings
+            </b>
+          </div>
+
+          <div className="gxc" style={{ marginBottom: 10 }}>
+            <p className="dim">
+              Permanent national breakthroughs that strengthen your grid, healthcare, customs, and treasury reserves without breaking economy balance.
+            </p>
+          </div>
+
+          <div className="list g2">
+            {TECH_TREE.map((t) => {
+              const unlocked = hasTech(state, t.id);
+              const check = canUnlockTech(state, t.id);
+              const catColor = t.cat === 'economy' ? '#ffc23d' : t.cat === 'civic' ? '#3fe0b0' : '#5ccbff';
+              const metReq = ownedBuildings >= t.reqBuildings;
+              return (
+                <div key={t.id} className="row" style={{ '--c': unlocked ? '#3fe0b0' : catColor } as React.CSSProperties}>
+                  <div className="em">
+                    {unlocked ? <CheckCircle2 size={22} color="#3fe0b0" /> : <FlaskConical size={22} color={catColor} />}
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <h2>
+                      <span>{t.n}</span>
+                      <span className="lv" style={{ background: unlocked ? 'var(--mint)' : catColor, color: '#05161f' }}>
+                        {t.cat.toUpperCase()}
+                      </span>
+                    </h2>
+                    <p>
+                      {t.d} <b style={{ color: '#e6dcff' }}>{t.effectLabel}</b>
+                    </p>
+                    {!unlocked && (
+                      <p className={metReq ? 'ok' : 'bad'} style={{ fontSize: 11.5 }}>
+                        Requires {t.reqBuildings} buildings ({ownedBuildings}/{t.reqBuildings})
+                      </p>
+                    )}
+                  </div>
+                  {unlocked ? (
+                    <span className="lv" style={{ background: 'var(--mint)', color: '#04332a' }}>
+                      Active
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      className={`btn sm ${check.ok ? 'gold' : 'no'}`}
+                      disabled={!check.ok}
+                      title={check.reason}
+                      onClick={(e) => onUnlockTech(t.id, e)}
+                    >
+                      ₨ {formatNumber(t.cost)}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
     </div>
   );

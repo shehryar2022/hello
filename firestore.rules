@@ -70,7 +70,8 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'username', 'usernameLower', 'countryCode', 'countryName',
-          'gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'createdAt'
+          'gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'createdAt',
+          'subTier', 'subExp'
         ])
         && data.username is string && data.username.size() >= 3 && data.username.size() <= 16
         && data.username.matches('^[A-Za-z0-9_]{3,16}$')
@@ -87,6 +88,8 @@ service cloud.firestore {
         && data.rank is int && data.rank >= 0 && data.rank <= 10
         && data.lastSeen is timestamp
         && (!('createdAt' in data) || data.createdAt is timestamp)
+        && (!('subTier' in data) || data.subTier in ['', 'daily', 'weekly', 'monthly'])
+        && (!('subExp' in data) || (data.subExp is number && data.subExp >= 0))
         && isValidPlayerStats(data.stats);
     }
 
@@ -145,6 +148,7 @@ service cloud.firestore {
         && (!('milestones' in data.save) || (data.save.milestones is map && data.save.milestones.size() <= 40))
         && (!('claimed' in data.save) || (data.save.claimed is map && data.save.claimed.size() <= 20))
         && (!('boosterCd' in data.save) || (data.save.boosterCd is map && data.save.boosterCd.size() <= 20))
+        && (!('tech' in data.save) || (data.save.tech is map && data.save.tech.size() <= 16))
         && (!('gx' in data.save) || (data.save.gx is map && data.save.gx.size() <= 12))
         && (!('activeFx' in data.save) || (
           data.save.activeFx is map
@@ -284,7 +288,7 @@ service cloud.firestore {
           affectedOnly(['lastSeen']) ||
           (
             isValidPlayerProfile(incoming()) &&
-            affectedOnly(['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats'])
+            affectedOnly(['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp'])
           )
         );
       allow delete: if false;

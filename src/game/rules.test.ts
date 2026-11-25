@@ -10,6 +10,7 @@ import {
   STICKERS,
   SUBSCRIPTIONS,
   TAB_META,
+  TECH_TREE,
 } from './constants';
 import {
   applyBuyBooster,
@@ -17,6 +18,7 @@ import {
   applyBuySubscription,
   applyOfflineEarnings,
   applyPolicyPreset,
+  applyUnlockTech,
   buildingCost,
   bulkBuildingCost,
   buyStickerCrate,
@@ -31,11 +33,17 @@ import {
   fuseSticker,
   getActiveSubscription,
   getDevelopmentDiscount,
-  getSubscriptionProjectSpeedMult,
+  getInfraDecayMult,
+  getProjectSpeedMult,
+  getTaxPoolCapSeconds,
+  getTechIncomeMult,
   gxRepairCost,
   gxUpgradeCost,
+  hasTech,
+  isProfileSubActive,
   migrateState,
   MILESTONES,
+  resolveExecutiveDecision,
   rollTradePortExport,
   sanitizeStats,
   selectDailyQuestIds,
@@ -70,7 +78,7 @@ test('shop boosters are limited: cannot stack multiple income boosters and multi
   const r1 = applyBuyBooster(state, boom, now);
   assert.equal(r1.ok, true);
   state = r1.state;
-  assert.equal(state.cash, 9_650_000);
+  assert.equal(state.cash, 9_150_000);
   assert.equal(state.activeFx.incomeBoostMult, 1.75);
 
   const r2 = canBuyBooster(state, quick, now + 10_000);
@@ -124,12 +132,12 @@ test('building costs scale by 1.25x, bulkBuildingCost matches sum, and upkeep is
   assert.ok(inc.upkeep <= inc.gross * 0.35 + 0.001);
 });
 
-test('ranks reduced costs, +1% per rank income bonus, and 10 total ranks bought in strict order', () => {
+test('ranks high-average costs, +1% per rank income bonus, and 10 total ranks bought in strict order', () => {
   assert.equal(MAX_RANK, 10);
   assert.equal(RANKS.length, 11);
-  assert.equal(RANKS[1].cost, 250_000);
-  assert.equal(RANKS[6].cost, 18_000_000);
-  assert.equal(RANKS[10].cost, 600_000_000);
+  assert.equal(RANKS[1].cost, 400_000);
+  assert.equal(RANKS[6].cost, 32_000_000);
+  assert.equal(RANKS[10].cost, 650_000_000);
 
   let state = freshState();
   state.cash = 2_000_000_000;
@@ -325,9 +333,9 @@ test('balanced subscriptions grant modest perks & prevent same-day double-claim 
   const sub1 = applyBuySubscription(state, daily, now);
   assert.equal(sub1.ok, true);
   state = sub1.state;
-  assert.equal(state.cash, 596_000_000);
+  assert.equal(state.cash, 596_500_000);
   assert.equal(getDevelopmentDiscount(state, now), 0.03);
-  assert.equal(getSubscriptionProjectSpeedMult(state, now), 1.05);
+  assert.equal(getProjectSpeedMult(state, now), 1.05);
   assert.ok(Math.abs(calculateIncome(state, { nowMs: now }).net / baseInc - 1.04) < 0.001);
   assert.ok(buildingCost(farmDef, 10, getDevelopmentDiscount(state, now)) < baseFarmCost);
   assert.ok(gxRepairCost(state, 'parl', false, now) < baseRepair);
@@ -442,3 +450,81 @@ test('rebalanced economy invariants: starter cash 260, monotonic endgame ROI, +1
   halfAppr.appr = 50;
   assert.ok(taxInfo(zeroAppr).ev > taxInfo(halfAppr).ev, '0% approval must trigger higher evasion than 50% approval');
 });
+
+test('National Research Lab doctrines unlock with building prerequisites and apply balanced buffs', () => {
+  let state = freshState();
+  state.cash = 100_000_000;
+  state.b.farm = 5;
+  assert.equal(TECH_TREE.length, 6);
+
+  // Building prerequisite blocks early unlock
+  const blocked = applyUnlockTech(state, 'smart_grid');
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.reason || '', /buildings/i);
+
+  state.b.farm = 15;
+  state.b.fact = 5;
+  state.b.hosp = 5;
+  state.b.port = 25;
+  const baseNet = calculateIncome(state).net;
+  const baseHap = targetHappiness(state);
+  assert.equal(getTaxPoolCapSeconds(state), 1800);
+  assert.equal(getInfraDecayMult(state), 1);
+
+  const u1 = applyUnlockTech(state, 'smart_grid');
+  assert.equal(u1.ok, true);
+  state = u1.state;
+  assert.equal(hasTech(state, 'smart_grid'), true);
+  assert.equal(getInfraDecayMult(state), 0.8);
+  assert.ok(getTechIncomeMult(state) > 1.03);
+
+  state = applyUnlockTech(state, 'eco_catalysis').state;
+  state = applyUnlockTech(state, 'healthcare_act').state;
+  assert.ok(targetHappiness(state) > baseHap + 5);
+
+  state = applyUnlockTech(state, 'civil_corps').state;
+  assert.equal(getDevelopmentDiscount(state), 0.05);
+  assert.ok(Math.abs(getProjectSpeedMult(state) - 1.15) < 0.001);
+
+  const sv = applyUnlockTech(state, 'sovereign_vault');
+  assert.equal(sv.ok, true);
+  state = sv.state;
+  assert.equal(getTaxPoolCapSeconds(state), 2400);
+  assert.ok(calculateIncome(state).net > baseNet * 1.07);
+
+  // Duplicate unlock prevented
+  assert.equal(applyUnlockTech(state, 'smart_grid').ok, false);
+});
+
+test('Civic Rally booster, Executive Decisions, and leaderboard sub visibility helper work cleanly', () => {
+  const now = 1_750_000_000_000;
+  let state = freshState();
+  state.cash = 1_000_000;
+  state.hap = 50;
+  state.appr = 50;
+  state.b.tech = 3;
+
+  const rally = BOOSTERS.find((b) => b.id === 'civic_rally')!;
+  const rRes = applyBuyBooster(state, rally, now);
+  assert.equal(rRes.ok, true);
+  state = rRes.state;
+  assert.equal(state.hap, 60);
+  assert.equal(state.appr, 62);
+  assert.equal(state.cash, 840_000);
+
+  const cashBefore = state.cash;
+  const decGain = resolveExecutiveDecision(state, 'tech_expo', 1, 0, now);
+  assert.equal(decGain.ok, true);
+  assert.ok(decGain.state.cash > cashBefore);
+  assert.equal(decGain.state.hap, 56);
+
+  const decSpend = resolveExecutiveDecision(state, 'tech_expo', 0, 0, now);
+  assert.equal(decSpend.ok, true);
+  assert.equal(decSpend.state.gems, state.gems + 1);
+  assert.equal(decSpend.state.hap, 68);
+
+  assert.equal(isProfileSubActive({ subTier: 'weekly', subExp: now + 60_000 }, now), 'weekly');
+  assert.equal(isProfileSubActive({ subTier: 'weekly', subExp: now - 1 }, now), null);
+  assert.equal(isProfileSubActive({ subTier: '', subExp: now + 60_000 }, now), null);
+});
+

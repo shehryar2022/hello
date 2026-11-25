@@ -74,8 +74,13 @@ export const HeroPanel: React.FC<HeroPanelProps> = ({
               <CashCoinIcon size={14} /> Tax Pool: ₨ {formatNumber(state.taxPool || 0)}
             </span>
             {activeSub && (
-              <span className="boost">
-                <SubIcon tier={activeSub.def.id} size={13} /> {activeSub.def.periodLabel} (+{Math.round((activeSub.def.incomeMult - 1) * 100)}% inc · {Math.round(activeSub.def.discountRate * 100)}% off)
+              <span className={`sub-crest sub-crest--${activeSub.def.id}`}>
+                <span className="sub-crest-ic">
+                  <SubIcon tier={activeSub.def.id} size={12} />
+                </span>
+                <span>
+                  {activeSub.def.periodLabel} (+{Math.round((activeSub.def.incomeMult - 1) * 100)}% inc · {Math.round(activeSub.def.discountRate * 100)}% off)
+                </span>
               </span>
             )}
             {state.boost > 0 && (

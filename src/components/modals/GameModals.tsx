@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { COUNTRIES, RANKS } from '../../game/constants';
-import { formatNumber } from '../../game/rules';
+import { COUNTRIES, RANKS, SUBSCRIPTIONS } from '../../game/constants';
+import { formatNumber, isProfileSubActive } from '../../game/rules';
 import type { GameState, NotificationItem, PlayerProfile } from '../../game/types';
 import {
   Bell,
@@ -17,6 +17,7 @@ import {
   SlidersHorizontal,
   Smartphone,
   Sparkles,
+  SubIcon,
   Volume2,
 } from '../GameIcons';
 
@@ -41,10 +42,15 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 }) => {
   if (!profile) return null;
   const rk = RANKS[profile.rank || 0] || RANKS[0];
+  const subTier = isProfileSubActive(profile, Date.now());
+  const subDef = subTier ? SUBSCRIPTIONS.find((x) => x.id === subTier) : null;
 
   return (
     <div className="modal" role="dialog" aria-modal="true" aria-label="Player Profile" onClick={onClose}>
-      <div className="card" onClick={(e) => e.stopPropagation()}>
+      <div
+        className={`card ${subTier ? `sub-card sub-card--${subTier}` : ''}`}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="bigflag">
           <CountryFlag code={profile.countryCode} alt={profile.countryCode} large className="" />
         </div>
@@ -57,6 +63,16 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
         <p style={{ margin: '4px 0 8px' }}>
           {profile.countryName} · {rk.n}
         </p>
+        {subTier && subDef && (
+          <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'center' }}>
+            <span className={`sub-crest sub-crest--${subTier}`}>
+              <span className="sub-crest-ic">
+                <SubIcon tier={subTier} size={13} />
+              </span>
+              <span>{subDef.n}</span>
+            </span>
+          </div>
+        )}
 
         <div className="pstat">
           <div>

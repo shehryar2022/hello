@@ -25,6 +25,8 @@
         "rank": { "type": "integer", "minimum": 0, "maximum": 10 },
         "lastSeen": { "type": "string", "format": "date-time" },
         "createdAt": { "type": "string", "format": "date-time" },
+        "subTier": { "type": "string", "enum": ["", "daily", "weekly", "monthly"] },
+        "subExp": { "type": "number", "minimum": 0 },
         "stats": { "type": "object" }
       },
       "required": ["username", "usernameLower", "countryCode", "countryName", "gdp", "cash", "gems", "level", "rank", "lastSeen", "stats", "createdAt"]
@@ -56,7 +58,7 @@
     },
     "PlayerSave": {
       "title": "PlayerSave",
-      "description": "Owner-only full game state snapshot including buildings, all 14 bounded policy sliders, government, milestones, crateCd, activeFx, and subscription state.",
+      "description": "Owner-only full game state snapshot including buildings, all 14 bounded policy sliders, government, milestones, crateCd, tech doctrines, activeFx, and subscription state.",
       "type": "object",
       "properties": {
         "save": { "type": "object" }

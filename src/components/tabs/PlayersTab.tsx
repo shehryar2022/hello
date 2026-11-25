@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ACTIVE_WINDOW_MS, RANKS } from '../../game/constants';
-import { calculateGdp, formatNumber } from '../../game/rules';
+import { ACTIVE_WINDOW_MS, RANKS, SUBSCRIPTIONS } from '../../game/constants';
+import { calculateGdp, formatNumber, isProfileSubActive } from '../../game/rules';
 import type { ChatMessage, DmRecipient, GameState, PlayerProfile, PlayersSubTab } from '../../game/types';
 import {
   CountryFlag,
@@ -11,6 +11,7 @@ import {
   Mail,
   MessageSquare,
   RankEmblem,
+  SubIcon,
   TrendingUp,
 } from '../GameIcons';
 import { GdpChart } from '../GdpChart';
@@ -151,8 +152,15 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
                   const me = p.id === uid;
                   const rk = RANKS[p.rank || 0] || RANKS[0];
                   const isOnline = !me && p.seen && nowSrv - p.seen <= ACTIVE_WINDOW_MS;
+                  const subTier = isProfileSubActive(p, nowSrv);
+                  const subLabel = subTier
+                    ? SUBSCRIPTIONS.find((x) => x.id === subTier)?.periodLabel || subTier
+                    : '';
                   return (
-                    <div key={p.id} className={`row pcard ${me ? 'me' : ''}`}>
+                    <div
+                      key={p.id}
+                      className={`row pcard ${me ? 'me' : ''} ${subTier ? `sub-card sub-card--${subTier}` : ''}`}
+                    >
                       <div className={`medal m${idx + 1}`}>{idx + 1}</div>
                       <div style={{ minWidth: 0 }}>
                         <h2 style={{ display: 'flex', gap: 7, alignItems: 'center' }}>
@@ -164,6 +172,14 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
                           {rk.id > 0 && (
                             <span className="rank-badge" style={{ '--c': rk.c } as React.CSSProperties} title={rk.n}>
                               <RankEmblem rank={rk.id} size={18} />
+                            </span>
+                          )}
+                          {subTier && (
+                            <span className={`sub-crest sub-crest--${subTier}`} title={`${subLabel} Subscriber`}>
+                              <span className="sub-crest-ic">
+                                <SubIcon tier={subTier} size={11} />
+                              </span>
+                              <span>{subLabel}</span>
                             </span>
                           )}
                         </h2>
@@ -231,8 +247,10 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
             {globalChat.length ? (
               globalChat.map((m) => {
                 const rk = RANKS[m.rank || 0] || RANKS[0];
+                const senderProfile = leaderboard.find((p) => p.id === m.uid);
+                const subTier = isProfileSubActive(senderProfile, nowSrv);
                 return (
-                  <div key={m.id} className={`cm ${m.uid === uid ? 'me' : ''}`}>
+                  <div key={m.id} className={`cm ${m.uid === uid ? 'me' : ''} ${subTier ? `sub-card sub-card--${subTier}` : ''}`}>
                     <div className="cmh">
                       <span className="cmf">
                         <CountryFlag code={m.cc} alt={m.cc} className="" />
@@ -241,6 +259,13 @@ export const PlayersTab: React.FC<PlayersTabProps> = ({
                         {m.name || 'Player'}
                       </button>
                       {rk.id > 0 && <RankEmblem rank={rk.id} size={15} />}
+                      {subTier && (
+                        <span className={`sub-crest sub-crest--${subTier}`}>
+                          <span className="sub-crest-ic">
+                            <SubIcon tier={subTier} size={10} />
+                          </span>
+                        </span>
+                      )}
                       <small>{formatWhen(m.ms)}</small>
                     </div>
                     <div className="cmt">{m.text}</div>
