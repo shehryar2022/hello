@@ -1329,6 +1329,106 @@ input[type=range]::-webkit-slider-thumb {
   #cloudPill { bottom: 14px; }
 }
 
+#errPill {
+  position: fixed;
+  left: 12px;
+  bottom: calc(82px + env(safe-area-inset-bottom));
+  z-index: 8;
+  padding: 5px 11px;
+  border-radius: 99px;
+  font: 700 11px var(--d);
+  background: rgba(235, 75, 136, 0.2);
+  box-shadow: 0 0 0 1px rgba(255, 111, 165, 0.55), var(--sm);
+  color: #ffd3e4;
+  cursor: pointer;
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+#errPill:hover { background: rgba(235, 75, 136, 0.3); }
+
+@media (min-width: 1024px) {
+  #errPill { left: 260px; bottom: 14px; }
+}
+
+.modal > .err-modal { max-width: 560px; }
+.err-list {
+  display: grid;
+  gap: 8px;
+  text-align: left;
+  max-height: 52vh;
+  overflow: auto;
+}
+.err-empty {
+  text-align: center;
+  padding: 20px 12px;
+  border-radius: 16px;
+  background: #1a1444;
+  box-shadow: var(--dent);
+  color: var(--mu);
+  font-size: 13px;
+}
+.err-item {
+  background: var(--clay2);
+  border-radius: 16px;
+  box-shadow: var(--sm), var(--in);
+  padding: 10px 12px;
+  display: grid;
+  gap: 5px;
+}
+.err-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.err-badge {
+  font: 800 10px var(--d);
+  padding: 2px 7px;
+  border-radius: 99px;
+  letter-spacing: 0.04em;
+  background: rgba(255, 111, 165, 0.22);
+  color: #ff9ec4;
+}
+.err-badge--sync { background: rgba(255, 194, 61, 0.22); color: #ffe08a; }
+.err-badge--auth { background: rgba(92, 203, 255, 0.22); color: #9ce4ff; }
+.err-code {
+  font: 600 11px var(--m);
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: #161138;
+  color: var(--cy);
+}
+.err-path {
+  font: 600 11.5px var(--m);
+  color: var(--gold);
+  word-break: break-all;
+}
+.err-msg {
+  font: 600 12.5px/1.4 var(--b);
+  color: var(--tx);
+  word-break: break-word;
+}
+.err-details-wrap summary {
+  cursor: pointer;
+  font: 600 11.5px var(--d);
+  color: var(--mu);
+}
+.err-details {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #161138;
+  box-shadow: var(--dent);
+  font: 500 11px/1.4 var(--m);
+  color: #d6ceff;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 160px;
+  overflow: auto;
+}
+
 .fl {
   position: fixed;
   pointer-events: none;

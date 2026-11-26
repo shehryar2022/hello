@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { AlertTriangle, Copy, Trash2 } from 'lucide-react';
+import { formatErrorLogReport, type AppErrorEntry } from '../../firebase/errorLog';
 import { COUNTRIES, RANKS, SUBSCRIPTIONS } from '../../game/constants';
 import { formatNumber, isProfileSubActive } from '../../game/rules';
 import type { GameState, NotificationItem, PlayerProfile } from '../../game/types';
@@ -162,8 +164,10 @@ interface SettingsModalProps {
   state: GameState;
   uid: string | null;
   email: string | null;
+  errorCount: number;
   onToggleSetting: (key: 'sfx' | 'vib' | 'anim') => void;
   onOpenAuth: () => void;
+  onOpenErrorLog: () => void;
   onRequestReset: () => void;
   onClose: () => void;
 }
@@ -173,8 +177,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   state,
   uid,
   email,
+  errorCount,
   onToggleSetting,
   onOpenAuth,
+  onOpenErrorLog,
   onRequestReset,
   onClose,
 }) => {
@@ -220,6 +226,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <button type="button" className="btn" onClick={onOpenAuth}>
             {uid ? <Cloud size={15} /> : <Lock size={15} />}
             <span>{uid ? 'Account' : 'Sign in / Link Cloud'}</span>
+          </button>
+          <button
+            type="button"
+            className={`btn ${errorCount > 0 ? 'red' : ''}`}
+            onClick={onOpenErrorLog}
+          >
+            <AlertTriangle size={15} />
+            <span>{errorCount > 0 ? `Error Log (${errorCount})` : 'Error Log'}</span>
           </button>
           {!uid && (
             <button type="button" className="btn red" onClick={onRequestReset}>
@@ -445,6 +459,114 @@ export const DialogModal: React.FC<{ dialog: DialogConfig | null; onClose: () =>
               {a.label}
             </button>
           ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+interface ErrorLogModalProps {
+  open: boolean;
+  errors: AppErrorEntry[];
+  uid: string | null;
+  onRetrySync: () => void;
+  onClear: () => void;
+  onCopied: () => void;
+  onClose: () => void;
+}
+
+export const ErrorLogModal: React.FC<ErrorLogModalProps> = ({
+  open,
+  errors,
+  uid,
+  onRetrySync,
+  onClear,
+  onCopied,
+  onClose,
+}) => {
+  useEscapeClose(open, onClose);
+  if (!open) return null;
+
+  const handleCopyAll = async () => {
+    const report = formatErrorLogReport(errors);
+    try {
+      await navigator.clipboard.writeText(report);
+      onCopied();
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = report;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      onCopied();
+    }
+  };
+
+  return (
+    <div className="modal" role="dialog" aria-modal="true" aria-label="Error Log" onClick={onClose}>
+      <div className="card err-modal" onClick={(e) => e.stopPropagation()}>
+        <h2>
+          <AlertTriangle size={20} color="#ff6fa5" />
+          <span>Error Log</span>
+        </h2>
+        <p style={{ margin: '6px 0 10px' }}>
+          {errors.length
+            ? `${errors.length} recorded ${errors.length === 1 ? 'issue' : 'issues'} with exact paths and codes.`
+            : 'Everything is running cleanly — no errors recorded.'}
+        </p>
+
+        <div className="err-list">
+          {errors.length ? (
+            errors.map((err) => (
+              <div key={err.id} className="err-item">
+                <div className="err-head">
+                  <span className={`err-badge err-badge--${err.source}`}>{err.source.toUpperCase()}</span>
+                  {err.code && <code className="err-code">{err.code}</code>}
+                  {err.operationType && <code className="err-code">{err.operationType}</code>}
+                  <small className="dim" style={{ marginLeft: 'auto' }}>
+                    {NOTIF_TIME_FORMATTER.format(new Date(err.time))}
+                  </small>
+                </div>
+                {err.path && <div className="err-path">Path: {err.path}</div>}
+                <div className="err-msg">{err.message}</div>
+                {err.details && (
+                  <details className="err-details-wrap">
+                    <summary>Raw details</summary>
+                    <pre className="err-details">{err.details}</pre>
+                  </details>
+                )}
+              </div>
+            ))
+          ) : (
+            <div className="err-empty">No errors recorded yet.</div>
+          )}
+        </div>
+
+        <div className="acts" style={{ marginTop: 12 }}>
+          {errors.length > 0 && (
+            <button type="button" className="btn mint" onClick={() => void handleCopyAll()}>
+              <Copy size={15} />
+              <span>Copy All Details</span>
+            </button>
+          )}
+          {uid && (
+            <button type="button" className="btn" onClick={onRetrySync}>
+              <RefreshCw size={15} />
+              <span>Retry Cloud Sync</span>
+            </button>
+          )}
+          {errors.length > 0 && (
+            <button type="button" className="btn red" onClick={onClear}>
+              <Trash2 size={15} />
+              <span>Clear Log</span>
+            </button>
+          )}
+          <button type="button" className="btn gold" onClick={onClose}>
+            Close
+          </button>
         </div>
       </div>
     </div>

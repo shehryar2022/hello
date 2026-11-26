@@ -16,8 +16,8 @@ import type {
 export const SAVE_KEY = 'cet_save_v1';
 export const TZ = 'Asia/Karachi';
 export const DAILY_GIFT_MAX = 15;
-export const ACTIVE_WINDOW_MS = 240_000;
-export const HEARTBEAT_MS = 90_000;
+export const ACTIVE_WINDOW_MS = 300_000;
+export const HEARTBEAT_MS = 120_000;
 export const OFFLINE_RATE = 0.2;
 export const OFFLINE_CAP_SEC = 1800; // 30 minutes
 export const GOV_DAY_SEC = 300;

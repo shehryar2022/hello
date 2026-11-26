@@ -24,6 +24,7 @@ import { HeroPanel } from './components/HeroPanel';
 import { LoginGate } from './components/LoginGate';
 import {
   DialogModal,
+  ErrorLogModal,
   NotificationsModal,
   OnboardingModal,
   ProfileModal,
@@ -68,12 +69,21 @@ import {
 } from './firebase/api';
 import {
   auth,
-  buildFirestoreErrorInfo,
   db,
   formatFirebaseError,
   isFirebaseConfigured,
   OperationType,
+  recordFirestoreError,
 } from './firebase/config';
+import {
+  clearErrorLog,
+  extractErrorCode,
+  extractErrorMessage,
+  getErrorLog,
+  installGlobalErrorListeners,
+  recordAppError,
+  subscribeErrorLog,
+} from './firebase/errorLog';
 import {
   ACTIVE_WINDOW_MS,
   BOOSTERS,
@@ -233,6 +243,7 @@ export default function App() {
 
   // Modals
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [errorLogOpen, setErrorLogOpen] = useState(false);
   const [notifsOpen, setNotifsOpen] = useState(false);
   const [profileView, setProfileView] = useState<PlayerProfile | null>(null);
   const [giftModal, setGiftModal] = useState<{
@@ -241,6 +252,7 @@ export default function App() {
     trade: TradeOffer | null;
   } | null>(null);
   const [dialog, setDialog] = useState<DialogConfig | null>(null);
+  const appErrors = React.useSyncExternalStore(subscribeErrorLog, getErrorLog);
 
   const sidRef = useRef<string>(`${Date.now()}_${Math.random().toString(36).slice(2, 10)}`);
   const walletRevRef = useRef<number>(0);
@@ -286,7 +298,9 @@ export default function App() {
   const lastSettledTradeCheckRef = useRef<number>(0);
   const rankPositionRef = useRef<number>(1);
   const modalOpenRef = useRef<boolean>(false);
-  const anyModalOpen = Boolean(dialog || giftModal || settingsOpen || notifsOpen || profileView || needsOnboarding);
+  const anyModalOpen = Boolean(
+    dialog || giftModal || settingsOpen || errorLogOpen || notifsOpen || profileView || needsOnboarding,
+  );
   modalOpenRef.current = anyModalOpen;
 
   const updateServerOffset = useCallback((srvMs: number) => {
@@ -344,6 +358,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    installGlobalErrorListeners();
     return () => {
       if (localSaveTimerRef.current) window.clearTimeout(localSaveTimerRef.current);
       if (cloudSyncTimerRef.current) window.clearTimeout(cloudSyncTimerRef.current);
@@ -556,6 +571,12 @@ export default function App() {
               void performCloudSync(false);
             }, backoff);
           } else {
+            recordAppError({
+              source: 'sync',
+              code: code || undefined,
+              path: `players/${currentUid}`,
+              message: msg || 'Sync paused after retries',
+            });
             setCloudStatus({ cls: 'bad', text: 'Sync paused' });
             if (immediate) addToast(formatFirebaseError(err));
           }
@@ -568,6 +589,12 @@ export default function App() {
               void performCloudSync(false);
             }, 3000);
           } else {
+            recordAppError({
+              source: 'sync',
+              code: code || undefined,
+              path: `players/${currentUid}`,
+              message: msg || 'Cloud sync failed',
+            });
             setCloudStatus({ cls: 'bad', text: 'Sync failed' });
             if (immediate) addToast(formatFirebaseError(err));
           }
@@ -608,7 +635,7 @@ export default function App() {
     [performCloudSync],
   );
 
-  // Automatically recover cloud sync when browser regains connectivity
+  // Automatically recover cloud sync when browser regains connectivity, and flush dirty saves on tab hide
   useEffect(() => {
     const onOnline = () => {
       if (uidRef.current && cloudReadyRef.current && !kickedRef.current && !needsOnboardingRef.current) {
@@ -617,9 +644,28 @@ export default function App() {
         void performCloudSync(false);
       }
     };
+    const onVisChange = () => {
+      if (document.visibilityState === 'hidden') {
+        saveLocal(stateRef.current);
+        if (
+          uidRef.current &&
+          cloudReadyRef.current &&
+          !kickedRef.current &&
+          !needsOnboardingRef.current &&
+          pendingDirtyRef.current &&
+          Date.now() - lastSyncedAtRef.current >= 5000
+        ) {
+          void performCloudSync(false);
+        }
+      }
+    };
     window.addEventListener('online', onOnline);
-    return () => window.removeEventListener('online', onOnline);
-  }, [performCloudSync]);
+    document.addEventListener('visibilitychange', onVisChange);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      document.removeEventListener('visibilitychange', onVisChange);
+    };
+  }, [performCloudSync, saveLocal]);
 
   // Daily check & offline earnings calculation (pure computation; caller displays dialog/toast)
   const runDailyAndOfflineChecks = useCallback(
@@ -725,6 +771,11 @@ export default function App() {
       return;
     }
     void getRedirectResult(auth).catch((err) => {
+      recordAppError({
+        source: 'auth',
+        code: extractErrorCode(err) || undefined,
+        message: extractErrorMessage(err),
+      });
       setAuthMsg(formatFirebaseError(err));
     });
 
@@ -875,6 +926,7 @@ export default function App() {
         setCloudReady(true);
       } catch (err) {
         if (authSeqRef.current === seq) {
+          recordFirestoreError(err, OperationType.GET, `players/${u.uid}`);
           addToast(formatFirebaseError(err));
         }
       }
@@ -904,7 +956,8 @@ export default function App() {
 
   const handleSnapshotError = useCallback(
     (path: string, err: unknown) => {
-      console.error('Firestore Snapshot Error: ', JSON.stringify(buildFirestoreErrorInfo(err, OperationType.GET, path)));
+      const info = recordFirestoreError(err, OperationType.GET, path);
+      console.error('Firestore Snapshot Error: ', JSON.stringify(info));
       const raw = err instanceof Error ? err.message : String(err || '');
       const code = (err as { code?: string })?.code || '';
       if (/permission-denied|Missing or insufficient permissions/i.test(code + raw) && !permWarnShownRef.current) {
@@ -1168,7 +1221,11 @@ export default function App() {
 
     // Heartbeat interval (skip initial heartbeat if an initial sync is queued to avoid transaction contention)
     if (!pendingDirtyRef.current) {
-      void sendHeartbeat(uid).catch(() => {});
+      void sendHeartbeat(uid).catch((err) => {
+        if (/permission-denied/i.test(extractErrorCode(err))) {
+          recordFirestoreError(err, OperationType.UPDATE, `players/${uid}`);
+        }
+      });
     }
     const hb = window.setInterval(() => {
       if (
@@ -1177,7 +1234,11 @@ export default function App() {
         !cloudSyncBusyRef.current &&
         Date.now() - lastSyncedAtRef.current >= HEARTBEAT_MS - 5000
       ) {
-        void sendHeartbeat(uid).catch(() => {});
+        void sendHeartbeat(uid).catch((err) => {
+          if (/permission-denied/i.test(extractErrorCode(err))) {
+            recordFirestoreError(err, OperationType.UPDATE, `players/${uid}`);
+          }
+        });
       }
     }, HEARTBEAT_MS);
 
@@ -1484,15 +1545,14 @@ export default function App() {
         }
       }
 
-      // Dirty-aware cloud sync every 24s if signed in (periodically re-attempts after transient/rules pauses)
+      // Dirty-aware cloud sync every 60s when tab is visible (Spark Free Plan friendly)
       if (
-        tickCountRef.current % 24 === 0 &&
+        tickCountRef.current % 60 === 0 &&
+        !document.hidden &&
         uidRef.current &&
         cloudReadyRef.current &&
         !needsOnboardingRef.current &&
-        (pendingDirtyRef.current ||
-          (now - lastSyncedAtRef.current >= 24_000 &&
-            (isUserActive || calculateIncome(curSnap, { tradeTier, nowMs: nowSrv }).net !== 0)))
+        (pendingDirtyRef.current || (isUserActive && now - lastSyncedAtRef.current >= 60_000))
       ) {
         cloudSyncPermDeniedRef.current = false;
         syncRetryCountRef.current = 0;
@@ -1540,7 +1600,11 @@ export default function App() {
                 projLastSyncRef.current[p.id] = now;
                 projBusyRef.current.add(p.id);
                 void finishGovProject(curUid, p.id, 'done', p.t.dur)
-                  .catch(() => {})
+                  .catch((err) => {
+                    if (/permission-denied/i.test(extractErrorCode(err))) {
+                      recordFirestoreError(err, OperationType.UPDATE, `players/${curUid}/projects/${p.id}`);
+                    }
+                  })
                   .finally(() => projBusyRef.current.delete(p.id));
               }
             } else if (
@@ -1552,9 +1616,13 @@ export default function App() {
             ) {
               if (!projBusyRef.current.has(p.id)) {
                 projBusyRef.current.add(p.id);
-                void finishGovProject(curUid, p.id, 'failed').finally(() =>
-                  projBusyRef.current.delete(p.id),
-                );
+                void finishGovProject(curUid, p.id, 'failed')
+                  .catch((err) => {
+                    if (/permission-denied/i.test(extractErrorCode(err))) {
+                      recordFirestoreError(err, OperationType.UPDATE, `players/${curUid}/projects/${p.id}`);
+                    }
+                  })
+                  .finally(() => projBusyRef.current.delete(p.id));
               }
             } else if (isUserActive && !p.pending) {
               const capMs = Math.floor((p.t.dur * p.paid) / PROJECT_STAGES);
@@ -1566,16 +1634,24 @@ export default function App() {
                   projLastSyncRef.current[p.id] = now;
                   projBusyRef.current.add(p.id);
                   void finishGovProject(curUid, p.id, 'done', p.t.dur)
-                    .catch(() => {})
+                    .catch((err) => {
+                      if (/permission-denied/i.test(extractErrorCode(err))) {
+                        recordFirestoreError(err, OperationType.UPDATE, `players/${curUid}/projects/${p.id}`);
+                      }
+                    })
                     .finally(() => projBusyRef.current.delete(p.id));
                 } else {
                   const lastSync = projLastSyncRef.current[p.id] || 0;
                   const hitStageCap = nextMs >= capMs && p.progressMs < capMs;
-                  if ((hitStageCap || now - lastSync >= 10_000) && !projBusyRef.current.has(p.id)) {
+                  if ((hitStageCap || now - lastSync >= 30_000) && !projBusyRef.current.has(p.id)) {
                     projLastSyncRef.current[p.id] = now;
                     projBusyRef.current.add(p.id);
                     void tickGovProject(curUid, p.id, nextMs)
-                      .catch(() => {})
+                      .catch((err) => {
+                        if (/permission-denied/i.test(extractErrorCode(err))) {
+                          recordFirestoreError(err, OperationType.UPDATE, `players/${curUid}/projects/${p.id}`);
+                        }
+                      })
                       .finally(() => projBusyRef.current.delete(p.id));
                   }
                 }
@@ -1583,7 +1659,11 @@ export default function App() {
                 projLastSyncRef.current[p.id] = now;
                 projBusyRef.current.add(p.id);
                 void tickGovProject(curUid, p.id, capMs)
-                  .catch(() => {})
+                  .catch((err) => {
+                    if (/permission-denied/i.test(extractErrorCode(err))) {
+                      recordFirestoreError(err, OperationType.UPDATE, `players/${curUid}/projects/${p.id}`);
+                    }
+                  })
                   .finally(() => projBusyRef.current.delete(p.id));
               }
             }
@@ -1869,6 +1949,7 @@ export default function App() {
         addToast(`Started ${def.n}!`);
       } catch (err) {
         updateState((prev) => ({ ...prev, cash: Math.min(1e13, prev.cash + stageCost) }), 500);
+        recordFirestoreError(err, OperationType.CREATE, `players/${currentUid}/projects`);
         addToast(formatFirebaseError(err));
       } finally {
         projCreatingRef.current = false;
@@ -1896,6 +1977,7 @@ export default function App() {
         addToast(`Paid stage ${proj.paid + 1}/${PROJECT_STAGES}`);
       } catch (err) {
         updateState((prev) => ({ ...prev, cash: Math.min(1e13, prev.cash + stageCost) }), 500);
+        recordFirestoreError(err, OperationType.UPDATE, `players/${currentUid}/projects/${projectId}`);
         addToast(formatFirebaseError(err));
       } finally {
         projPayBusyRef.current.delete(projectId);
@@ -2209,9 +2291,21 @@ export default function App() {
         try {
           await signInWithRedirect(auth, new GoogleAuthProvider());
         } catch (redirectErr) {
+          recordAppError({
+            source: 'auth',
+            code: extractErrorCode(redirectErr) || undefined,
+            message: extractErrorMessage(redirectErr),
+          });
           setAuthMsg(formatFirebaseError(redirectErr));
         }
       } else {
+        if (!/popup-closed-by-user|cancelled-popup-request/i.test(code)) {
+          recordAppError({
+            source: 'auth',
+            code: code || undefined,
+            message: extractErrorMessage(err),
+          });
+        }
         setAuthMsg(formatFirebaseError(err));
       }
     }
@@ -2234,6 +2328,11 @@ export default function App() {
         await signInWithEmailAndPassword(auth, email.trim(), password);
       }
     } catch (err) {
+      recordAppError({
+        source: 'auth',
+        code: extractErrorCode(err) || undefined,
+        message: extractErrorMessage(err),
+      });
       setAuthMsg(formatFirebaseError(err));
     }
   }, []);
@@ -2446,6 +2545,7 @@ export default function App() {
         });
         return true;
       } catch (err) {
+        recordFirestoreError(err, OperationType.CREATE, 'globalChat');
         addToast(formatFirebaseError(err));
         return false;
       }
@@ -2472,6 +2572,7 @@ export default function App() {
         );
         return true;
       } catch (err) {
+        recordFirestoreError(err, OperationType.CREATE, `dms/${dmRecipient.uid}`);
         addToast(formatFirebaseError(err));
         return false;
       }
@@ -2498,6 +2599,7 @@ export default function App() {
           addToast(`Gift is already ${res.status}.`);
         }
       } catch (err) {
+        recordFirestoreError(err, OperationType.UPDATE, `trades/${id}`);
         addToast(formatFirebaseError(err));
       }
     },
@@ -2515,6 +2617,7 @@ export default function App() {
           addToast(`Gift is already ${res.status}.`);
         }
       } catch (err) {
+        recordFirestoreError(err, OperationType.UPDATE, `trades/${id}`);
         addToast(formatFirebaseError(err));
       }
     },
@@ -2532,6 +2635,7 @@ export default function App() {
           addToast(`Gift is already ${status}.`);
         }
       } catch (err) {
+        recordFirestoreError(err, OperationType.UPDATE, `trades/${id}`);
         addToast(formatFirebaseError(err));
       }
     },
@@ -2780,12 +2884,25 @@ export default function App() {
         onSelectTab={setTab}
       />
 
+      {appErrors.length > 0 && (
+        <button
+          type="button"
+          id="errPill"
+          onClick={() => setErrorLogOpen(true)}
+        >
+          ⚠️ {appErrors.length} {appErrors.length === 1 ? 'Error' : 'Errors'}
+        </button>
+      )}
+
       {uid && cloudReady && (
         <button
           type="button"
           id="cloudPill"
           className={cloudStatus.cls}
-          onClick={handleSaveCloudNow}
+          onClick={() => {
+            if (cloudStatus.cls === 'bad') setErrorLogOpen(true);
+            else handleSaveCloudNow();
+          }}
         >
           {cloudStatus.text}
         </button>
@@ -2816,6 +2933,7 @@ export default function App() {
         state={state}
         uid={uid}
         email={user?.email || null}
+        errorCount={appErrors.length}
         onToggleSetting={(key) => {
           updateState((prev) => ({
             ...prev,
@@ -2827,8 +2945,28 @@ export default function App() {
           if (uid) openOwnProfile();
           else setGateOpen(true);
         }}
+        onOpenErrorLog={() => {
+          setSettingsOpen(false);
+          setErrorLogOpen(true);
+        }}
         onRequestReset={handleResetGame}
         onClose={handleCloseSettings}
+      />
+
+      <ErrorLogModal
+        open={errorLogOpen}
+        errors={appErrors}
+        uid={uid}
+        onRetrySync={() => {
+          setErrorLogOpen(false);
+          handleSaveCloudNow();
+        }}
+        onClear={() => {
+          clearErrorLog();
+          addToast('Error log cleared');
+        }}
+        onCopied={() => addToast('Error details copied!')}
+        onClose={() => setErrorLogOpen(false)}
       />
 
       <NotificationsModal
@@ -2876,6 +3014,7 @@ export default function App() {
             scheduleCloudSync(500);
             addToast(`Welcome, ${username}!`);
           } catch (err) {
+            recordFirestoreError(err, OperationType.CREATE, `players/${uid}`);
             addToast(formatFirebaseError(err));
           }
         }}
@@ -2913,6 +3052,7 @@ export default function App() {
               addToast('Gift sent!');
               return true;
             } catch (err) {
+              recordFirestoreError(err, OperationType.CREATE, 'trades');
               addToast(formatFirebaseError(err));
               return false;
             }

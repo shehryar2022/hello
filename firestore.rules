@@ -84,8 +84,8 @@ service cloud.firestore {
         && data.gdp is number && data.gdp >= 0 && data.gdp <= 10000000000000
         && data.cash is number && data.cash >= 0 && data.cash <= 10000000000000
         && data.gems is number && data.gems >= 0 && data.gems <= 1000000000
-        && data.level is int && data.level >= 1 && data.level <= 10000000
-        && data.rank is int && data.rank >= 0 && data.rank <= 10
+        && data.level is number && data.level >= 1 && data.level <= 10000000
+        && data.rank is number && data.rank >= 0 && data.rank <= 10
         && data.lastSeen is timestamp
         && (!('createdAt' in data) || data.createdAt is timestamp)
         && (!('subTier' in data) || data.subTier in ['', 'daily', 'weekly', 'monthly'])
@@ -97,9 +97,9 @@ service cloud.firestore {
       return data.keys().hasAll(['cash', 'gems', 'stk', 'rev', 'sid', 't'])
         && data.keys().hasOnly(['cash', 'gems', 'stk', 'rev', 'sid', 't', 'tradeId'])
         && data.cash is number && data.cash >= 0 && data.cash <= 10000000000000
-        && data.gems is int && data.gems >= 0 && data.gems <= 1000000000
+        && data.gems is number && data.gems >= 0 && data.gems <= 1000000000
         && data.stk is map && data.stk.size() <= 48
-        && data.rev is int && data.rev >= 1 && data.rev <= 1000000000
+        && data.rev is number && data.rev >= 1 && data.rev <= 1000000000
         && data.sid is string && data.sid.size() >= 1 && data.sid.size() <= 128
         && data.t is timestamp
         && (!('tradeId' in data) || isValidId(data.tradeId));
@@ -120,7 +120,7 @@ service cloud.firestore {
         && (!('cash' in data.save) || (data.save.cash is number && data.save.cash >= 0 && data.save.cash <= 10000000000000))
         && (!('gems' in data.save) || (data.save.gems is number && data.save.gems >= 0 && data.save.gems <= 1000000000))
         && (!('taxPool' in data.save) || (data.save.taxPool is number && data.save.taxPool >= 0 && data.save.taxPool <= 10000000000000))
-        && (!('rank' in data.save) || (data.save.rank is int && data.save.rank >= 0 && data.save.rank <= 10))
+        && (!('rank' in data.save) || (data.save.rank is number && data.save.rank >= 0 && data.save.rank <= 10))
         && (!('boost' in data.save) || (data.save.boost is number && data.save.boost >= 0 && data.save.boost <= 30))
         && (!('crateCd' in data.save) || (data.save.crateCd is number && data.save.crateCd >= 0 && data.save.crateCd <= 10000000000000))
         && (!('day' in data.save) || (data.save.day is number && data.save.day >= 0 && data.save.day <= 100000000))
@@ -131,8 +131,8 @@ service cloud.firestore {
         && (!('hap' in data.save) || (data.save.hap is number && data.save.hap >= 0 && data.save.hap <= 100))
         && (!('appr' in data.save) || (data.save.appr is number && data.save.appr >= 0 && data.save.appr <= 100))
         && (!('pop' in data.save) || (data.save.pop is number && data.save.pop >= 1 && data.save.pop <= 100000))
-        && (!('fused' in data.save) || (data.save.fused is int && data.save.fused >= 0 && data.save.fused <= 1000000))
-        && (!('streak' in data.save) || (data.save.streak is int && data.save.streak >= 0 && data.save.streak <= 10000))
+        && (!('fused' in data.save) || (data.save.fused is number && data.save.fused >= 0 && data.save.fused <= 1000000))
+        && (!('streak' in data.save) || (data.save.streak is number && data.save.streak >= 0 && data.save.streak <= 10000))
         && (!('gov' in data.save) || data.save.gov in ['rep', 'tech', 'wlf', 'ind'])
         && (!('tax' in data.save) || (data.save.tax is number && data.save.tax >= 5 && data.save.tax <= 45))
         && (!('wel' in data.save) || (data.save.wel is number && data.save.wel >= 0 && data.save.wel <= 50))
@@ -156,26 +156,26 @@ service cloud.firestore {
         && (!('claimed' in data.save) || (data.save.claimed is map && data.save.claimed.size() <= 20))
         && (!('boosterCd' in data.save) || (data.save.boosterCd is map && data.save.boosterCd.size() <= 20))
         && (!('tech' in data.save) || (data.save.tech is map && data.save.tech.size() <= 16))
-        && (!('gx' in data.save) || (data.save.gx is map && data.save.gx.size() <= 12))
+        && (!('gx' in data.save) || (data.save.gx is map && data.save.gx.size() <= 16))
         && (!('hist' in data.save) || (data.save.hist is list && data.save.hist.size() <= 60))
         && (!('questIds' in data.save) || (data.save.questIds is list && data.save.questIds.size() <= 10))
         && (!('questDay' in data.save) || (data.save.questDay is string && data.save.questDay.size() <= 32))
         && (!('set' in data.save) || (data.save.set is map && data.save.set.size() <= 10))
         && (!('activeFx' in data.save) || (
           data.save.activeFx is map
-          && data.save.activeFx.size() <= 10
+          && data.save.activeFx.size() <= 16
           && (!('incomeBoostMult' in data.save.activeFx) || (data.save.activeFx.incomeBoostMult is number && data.save.activeFx.incomeBoostMult >= 1 && data.save.activeFx.incomeBoostMult <= 1.75))
         ))
         && (!('sub' in data.save) || (
           data.save.sub is map
-          && data.save.sub.size() <= 5
+          && data.save.sub.size() <= 8
           && (!('tier' in data.save.sub) || data.save.sub.tier in ['daily', 'weekly', 'monthly'])
           && (!('exp' in data.save.sub) || (data.save.sub.exp is number && data.save.sub.exp >= 0 && data.save.sub.exp <= 10000000000000))
           && (!('lastClaimDay' in data.save.sub) || (data.save.sub.lastClaimDay is string && data.save.sub.lastClaimDay.size() <= 16))
         ))
         && (!('subPromo' in data.save) || (
           data.save.subPromo is map
-          && data.save.subPromo.size() <= 5
+          && data.save.subPromo.size() <= 8
           && (!('weekKey' in data.save.subPromo) || (data.save.subPromo.weekKey is string && data.save.subPromo.weekKey.size() <= 16))
           && (!('tier' in data.save.subPromo) || data.save.subPromo.tier in ['daily', 'weekly', 'monthly'])
           && (!('pct' in data.save.subPromo) || (data.save.subPromo.pct is number && data.save.subPromo.pct >= 5 && data.save.subPromo.pct <= 40))
@@ -202,7 +202,7 @@ service cloud.firestore {
         && data.keys().hasOnly(['uid', 'type', 'paid', 'progressMs', 'status', 'claimed', 'startedAt', 'lastTickAt', 'resolvedAt'])
         && isValidId(data.uid)
         && data.type in ['school', 'hospital', 'bridge', 'highway']
-        && data.paid is int && data.paid >= 1 && data.paid <= 3
+        && data.paid is number && data.paid >= 1 && data.paid <= 3
         && data.progressMs is number && data.progressMs >= 0 && data.progressMs <= 2400000
         && data.status in ['active', 'done', 'failed']
         && data.claimed is bool
@@ -232,10 +232,10 @@ service cloud.firestore {
         && data.participants is list && data.participants.size() == 2
         && data.participants[0] == data.from && data.participants[1] == data.to
         && data.offerCash is number && data.offerCash >= 0 && data.offerCash <= 1000000000000
-        && data.offerGems is int && data.offerGems >= 0 && data.offerGems <= 1000000000
+        && data.offerGems is number && data.offerGems >= 0 && data.offerGems <= 1000000000
         && data.offerStk is map && data.offerStk.size() <= 48
         && data.reqCash is number && data.reqCash == 0
-        && data.reqGems is int && data.reqGems == 0
+        && data.reqGems is number && data.reqGems == 0
         && data.reqStk is map && data.reqStk.size() == 0
         && data.message is string && data.message.size() <= 140
         && data.status in ['pending', 'accepted', 'rejected', 'cancelled', 'expired']
@@ -249,7 +249,7 @@ service cloud.firestore {
       return data.keys().hasAll(['uid', 'count'])
         && data.keys().hasOnly(['uid', 'count'])
         && isValidId(data.uid)
-        && data.count is int && data.count >= 1 && data.count <= 15;
+        && data.count is number && data.count >= 1 && data.count <= 15;
     }
 
     function isValidGlobalChat(data) {
@@ -258,7 +258,7 @@ service cloud.firestore {
         && isValidId(data.uid)
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 16
         && data.cc is string && data.cc.size() <= 3
-        && data.rank is int && data.rank >= 0 && data.rank <= 10
+        && data.rank is number && data.rank >= 0 && data.rank <= 10
         && data.text is string && data.text.size() >= 1 && data.text.size() <= 200
         && data.text.matches('(?s).*\\S.*')
         && data.createdAt is timestamp;
@@ -310,11 +310,11 @@ service cloud.firestore {
             && incoming().gdp is number && incoming().gdp >= 0 && incoming().gdp <= 10000000000000
             && incoming().cash is number && incoming().cash >= 0 && incoming().cash <= 10000000000000
             && incoming().gems is number && incoming().gems >= 0 && incoming().gems <= 1000000000
-            && incoming().level is int && incoming().level >= 1 && incoming().level <= 10000000
-            && incoming().rank is int && incoming().rank >= 0 && incoming().rank <= 10
+            && incoming().level is number && incoming().level >= 1 && incoming().level <= 10000000
+            && incoming().rank is number && incoming().rank >= 0 && incoming().rank <= 10
             && (!('subTier' in incoming()) || incoming().subTier in ['', 'daily', 'weekly', 'monthly'])
             && (!('subExp' in incoming()) || (incoming().subExp is number && incoming().subExp >= 0 && incoming().subExp <= 10000000000000))
-            && isValidPlayerStats(incoming().stats)
+            && (!('stats' in incoming()) || isValidPlayerStats(incoming().stats))
           )
         );
       allow delete: if false;
@@ -326,7 +326,7 @@ service cloud.firestore {
           && isValidId(uid)
           && isValidWallet(incoming())
           && incoming().t == request.time
-          && incoming().rev == 1;
+          && incoming().rev >= 1;
         allow update: if isOwner(uid)
           && isValidId(uid)
           && isValidWallet(incoming())

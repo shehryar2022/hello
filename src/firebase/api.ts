@@ -48,7 +48,9 @@ import {
   db,
   handleFirestoreError,
   OperationType,
+  recordFirestoreError,
 } from './config';
+import { recordAppError } from './errorLog';
 
 const KARACHI_DAY_FORMATTER = new Intl.DateTimeFormat('en-CA', {
   timeZone: TZ,
@@ -102,10 +104,14 @@ function reportAndRethrow(
   err: unknown,
   op: OperationType,
   path: string | null,
+  skipPermLog = false,
 ): never {
   const code = (err as { code?: string })?.code || '';
   if (code !== 'aborted' && code !== 'already-exists' && code !== 'resource-exhausted') {
-    console.error('Firestore Error: ', JSON.stringify(buildFirestoreErrorInfo(err, op, path)));
+    if (!(skipPermLog && isPermissionDeniedError(err))) {
+      const info = recordFirestoreError(err, op, path);
+      console.error('Firestore Error: ', JSON.stringify(info));
+    }
   }
   throw err;
 }
@@ -116,6 +122,7 @@ async function runSessionTx<T>(
   fn: (tx: Transaction, uid: string) => Promise<T>,
   checkSession = true,
   opPath: string | null = null,
+  suppressPermLog = false,
 ): Promise<T> {
   const uid = requireUid();
   const exec = () =>
@@ -139,10 +146,10 @@ async function runSessionTx<T>(
       try {
         return await exec();
       } catch (retryErr) {
-        reportAndRethrow(retryErr, OperationType.WRITE, opPath || `players/${uid}`);
+        reportAndRethrow(retryErr, OperationType.WRITE, opPath || `players/${uid}`, suppressPermLog);
       }
     }
-    reportAndRethrow(err, OperationType.WRITE, opPath || `players/${uid}`);
+    reportAndRethrow(err, OperationType.WRITE, opPath || `players/${uid}`, suppressPermLog);
   }
 }
 
@@ -318,20 +325,141 @@ export async function syncSaveToCloud(params: {
     wallet: { cash: number; gems: number; stk: Record<string, number>; rev: number };
   };
 
-  await runSessionTx(sid, onKicked, async (tx, uid) => {
-    const wRef = doc(db, 'players', uid, 'private', 'wallet');
-    const pRef = doc(db, 'players', uid);
-    const [wSnap, pSnap] = await Promise.all([tx.get(wRef), tx.get(pRef)]);
-    if (!pSnap.exists()) {
-      throw makeError('failed-precondition', 'Player profile not initialized');
-    }
-    const wData = wSnap.exists() ? wSnap.data() : null;
-    const curRev = wData && Number.isFinite(Number(wData.rev)) ? Math.max(0, Math.floor(Number(wData.rev))) : 0;
-    const accepted = !wData || curRev === rev;
+  try {
+    await runSessionTx(
+      sid,
+      onKicked,
+      async (tx, uid) => {
+        const wRef = doc(db, 'players', uid, 'private', 'wallet');
+        const pRef = doc(db, 'players', uid);
+        const [wSnap, pSnap] = await Promise.all([tx.get(wRef), tx.get(pRef)]);
+        if (!pSnap.exists()) {
+          throw makeError('failed-precondition', 'Player profile not initialized');
+        }
+        const wData = wSnap.exists() ? wSnap.data() : null;
+        const curRev =
+          wData && Number.isFinite(Number(wData.rev)) ? Math.max(0, Math.floor(Number(wData.rev))) : 0;
+        const accepted = !wData || curRev === rev;
 
-    if (accepted) {
-      const nextRev = (curRev >= 1e9 ? 1e9 : curRev + 1) + 0;
-      tx.set(wRef, {
+        if (accepted) {
+          const nextRev = (curRev >= 1e9 ? 1e9 : curRev + 1) + 0;
+          tx.set(wRef, {
+            cash,
+            gems,
+            stk,
+            rev: nextRev,
+            sid,
+            t: serverTimestamp(),
+          });
+          const existingStats = (pSnap.data()?.stats as Partial<PlayerStats> | undefined) ?? pubStats;
+          const mergedStats = sanitizeStats(existingStats, {
+            buildings: totalBuildings(state),
+            completedTrades: Math.max(
+              existingStats?.completedTrades || 0,
+              pubStats?.completedTrades || 0,
+              completedTradesCount,
+            ),
+          });
+          const activeSub = getActiveSubscription(state, Date.now());
+          tx.update(pRef, {
+            gdp: gdpVal,
+            cash,
+            gems,
+            level: capValue(playerLevel(state), 10_000_000) || 1,
+            rank: capValue(state.rank, MAX_RANK),
+            subTier: activeSub ? activeSub.def.id : '',
+            subExp: activeSub ? capValue(activeSub.exp, 1e13) : 0,
+            lastSeen: serverTimestamp(),
+            stats: mergedStats,
+          });
+          tx.set(doc(db, 'saves', uid), { save: cleanSavePayload(state) });
+          result = {
+            accepted: true,
+            wallet: { cash, gems, stk, rev: nextRev },
+          };
+        } else {
+          if (wData.sid && wData.sid !== sid) {
+            onKicked();
+            throw makeError('aborted', 'Another session is active');
+          }
+          result = {
+            accepted: false,
+            wallet: {
+              cash: capValue(wData.cash, 1e13),
+              gems: capValue(wData.gems, 1e9),
+              stk: cleanStickersMap(wData.stk),
+              rev: curRev,
+            },
+          };
+        }
+      },
+      true,
+      'saves (wallet + player + save)',
+      true,
+    );
+    return result;
+  } catch (err) {
+    if (!isPermissionDeniedError(err)) {
+      throw err;
+    }
+
+    // Pinpoint & salvage fallback: separate each doc so one blocked doc doesn't hide which path failed
+    const uid = requireUid();
+    let firstFatalErr: unknown = null;
+    let savedDocOk = false;
+    let walletDocOk = false;
+    let nextRev = Math.max(1, rev + 1);
+
+    const sesRef = doc(db, 'players', uid, 'private', 'session');
+    try {
+      const sesSnap = await getDoc(sesRef);
+      if (sesSnap.exists() && sesSnap.data()?.sid && sesSnap.data()?.sid !== sid) {
+        onKicked();
+        throw makeError('aborted', 'Another session is active');
+      }
+      if (!sesSnap.exists()) {
+        await setDoc(sesRef, { sid, t: serverTimestamp() });
+      }
+    } catch (sesErr) {
+      if ((sesErr as { code?: string })?.code === 'aborted') throw sesErr;
+      const info = recordFirestoreError(sesErr, OperationType.WRITE, `players/${uid}/private/session`);
+      console.error('Firestore Error: ', JSON.stringify(info));
+      if (!firstFatalErr) firstFatalErr = sesErr;
+    }
+
+    const sRef = doc(db, 'saves', uid);
+    try {
+      await setDoc(sRef, { save: cleanSavePayload(state) });
+      savedDocOk = true;
+    } catch (saveErr) {
+      const info = recordFirestoreError(saveErr, OperationType.WRITE, `saves/${uid}`);
+      console.error('Firestore Error: ', JSON.stringify(info));
+      if (!firstFatalErr) firstFatalErr = saveErr;
+    }
+
+    const wRef = doc(db, 'players', uid, 'private', 'wallet');
+    try {
+      const wSnap = await getDoc(wRef);
+      const wData = wSnap.exists() ? wSnap.data() : null;
+      const curRev =
+        wData && Number.isFinite(Number(wData.rev)) ? Math.max(0, Math.floor(Number(wData.rev))) : 0;
+      if (wData && curRev !== rev) {
+        if (wData.sid && wData.sid !== sid) {
+          onKicked();
+          throw makeError('aborted', 'Another session is active');
+        }
+        return {
+          accepted: false,
+          wallet: {
+            cash: capValue(wData.cash, 1e13),
+            gems: capValue(wData.gems, 1e9),
+            stk: cleanStickersMap(wData.stk),
+            rev: curRev,
+          },
+        };
+      }
+      nextRev = Math.min(1e9, curRev + 1);
+      await setDoc(wRef, {
         cash,
         gems,
         stk,
@@ -339,6 +467,20 @@ export async function syncSaveToCloud(params: {
         sid,
         t: serverTimestamp(),
       });
+      walletDocOk = true;
+    } catch (walletErr) {
+      if ((walletErr as { code?: string })?.code === 'aborted') throw walletErr;
+      const info = recordFirestoreError(walletErr, OperationType.WRITE, `players/${uid}/private/wallet`);
+      console.error('Firestore Error: ', JSON.stringify(info));
+      if (!firstFatalErr) firstFatalErr = walletErr;
+    }
+
+    const pRef = doc(db, 'players', uid);
+    try {
+      const pSnap = await getDoc(pRef);
+      if (!pSnap.exists()) {
+        throw makeError('failed-precondition', 'Player profile not initialized');
+      }
       const existingStats = (pSnap.data()?.stats as Partial<PlayerStats> | undefined) ?? pubStats;
       const mergedStats = sanitizeStats(existingStats, {
         buildings: totalBuildings(state),
@@ -349,7 +491,7 @@ export async function syncSaveToCloud(params: {
         ),
       });
       const activeSub = getActiveSubscription(state, Date.now());
-      tx.update(pRef, {
+      await updateDoc(pRef, {
         gdp: gdpVal,
         cash,
         gems,
@@ -360,29 +502,29 @@ export async function syncSaveToCloud(params: {
         lastSeen: serverTimestamp(),
         stats: mergedStats,
       });
-      tx.set(doc(db, 'saves', uid), { save: cleanSavePayload(state) });
-      result = {
+    } catch (playerErr) {
+      if ((playerErr as { code?: string })?.code === 'failed-precondition') throw playerErr;
+      const info = recordFirestoreError(playerErr, OperationType.UPDATE, `players/${uid}`);
+      console.error('Firestore Error: ', JSON.stringify(info));
+      if (!firstFatalErr) firstFatalErr = playerErr;
+    }
+
+    if (savedDocOk && walletDocOk) {
+      if (firstFatalErr) {
+        recordAppError({
+          source: 'sync',
+          message: 'Cloud save succeeded (leaderboard update hit a rules error — see details above).',
+          path: `players/${uid}`,
+        });
+      }
+      return {
         accepted: true,
         wallet: { cash, gems, stk, rev: nextRev },
       };
-    } else {
-      if (wData.sid && wData.sid !== sid) {
-        onKicked();
-        throw makeError('aborted', 'Another session is active');
-      }
-      result = {
-        accepted: false,
-        wallet: {
-          cash: capValue(wData.cash, 1e13),
-          gems: capValue(wData.gems, 1e9),
-          stk: cleanStickersMap(wData.stk),
-          rev: curRev,
-        },
-      };
     }
-  }, true, 'saves (wallet + player + save)');
 
-  return result;
+    throw firstFatalErr || err;
+  }
 }
 
 export async function createGiftOffer(params: {
@@ -965,19 +1107,19 @@ export function buildQueryHelpers() {
     playersActiveQuery: (serverOffsetMs = 0) =>
       query(
         collection(db, 'players'),
-        where('lastSeen', '>=', Timestamp.fromMillis(Date.now() + serverOffsetMs - 480_000)),
+        where('lastSeen', '>=', Timestamp.fromMillis(Date.now() + serverOffsetMs - 360_000)),
         orderBy('lastSeen', 'desc'),
-        limit(100),
+        limit(50),
       ),
     tradesQuery: (uid: string) =>
-      query(collection(db, 'trades'), where('participants', 'array-contains', uid), limit(40)),
+      query(collection(db, 'trades'), where('participants', 'array-contains', uid), limit(25)),
     notifsQuery: (uid: string) =>
-      query(collection(db, 'players', uid, 'notifications'), orderBy('createdAt', 'desc'), limit(40)),
+      query(collection(db, 'players', uid, 'notifications'), orderBy('createdAt', 'desc'), limit(25)),
     projectsQuery: (uid: string) =>
-      query(collection(db, 'players', uid, 'projects'), orderBy('startedAt', 'desc'), limit(20)),
+      query(collection(db, 'players', uid, 'projects'), orderBy('startedAt', 'desc'), limit(15)),
     globalChatQuery: () =>
-      query(collection(db, 'globalChat'), orderBy('createdAt', 'desc'), limit(60)),
+      query(collection(db, 'globalChat'), orderBy('createdAt', 'desc'), limit(40)),
     dmQuery: (uidA: string, uidB: string) =>
-      query(collection(db, 'dms', pairIdFor(uidA, uidB), 'messages'), orderBy('createdAt', 'desc'), limit(60)),
+      query(collection(db, 'dms', pairIdFor(uidA, uidB), 'messages'), orderBy('createdAt', 'desc'), limit(40)),
   };
 }

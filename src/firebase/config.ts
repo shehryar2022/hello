@@ -2,6 +2,7 @@ import { getApp, getApps, initializeApp, type FirebaseApp } from 'firebase/app';
 import { getAuth, type Auth } from 'firebase/auth';
 import { doc, getDocFromServer, getFirestore, type Firestore } from 'firebase/firestore';
 import firebaseAppletConfig from '../../firebase-applet-config.json';
+import { extractErrorCode, recordAppError } from './errorLog';
 
 function readConfigValue(envValue: unknown, fallbackValue: unknown): string {
   const fromEnv = typeof envValue === 'string' ? envValue.trim() : '';
@@ -144,12 +145,30 @@ export function buildFirestoreErrorInfo(
   };
 }
 
+export function recordFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null,
+): FirestoreErrorInfo {
+  const errInfo = buildFirestoreErrorInfo(error, operationType, path);
+  const json = JSON.stringify(errInfo);
+  recordAppError({
+    source: 'firestore',
+    code: extractErrorCode(error) || undefined,
+    operationType,
+    path,
+    message: errInfo.error,
+    details: json,
+  });
+  return errInfo;
+}
+
 export function handleFirestoreError(
   error: unknown,
   operationType: OperationType,
   path: string | null,
 ): never {
-  const errInfo = buildFirestoreErrorInfo(error, operationType, path);
+  const errInfo = recordFirestoreError(error, operationType, path);
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
