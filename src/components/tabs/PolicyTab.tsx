@@ -365,7 +365,11 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
     p.b !== n.b ||
     p.stk !== n.stk ||
     p.tech !== n.tech ||
-    p.gx !== n.gx ||
+    (p.gx.blk > 0) !== (n.gx.blk > 0) ||
+    p.gx.pb !== n.gx.pb ||
+    p.gx.ph !== n.gx.ph ||
+    p.gx.cond !== n.gx.cond ||
+    p.gx.lvl !== n.gx.lvl ||
     p.activeFx !== n.activeFx ||
     p.sub !== n.sub
   ) {

@@ -5,6 +5,7 @@ import {
   BUILDINGS,
   CRATE_COST_CASH,
   CRATE_COST_GEMS,
+  DAILY_REWARDS,
   MAX_RANK,
   RANKS,
   STICKERS,
@@ -38,6 +39,7 @@ import {
   claimMilestone,
   claimSubscriptionDaily,
   cleanSavePayload,
+  computeDailyAndOfflineChecks,
   freshState,
   fuseSticker,
   getActiveSubscription,
@@ -64,6 +66,7 @@ import {
   rollWeeklySubPromo,
   sanitizeStats,
   selectDailyQuestIds,
+  shouldRunOfflineEntryCheck,
   targetHappiness,
   taxInfo,
   totalBuildings,
@@ -940,4 +943,129 @@ test('cleanSavePayload matches 47 ALLOWED_SAVE_KEYS and sanitizes nested edge ca
   const promoObj = out.subPromo as Record<string, unknown>;
   assert.equal('shadowPromo' in promoObj, false);
 });
+
+test('shouldRunOfflineEntryCheck waits for Firebase auth resolution and prevents post-sync duplicates', () => {
+  // Firebase configured but auth still pending -> must NOT run offline entry check
+  assert.equal(
+    shouldRunOfflineEntryCheck({
+      isFirebaseConfigured: true,
+      authResolved: false,
+      uid: null,
+      gateOpen: false,
+      completedEntryKey: null,
+    }),
+    false,
+  );
+
+  // Firebase NOT configured (offline-only environment) -> allowed once gate closes
+  assert.equal(
+    shouldRunOfflineEntryCheck({
+      isFirebaseConfigured: true,
+      authResolved: true,
+      uid: 'user-123',
+      gateOpen: false,
+      completedEntryKey: null,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldRunOfflineEntryCheck({
+      isFirebaseConfigured: false,
+      authResolved: false,
+      uid: null,
+      gateOpen: true,
+      completedEntryKey: null,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldRunOfflineEntryCheck({
+      isFirebaseConfigured: false,
+      authResolved: false,
+      uid: null,
+      gateOpen: false,
+      completedEntryKey: 'offline',
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldRunOfflineEntryCheck({
+      isFirebaseConfigured: false,
+      authResolved: false,
+      uid: null,
+      gateOpen: false,
+      completedEntryKey: null,
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldRunOfflineEntryCheck({
+      isFirebaseConfigured: true,
+      authResolved: true,
+      uid: null,
+      gateOpen: false,
+      completedEntryKey: null,
+    }),
+    true,
+  );
+});
+
+test('computeDailyAndOfflineChecks is strictly idempotent, handles clock skew, and advances/resets streaks', () => {
+  const day1Ms = Date.UTC(2026, 10, 26, 12, 0, 0);
+  const s0 = freshState();
+  s0.b.farm = 5;
+  s0.t = day1Ms - 600_000;
+
+  const first = computeDailyAndOfflineChecks(s0, 0, day1Ms, () => 0);
+  assert.equal(first.changed, true);
+  assert.ok(first.dailyGrant !== null);
+  assert.equal(first.dailyGrant?.streak, 1);
+  assert.equal(first.dailyGrant?.cashAdded, 300);
+  assert.ok(first.offlineCredited > 0);
+  assert.equal(first.state.cash, 260 + 300);
+
+  // Immediate re-invocation (e.g. React strict effect replay or reconnect) must grant nothing
+  const replay = computeDailyAndOfflineChecks(first.state, 0, day1Ms + 2_000, () => 0);
+  assert.equal(replay.changed, false);
+  assert.equal(replay.dailyGrant, null);
+  assert.equal(replay.offlineCredited, 0);
+  assert.equal(replay.state.cash, first.state.cash);
+  assert.equal(replay.state.streak, 1);
+
+  // Minor negative clock skew on same logical day must NOT double-grant
+  const skew = computeDailyAndOfflineChecks(first.state, 0, day1Ms - 5_000, () => 0);
+  assert.equal(skew.changed, false);
+  assert.equal(skew.dailyGrant, null);
+  assert.equal(skew.state.cash, first.state.cash);
+
+  // Consecutive next day advances to Day 2 streak
+  const day2Ms = day1Ms + 86_400_000;
+  const day2 = computeDailyAndOfflineChecks(first.state, 0, day2Ms, () => 0);
+  assert.equal(day2.dailyGrant?.streak, 2);
+  assert.equal(day2.dailyGrant?.cashAdded, DAILY_REWARDS[1].c);
+  assert.equal(day2.state.cash, first.state.cash + DAILY_REWARDS[1].c);
+
+  // Skipping a day resets streak back to 1
+  const skippedMs = day2Ms + 3 * 86_400_000;
+  const skipped = computeDailyAndOfflineChecks(day2.state, 0, skippedMs, () => 0);
+  assert.equal(skipped.dailyGrant?.streak, 1);
+  assert.equal(skipped.dailyGrant?.cashAdded, DAILY_REWARDS[0].c);
+});
+
+test('NaN or non-finite cash and gems cannot bypass purchase guards', () => {
+  const now = 1_750_000_000_000;
+  const nanCashState = { ...freshState(), cash: Number.NaN, gems: Number.NaN, taxPool: 100 };
+  assert.equal(applyBuyBuilding(nanCashState, 'farm', 1, now).ok, false);
+  assert.equal(applyBuyRank(nanCashState, 1).ok, false);
+  assert.equal(applyActivateGemBoost(nanCashState).ok, false);
+  assert.equal(applyUnlockTech({ ...nanCashState, b: { ...nanCashState.b, farm: 20 } }, 'smart_grid').ok, false);
+  assert.equal(resolveExecutiveDecision(nanCashState, 'tech_expo', 0, 0, now).ok, false);
+  assert.equal(buyStickerCrate(nanCashState, 'cash', now).ok, false);
+  assert.equal(buyStickerCrate(nanCashState, 'gems', now).ok, false);
+});
+
 

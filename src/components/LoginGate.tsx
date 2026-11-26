@@ -100,7 +100,7 @@ export const LoginGate: React.FC<LoginGateProps> = React.memo(({
             ))}
           </div>
 
-          <button type="button" className="gbtn" onClick={() => void onGoogleLogin()}>
+          <button type="button" className="gbtn" disabled={isBusyMsg} onClick={() => void onGoogleLogin()}>
             <GoogleIcon />
             <span>Continue with Google</span>
           </button>
@@ -126,10 +126,20 @@ export const LoginGate: React.FC<LoginGateProps> = React.memo(({
             onChange={(e) => setPassword(e.target.value)}
           />
           <div className="tgrid">
-            <button type="button" className="btn sm" onClick={() => void onEmailAuth(email, password, false)}>
+            <button
+              type="button"
+              className="btn sm"
+              disabled={isBusyMsg}
+              onClick={() => void onEmailAuth(email, password, false)}
+            >
               Sign in
             </button>
-            <button type="button" className="btn sm mint" onClick={() => void onEmailAuth(email, password, true)}>
+            <button
+              type="button"
+              className="btn sm mint"
+              disabled={isBusyMsg}
+              onClick={() => void onEmailAuth(email, password, true)}
+            >
               Register
             </button>
           </div>

@@ -23,13 +23,13 @@ import {
   GX_PROJECT_TYPES,
   MAX_RANK,
   PROJECT_STAGES,
-  TZ,
 } from '../game/constants';
 import { PRESENCE_QUERY_BUFFER_MS } from './presence';
 import {
   calculateGdp,
   cleanSavePayload,
   cleanStickersMap,
+  dayKeyFor,
   getActiveSubscription,
   migrateState,
   playerLevel,
@@ -46,7 +46,6 @@ import type {
 } from '../game/types';
 import {
   auth,
-  buildFirestoreErrorInfo,
   db,
   handleFirestoreError,
   OperationType,
@@ -54,16 +53,7 @@ import {
 } from './config';
 import { recordAppError } from './errorLog';
 
-const KARACHI_DAY_FORMATTER = new Intl.DateTimeFormat('en-CA', {
-  timeZone: TZ,
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-});
-
-export function dayKeyFor(ms: number): string {
-  return KARACHI_DAY_FORMATTER.format(new Date(ms));
-}
+export { dayKeyFor };
 
 export function pairIdFor(a: string, b: string): string {
   return a < b ? `${a}_${b}` : `${b}_${a}`;
@@ -199,14 +189,22 @@ export async function createPlayerProfile(
   state: GameState,
   sid: string,
   onKicked: () => void,
-): Promise<{ restoredSave?: Partial<GameState>; walletRev: number }> {
+): Promise<{
+  restoredSave?: Partial<GameState>;
+  wallet?: { cash: number; gems: number; stk: Record<string, number> };
+  walletRev: number;
+}> {
   const username = usernameRaw.trim();
   const lower = username.toLowerCase();
   if (!/^[A-Za-z0-9_]{3,16}$/.test(username)) {
     throw makeError('invalid', 'Invalid username');
   }
   const cn = COUNTRIES.find((c) => c[0] === countryCodeRaw) || COUNTRIES[0];
-  let out: { restoredSave?: Partial<GameState>; walletRev: number } = { walletRev: 1 };
+  let out: {
+    restoredSave?: Partial<GameState>;
+    wallet?: { cash: number; gems: number; stk: Record<string, number> };
+    walletRev: number;
+  } = { walletRev: 1 };
 
   await runSessionTx(
     sid,
@@ -237,9 +235,10 @@ export async function createPlayerProfile(
       const rankVal = Math.max(0, Math.min(MAX_RANK, Math.floor(Number(baseState.rank) || 0)));
 
       if (pSnap.exists()) {
+        const wData = wSnap.exists() ? wSnap.data() : null;
         const existingRev =
-          wSnap.exists() && Number.isFinite(Number(wSnap.data()?.rev))
-            ? Math.max(0, Math.floor(Number(wSnap.data()?.rev)))
+          wData && Number.isFinite(Number(wData.rev))
+            ? Math.max(0, Math.floor(Number(wData.rev)))
             : 0;
         const walletRev = wSnap.exists() ? Math.max(1, existingRev) : 1;
         if (!wSnap.exists()) {
@@ -255,7 +254,17 @@ export async function createPlayerProfile(
         if (!sSnap.exists()) {
           tx.set(sRef, { save: cleanedSave });
         }
-        out = { restoredSave: oldRaw, walletRev };
+        out = {
+          restoredSave: oldRaw,
+          wallet: wData
+            ? {
+                cash: capValue(wData.cash, 1e13),
+                gems: capValue(wData.gems, 1e9),
+                stk: cleanStickersMap(wData.stk),
+              }
+            : undefined,
+          walletRev,
+        };
         return;
       }
 
@@ -406,12 +415,28 @@ export async function syncSaveToCloud(params: {
       throw err;
     }
 
-    // Pinpoint & salvage fallback: separate each doc so one blocked doc doesn't hide which path failed
+    // Pinpoint & salvage fallback: verify player/session/wallet BEFORE writing saves/{uid}
+    // so an outdated tab or lower rev can never overwrite newer cloud progress.
     const uid = requireUid();
     let firstFatalErr: unknown = null;
     let savedDocOk = false;
     let walletDocOk = false;
     let nextRev = Math.max(1, rev + 1);
+
+    const pRef = doc(db, 'players', uid);
+    let existingStats: Partial<PlayerStats> | undefined = pubStats;
+    try {
+      const pSnap = await getDoc(pRef);
+      if (!pSnap.exists()) {
+        throw makeError('failed-precondition', 'Player profile not initialized');
+      }
+      existingStats = (pSnap.data()?.stats as Partial<PlayerStats> | undefined) ?? pubStats;
+    } catch (preErr) {
+      if ((preErr as { code?: string })?.code === 'failed-precondition') throw preErr;
+      const info = recordFirestoreError(preErr, OperationType.GET, `players/${uid}`);
+      console.error('Firestore Error: ', JSON.stringify(info));
+      if (!firstFatalErr) firstFatalErr = preErr;
+    }
 
     const sesRef = doc(db, 'players', uid, 'private', 'session');
     try {
@@ -428,16 +453,6 @@ export async function syncSaveToCloud(params: {
       const info = recordFirestoreError(sesErr, OperationType.WRITE, `players/${uid}/private/session`);
       console.error('Firestore Error: ', JSON.stringify(info));
       if (!firstFatalErr) firstFatalErr = sesErr;
-    }
-
-    const sRef = doc(db, 'saves', uid);
-    try {
-      await setDoc(sRef, { save: cleanedSave });
-      savedDocOk = true;
-    } catch (saveErr) {
-      const info = recordFirestoreError(saveErr, OperationType.WRITE, `saves/${uid}`);
-      console.error('Firestore Error: ', JSON.stringify(info));
-      if (!firstFatalErr) firstFatalErr = saveErr;
     }
 
     const wRef = doc(db, 'players', uid, 'private', 'wallet');
@@ -478,13 +493,17 @@ export async function syncSaveToCloud(params: {
       if (!firstFatalErr) firstFatalErr = walletErr;
     }
 
-    const pRef = doc(db, 'players', uid);
+    const sRef = doc(db, 'saves', uid);
     try {
-      const pSnap = await getDoc(pRef);
-      if (!pSnap.exists()) {
-        throw makeError('failed-precondition', 'Player profile not initialized');
-      }
-      const existingStats = (pSnap.data()?.stats as Partial<PlayerStats> | undefined) ?? pubStats;
+      await setDoc(sRef, { save: cleanedSave });
+      savedDocOk = true;
+    } catch (saveErr) {
+      const info = recordFirestoreError(saveErr, OperationType.WRITE, `saves/${uid}`);
+      console.error('Firestore Error: ', JSON.stringify(info));
+      if (!firstFatalErr) firstFatalErr = saveErr;
+    }
+
+    try {
       const mergedStats = sanitizeStats(existingStats, {
         buildings: totalBuildings(state),
         completedTrades: Math.max(
@@ -506,7 +525,6 @@ export async function syncSaveToCloud(params: {
         stats: mergedStats,
       });
     } catch (playerErr) {
-      if ((playerErr as { code?: string })?.code === 'failed-precondition') throw playerErr;
       const info = recordFirestoreError(playerErr, OperationType.UPDATE, `players/${uid}`);
       console.error('Firestore Error: ', JSON.stringify(info));
       if (!firstFatalErr) firstFatalErr = playerErr;

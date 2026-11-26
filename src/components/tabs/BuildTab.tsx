@@ -135,6 +135,7 @@ export const BuildTab: React.FC<BuildTabProps> = memo(({ state, serverOffsetMs =
   const pSubActive = !!(prev.state.sub?.tier && (prev.state.sub?.exp || 0) > pNow);
   const nSubActive = !!(next.state.sub?.tier && (next.state.sub?.exp || 0) > nNow);
   if (pSubActive !== nSubActive || prev.state.sub?.tier !== next.state.sub?.tier) return false;
+  if ((prev.state.hap < 55) !== (next.state.hap < 55)) return false;
   const pB = prev.state.b;
   const nB = next.state.b;
   if (pB !== nB) {

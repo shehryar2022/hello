@@ -169,7 +169,7 @@ const City3DInner: React.FC<City3DProps> = ({ state, visible, burstKey, onBuildi
     }
     prevLevelsRef.current = nextPrev;
 
-    if (newlyBuilt.length > 0) {
+    if (newlyBuilt.length > 0 && newlyBuilt.length <= 2) {
       setRisingIds((cur) => {
         const next = { ...cur };
         for (const id of newlyBuilt) next[id] = true;

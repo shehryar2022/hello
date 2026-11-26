@@ -134,6 +134,7 @@ import {
   claimMilestone,
   claimSubscriptionDaily,
   cleanStickersMap,
+  computeDailyAndOfflineChecks,
   formatNumber,
   freshState,
   fuseSticker,
@@ -148,8 +149,10 @@ import {
   resolveExecutiveDecision,
   rollWeeklySubPromo,
   selectDailyQuestIds,
+  shouldRunOfflineEntryCheck,
   targetHappiness,
   tierOfCompletedTrades,
+  type DailyOfflineCheckResult,
 } from './game/rules';
 import { playSfx, triggerBuzz } from './game/sound';
 import type {
@@ -215,7 +218,10 @@ export default function App() {
   });
 
   const [user, setUser] = useState<User | null>(null);
+  const userRef = useRef<User | null>(null);
+  userRef.current = user;
   const [uid, setUid] = useState<string | null>(null);
+  const [authResolved, setAuthResolved] = useState<boolean>(() => !(isFirebaseConfigured && auth && db));
   const [authMsg, setAuthMsg] = useState('');
   const [cloudReady, setCloudReady] = useState(false);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
@@ -233,6 +239,8 @@ export default function App() {
   const [lbLoaded, setLbLoaded] = useState(false);
   const [trades, setTrades] = useState<TradeOffer[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const notificationsRef = useRef<NotificationItem[]>([]);
+  notificationsRef.current = notifications;
   const [sentToday, setSentToday] = useState(0);
   const [projects, setProjects] = useState<GovProject[]>([]);
   const [liveProjectProgress, setLiveProjectProgress] = useState<Record<string, number>>({});
@@ -262,6 +270,9 @@ export default function App() {
   const appErrors = React.useSyncExternalStore(subscribeErrorLog, getErrorLog);
 
   const sidRef = useRef<string>(`${Date.now()}_${Math.random().toString(36).slice(2, 10)}`);
+  const entryCheckedKeyRef = useRef<string | null>(null);
+  const cloudLoadingRef = useRef<boolean>(false);
+  const authBusyRef = useRef<boolean>(false);
   const walletRevRef = useRef<number>(0);
   const expectedWalletRevRef = useRef<number | null>(null);
   const [serverOffsetMs, setServerOffsetMs] = useState(0);
@@ -284,6 +295,7 @@ export default function App() {
   const permWarnShownRef = useRef<boolean>(false);
   const cloudSyncPermDeniedRef = useRef<boolean>(false);
   const cloudSyncQuotaPausedRef = useRef<boolean>(false);
+  const quotaPausedAtRef = useRef<number>(0);
   const pubProfileRef = useRef<PlayerProfile | null>(null);
   pubProfileRef.current = pubProfile;
   const uidRef = useRef<string | null>(null);
@@ -298,6 +310,7 @@ export default function App() {
   const completedTradesRef = useRef<number>(0);
   const projBusyRef = useRef<Set<string>>(new Set());
   const projPayBusyRef = useRef<Set<string>>(new Set());
+  const projClaimedLocalRef = useRef<Set<string>>(new Set());
   const projCreatingRef = useRef<boolean>(false);
   const justCreatedProjIdsRef = useRef<Set<string>>(new Set());
   const projStartedLocalAtRef = useRef<Record<string, number>>({});
@@ -354,7 +367,15 @@ export default function App() {
       lastHeartbeatSuccessAtRef.current = Date.now();
     } catch (err) {
       const code = extractErrorCode(err);
-      if (code !== 'aborted' && code !== 'unavailable') {
+      if (code === 'resource-exhausted') {
+        cloudSyncQuotaPausedRef.current = true;
+        quotaPausedAtRef.current = Date.now();
+        setCloudStatus({ cls: 'bad', text: 'Quota paused' });
+      } else if (code === 'permission-denied') {
+        cloudSyncPermDeniedRef.current = true;
+        setCloudStatus({ cls: 'bad', text: 'Rules blocked sync' });
+      }
+      if (code !== 'aborted' && code !== 'unavailable' && code !== 'resource-exhausted') {
         recordFirestoreError(err, OperationType.UPDATE, `players/${currentUid}`);
       }
     }
@@ -553,20 +574,24 @@ export default function App() {
         syncRetryCountRef.current = 0;
         cloudSyncPermDeniedRef.current = false;
         cloudSyncQuotaPausedRef.current = false;
+        quotaPausedAtRef.current = 0;
         permWarnShownRef.current = false;
         lastSyncedAtRef.current = Date.now();
         if (!res.accepted) {
-          setState((prev) => {
-            const next = {
-              ...prev,
-              cash: res.wallet.cash,
-              gems: res.wallet.gems,
-              stk: res.wallet.stk,
-            };
-            stateRef.current = next;
-            saveLocal(next);
-            return next;
-          });
+          const next: GameState = {
+            ...stateRef.current,
+            cash: res.wallet.cash,
+            gems: res.wallet.gems,
+            stk: res.wallet.stk,
+          };
+          stateRef.current = next;
+          saveLocal(next);
+          setState((prev) => ({
+            ...prev,
+            cash: res.wallet.cash,
+            gems: res.wallet.gems,
+            stk: res.wallet.stk,
+          }));
           cloudDirtyRef.current = true;
           void sendHeartbeat(currentUid)
             .then(() => {
@@ -615,6 +640,7 @@ export default function App() {
           }
         } else if (code === 'resource-exhausted' || /Quota exceeded/i.test(combined)) {
           cloudSyncQuotaPausedRef.current = true;
+          quotaPausedAtRef.current = Date.now();
           cloudDirtyRef.current = false;
           syncRetryCountRef.current = 0;
           recordAppError({
@@ -704,6 +730,173 @@ export default function App() {
     [performCloudSync],
   );
 
+  // Build Welcome / Daily Streak modal from pure daily & offline check outcome
+  const buildEntryDialog = useCallback((res: DailyOfflineCheckResult): DialogConfig | null => {
+    if (res.dailyGrant) {
+      const g = res.dailyGrant;
+      return {
+        title: `Day ${g.streak} Streak!`,
+        body: (
+          <div>
+            <p>Welcome back! Here is today&apos;s treasury bonus:</p>
+            <p style={{ fontSize: 18, color: 'var(--gold)', fontFamily: 'var(--d)' }}>
+              +₨ {formatNumber(g.cashAdded)} {g.gemsAdded > 0 ? `· +${g.gemsAdded} Gems` : ''}
+              {g.sticker ? ` · ${g.sticker.n}` : ''}
+            </p>
+            {g.sticker && (
+              <div style={{ margin: '8px auto' }}>
+                <StickerArt id={g.sticker.id} size={34} />
+              </div>
+            )}
+            {res.offlineCredited >= 1 && (
+              <p className="ok" style={{ fontSize: 13 }}>
+                Plus +₨ {formatNumber(res.offlineCredited)} offline tax collected while away!
+              </p>
+            )}
+          </div>
+        ),
+        actions: [{ label: 'Collect', variant: 'gold', onClick: () => setDialog(null) }],
+      };
+    }
+    if (res.offlineCredited >= 1) {
+      return {
+        title: 'Welcome Back!',
+        body: (
+          <p>
+            Your economy kept running while away!{' '}
+            <b className="ok">+₨ {formatNumber(res.offlineCredited)}</b> added to your Tax Pool
+            {res.offlineWasCapped ? ' (30m offline cap reached)' : ''}.
+          </p>
+        ),
+        actions: [{ label: 'Awesome', variant: 'mint', onClick: () => setDialog(null) }],
+      };
+    }
+    return null;
+  }, []);
+
+  const loadCloudSession = useCallback(
+    async (u: User, seq: number) => {
+      if (!db || cloudLoadingRef.current) return;
+      cloudLoadingRef.current = true;
+      cloudSyncPermDeniedRef.current = false;
+      cloudSyncQuotaPausedRef.current = false;
+      quotaPausedAtRef.current = 0;
+      permWarnShownRef.current = false;
+      syncRetryCountRef.current = 0;
+      setGateOpen(false);
+      setAuthMsg('');
+      try {
+        // Claim single session lock on sign-in
+        await setDoc(doc(db, 'players', u.uid, 'private', 'session'), {
+          sid: sidRef.current,
+          t: serverTimestamp(),
+        });
+        if (authSeqRef.current !== seq) return;
+
+        // Estimate server clock offset strictly from server (never fall back to stale cache)
+        const sesSnap = await getDocFromServer(doc(db, 'players', u.uid, 'private', 'session')).catch(() => null);
+        if (authSeqRef.current !== seq) return;
+        if (sesSnap && sesSnap.exists()) {
+          const srvMs = timestampToMs(sesSnap.data()?.t);
+          if (srvMs > 0) updateServerOffset(srvMs);
+        }
+
+        const pRef = doc(db, 'players', u.uid);
+        const pSnap = await getDocFromServer(pRef).catch(() => getDoc(pRef));
+        if (authSeqRef.current !== seq) return;
+        if (!pSnap.exists()) {
+          needsOnboardingRef.current = true;
+          cloudReadyRef.current = false;
+          setNeedsOnboarding(true);
+          setCloudReady(false);
+          setAuthResolved(true);
+          return;
+        }
+
+        const pData = pSnap.data() as Omit<PlayerProfile, 'id'>;
+        setPubProfile({ ...pData, id: u.uid, seen: timestampToMs(pData.lastSeen) });
+
+        // Load authoritative wallet + save from server when online (fallback to cache offline)
+        const wRef = doc(db, 'players', u.uid, 'private', 'wallet');
+        const sRef = doc(db, 'saves', u.uid);
+        const [wSnap, sSnap] = await Promise.all([
+          getDocFromServer(wRef).catch(() => getDoc(wRef)),
+          getDocFromServer(sRef).catch(() => getDoc(sRef)),
+        ]);
+        if (authSeqRef.current !== seq) return;
+
+        let loaded = sSnap.exists()
+          ? migrateState((sSnap.data()?.save as Partial<GameState>) || {})
+          : loadInitialState();
+        loaded = {
+          ...loaded,
+          country:
+            COUNTRIES.find((c) => c[0] === pData.countryCode) || [
+              pData.countryCode || 'PK',
+              pData.countryName || 'Pakistan',
+            ],
+        };
+
+        if (wSnap.exists()) {
+          const w = wSnap.data();
+          const rawRev = Number(w.rev);
+          walletRevRef.current = Number.isFinite(rawRev) ? Math.max(0, Math.floor(rawRev)) : 0;
+          loaded.cash = capValue(w.cash, 1e13);
+          loaded.gems = capValue(w.gems, 1e9);
+          loaded.stk = cleanStickersMap(w.stk);
+        } else {
+          walletRevRef.current = 0;
+          pendingDirtyRef.current = true;
+        }
+
+        const tier = tierOfCompletedTrades(pData.stats?.completedTrades);
+        completedTradesRef.current = pData.stats?.completedTrades || 0;
+
+        // Run daily & offline rewards at most once per entry for this cloud account using final cloud state
+        const cloudEntryKey = `cloud:${u.uid}`;
+        let finalState = loaded;
+        if (entryCheckedKeyRef.current !== cloudEntryKey) {
+          entryCheckedKeyRef.current = cloudEntryKey;
+          const checkedRes = computeDailyAndOfflineChecks(loaded, tier, Date.now() + serverOffsetMsRef.current);
+          finalState = checkedRes.state;
+          if (
+            checkedRes.changed ||
+            finalState.lastDaily !== loaded.lastDaily ||
+            finalState.taxPool !== loaded.taxPool ||
+            finalState.questDay !== loaded.questDay ||
+            finalState.subPromo !== loaded.subPromo
+          ) {
+            pendingDirtyRef.current = true;
+          }
+          if (checkedRes.promoBannerText) addToast(checkedRes.promoBannerText);
+          const entryDlg = buildEntryDialog(checkedRes);
+          if (entryDlg) setDialog(entryDlg);
+        }
+
+        stateRef.current = finalState;
+        setState(finalState);
+        saveLocal(finalState);
+        needsOnboardingRef.current = false;
+        cloudReadyRef.current = true;
+        setNeedsOnboarding(false);
+        setCloudReady(true);
+        setAuthResolved(true);
+      } catch (err) {
+        if (authSeqRef.current === seq) {
+          setAuthResolved(true);
+          setCloudStatus({ cls: 'warn', text: 'Cloud load pending' });
+          recordFirestoreError(err, OperationType.GET, `players/${u.uid}`);
+          addToast(formatFirebaseError(err));
+        }
+      } finally {
+        if (authSeqRef.current === seq) {
+          cloudLoadingRef.current = false;
+        }
+      }
+    },
+    [addToast, buildEntryDialog, saveLocal, updateServerOffset],
+  );
+
   // Automatically recover cloud sync, heartbeat, and presence listeners on connectivity or tab resume
   useEffect(() => {
     const onOffline = () => {
@@ -713,6 +906,16 @@ export default function App() {
     };
     const onOnline = () => {
       if (
+        userRef.current &&
+        !cloudReadyRef.current &&
+        !needsOnboardingRef.current &&
+        !cloudLoadingRef.current &&
+        !kickedRef.current
+      ) {
+        void loadCloudSession(userRef.current, ++authSeqRef.current);
+        return;
+      }
+      if (
         uidRef.current &&
         cloudReadyRef.current &&
         !kickedRef.current &&
@@ -720,11 +923,13 @@ export default function App() {
         !cloudSyncPermDeniedRef.current
       ) {
         syncRetryCountRef.current = 0;
-        cloudSyncQuotaPausedRef.current = false;
+        if (cloudSyncQuotaPausedRef.current && Date.now() - quotaPausedAtRef.current >= 60_000) {
+          cloudSyncQuotaPausedRef.current = false;
+        }
         setPresenceEpoch((n) => n + 1);
-        if (pendingDirtyRef.current) {
+        if (pendingDirtyRef.current && !cloudSyncQuotaPausedRef.current) {
           void performCloudSync(false);
-        } else {
+        } else if (!cloudSyncQuotaPausedRef.current) {
           setCloudStatus({ cls: 'ok', text: 'Saved' });
           void triggerHeartbeat();
         }
@@ -768,109 +973,12 @@ export default function App() {
       window.removeEventListener('online', onOnline);
       document.removeEventListener('visibilitychange', onVisChange);
     };
-  }, [performCloudSync, saveLocal, triggerHeartbeat]);
-
-  // Daily check & offline earnings calculation (pure computation; caller displays dialog/toast)
-  const runDailyAndOfflineChecks = useCallback(
-    (baseState: GameState, tradeTier: number, nowOverride?: number) => {
-      const now = nowOverride ?? Date.now() + serverOffsetMsRef.current;
-      let working = { ...baseState };
-      const todayKey = dayKeyFor(now);
-
-      // Update daily quests if new day
-      if (working.questDay !== todayKey) {
-        working = {
-          ...working,
-          questDay: todayKey,
-          questIds: selectDailyQuestIds(todayKey),
-          claimed: {},
-        };
-      }
-
-      // Roll weekly random subscription promo (once per Asia/Karachi ISO week)
-      let promoToast: string | null = null;
-      const promoRes = rollWeeklySubPromo(working, now);
-      working = promoRes.state;
-      if (promoRes.rolled && promoRes.promo) {
-        const promoTier = SUBSCRIPTIONS.find((x) => x.id === promoRes.promo!.tier);
-        if (promoTier) {
-          promoToast = `Weekly Flash Deal: −${promoRes.promo.pct}% off ${promoTier.n}!`;
-        }
-      }
-
-      // Apply offline earnings
-      const off = applyOfflineEarnings(working, now, tradeTier);
-      working = off.state;
-
-      // Check daily login streak
-      let streakDialog: DialogConfig | null = null;
-      const lastKey = working.lastDaily ? dayKeyFor(working.lastDaily) : '';
-      if (lastKey !== todayKey) {
-        const ydayKey = dayKeyFor(now - 86_400_000);
-        const nextStreak = lastKey === ydayKey ? (working.streak || 0) + 1 : 1;
-        const rw = DAILY_REWARDS[Math.min(DAILY_REWARDS.length - 1, nextStreak - 1)];
-        const nextStk = { ...working.stk };
-        let grantedStickerId = '';
-        let grantedStickerName = '';
-        if (rw.e) {
-          const picked = STICKERS[Math.floor(Math.random() * STICKERS.length)];
-          nextStk[picked.id] = (nextStk[picked.id] || 0) + 1;
-          grantedStickerId = picked.id;
-          grantedStickerName = picked.n;
-        }
-        working = {
-          ...working,
-          cash: Math.min(1e13, working.cash + rw.c),
-          gems: Math.min(1e9, working.gems + rw.g),
-          stk: nextStk,
-          streak: nextStreak,
-          lastDaily: now,
-        };
-        streakDialog = {
-          title: `Day ${nextStreak} Streak!`,
-          body: (
-            <div>
-              <p>Welcome back! Here is today&apos;s treasury bonus:</p>
-              <p style={{ fontSize: 18, color: 'var(--gold)', fontFamily: 'var(--d)' }}>
-                +₨ {formatNumber(rw.c)} {rw.g > 0 ? `· +${rw.g} Gems` : ''}
-                {grantedStickerName ? ` · ${grantedStickerName}` : ''}
-              </p>
-              {grantedStickerId && (
-                <div style={{ margin: '8px auto' }}>
-                  <StickerArt id={grantedStickerId} size={34} />
-                </div>
-              )}
-              {off.credited >= 1 && (
-                <p className="ok" style={{ fontSize: 13 }}>
-                  Plus +₨ {formatNumber(off.credited)} offline tax collected while away!
-                </p>
-              )}
-            </div>
-          ),
-          actions: [{ label: 'Collect', variant: 'gold', onClick: () => setDialog(null) }],
-        };
-      } else if (off.credited >= 1) {
-        streakDialog = {
-          title: 'Welcome Back!',
-          body: (
-            <p>
-              Your economy kept running while away!{' '}
-              <b className="ok">+₨ {formatNumber(off.credited)}</b> added to your Tax Pool
-              {off.wasCapped ? ' (30m offline cap reached)' : ''}.
-            </p>
-          ),
-          actions: [{ label: 'Awesome', variant: 'mint', onClick: () => setDialog(null) }],
-        };
-      }
-
-      return { state: working, streakDialog, promoToast };
-    },
-    [],
-  );
+  }, [loadCloudSession, performCloudSync, saveLocal, triggerHeartbeat]);
 
   // Firebase bootstrap & auth listener
   useEffect(() => {
     if (!isFirebaseConfigured || !auth || !db) {
+      setAuthResolved(true);
       return;
     }
     void getRedirectResult(auth).catch((err) => {
@@ -884,6 +992,7 @@ export default function App() {
 
     const unsub = onAuthStateChanged(auth, async (u) => {
       const seq = ++authSeqRef.current;
+      const hadSignedInUser = Boolean(uidRef.current);
       setUser(u);
       setUid(u?.uid || null);
       if (!u) {
@@ -895,6 +1004,11 @@ export default function App() {
           window.clearTimeout(syncRetryTimerRef.current);
           syncRetryTimerRef.current = null;
         }
+        cloudLoadingRef.current = false;
+        if (hadSignedInUser) {
+          // Signing out mid-session switches to offline play without re-firing an entry Welcome popup
+          entryCheckedKeyRef.current = 'signed-out';
+        }
         walletRevRef.current = 0;
         expectedWalletRevRef.current = null;
         lastSyncedAtRef.current = 0;
@@ -904,6 +1018,7 @@ export default function App() {
         syncRetryCountRef.current = 0;
         cloudSyncPermDeniedRef.current = false;
         cloudSyncQuotaPausedRef.current = false;
+        quotaPausedAtRef.current = 0;
         permWarnShownRef.current = false;
         completedTradesRef.current = 0;
         settlingTradesRef.current = false;
@@ -915,6 +1030,7 @@ export default function App() {
         leaderboardRawRef.current = [];
         projBusyRef.current.clear();
         projPayBusyRef.current.clear();
+        projClaimedLocalRef.current.clear();
         projCreatingRef.current = false;
         justCreatedProjIdsRef.current.clear();
         projStartedLocalAtRef.current = {};
@@ -940,121 +1056,36 @@ export default function App() {
         setRecentDms([]);
         setSentDmContacts([]);
         setCloudStatus({ cls: '', text: 'Saved' });
+        setAuthResolved(true);
         return;
       }
 
-      cloudSyncPermDeniedRef.current = false;
-      cloudSyncQuotaPausedRef.current = false;
-      permWarnShownRef.current = false;
-      syncRetryCountRef.current = 0;
-      setGateOpen(false);
-      setAuthMsg('');
-      try {
-        // Claim single session lock on sign-in
-        await setDoc(doc(db, 'players', u.uid, 'private', 'session'), {
-          sid: sidRef.current,
-          t: serverTimestamp(),
-        });
-        if (authSeqRef.current !== seq) return;
-
-        // Estimate server clock offset strictly from server (never fall back to stale cache)
-        const sesSnap = await getDocFromServer(doc(db, 'players', u.uid, 'private', 'session')).catch(() => null);
-        if (authSeqRef.current !== seq) return;
-        if (sesSnap && sesSnap.exists()) {
-          const srvMs = timestampToMs(sesSnap.data()?.t);
-          if (srvMs > 0) updateServerOffset(srvMs);
-        }
-
-        const pRef = doc(db, 'players', u.uid);
-        const pSnap = await getDocFromServer(pRef).catch(() => getDoc(pRef));
-        if (authSeqRef.current !== seq) return;
-        if (!pSnap.exists()) {
-          needsOnboardingRef.current = true;
-          cloudReadyRef.current = false;
-          setNeedsOnboarding(true);
-          setCloudReady(false);
-          return;
-        }
-
-        const pData = pSnap.data() as Omit<PlayerProfile, 'id'>;
-        setPubProfile({ ...pData, id: u.uid, seen: timestampToMs(pData.lastSeen) });
-
-        // Load authoritative wallet + save from server when online (fallback to cache offline)
-        const wRef = doc(db, 'players', u.uid, 'private', 'wallet');
-        const sRef = doc(db, 'saves', u.uid);
-        const [wSnap, sSnap] = await Promise.all([
-          getDocFromServer(wRef).catch(() => getDoc(wRef)),
-          getDocFromServer(sRef).catch(() => getDoc(sRef)),
-        ]);
-        if (authSeqRef.current !== seq) return;
-
-        let loaded = sSnap.exists()
-          ? migrateState((sSnap.data()?.save as Partial<GameState>) || {})
-          : loadInitialState();
-        loaded = {
-          ...loaded,
-          country:
-            COUNTRIES.find((c) => c[0] === pData.countryCode) || [
-              pData.countryCode || 'PK',
-              pData.countryName || 'Pakistan',
-            ],
-        };
-
-        if (wSnap.exists()) {
-          const w = wSnap.data();
-          const rawRev = Number(w.rev);
-          walletRevRef.current = Number.isFinite(rawRev) ? Math.max(0, Math.floor(rawRev)) : 0;
-          loaded.cash = capValue(w.cash, 1e13);
-          loaded.gems = capValue(w.gems, 1e9);
-          loaded.stk = cleanStickersMap(w.stk);
-        } else {
-          walletRevRef.current = 0;
-          pendingDirtyRef.current = true;
-        }
-
-        const tier = tierOfCompletedTrades(pData.stats?.completedTrades);
-        completedTradesRef.current = pData.stats?.completedTrades || 0;
-        const checkedRes = runDailyAndOfflineChecks(loaded, tier, Date.now() + serverOffsetMsRef.current);
-        const checked = checkedRes.state;
-        if (
-          checked.lastDaily !== loaded.lastDaily ||
-          checked.taxPool !== loaded.taxPool ||
-          checked.questDay !== loaded.questDay ||
-          checked.subPromo !== loaded.subPromo
-        ) {
-          pendingDirtyRef.current = true;
-        }
-        stateRef.current = checked;
-        setState(checked);
-        saveLocal(checked);
-        if (checkedRes.promoToast) addToast(checkedRes.promoToast);
-        if (checkedRes.streakDialog) setDialog(checkedRes.streakDialog);
-        needsOnboardingRef.current = false;
-        cloudReadyRef.current = true;
-        setNeedsOnboarding(false);
-        setCloudReady(true);
-      } catch (err) {
-        if (authSeqRef.current === seq) {
-          recordFirestoreError(err, OperationType.GET, `players/${u.uid}`);
-          addToast(formatFirebaseError(err));
-        }
-      }
+      await loadCloudSession(u, seq);
     });
 
     return () => unsub();
-  }, [addToast, runDailyAndOfflineChecks, saveLocal, updateServerOffset]);
+  }, [loadCloudSession]);
 
-  // Run daily check for offline mode on mount or when switching back to offline play
+  // Run daily & offline check ONCE for offline mode only after Firebase auth is confirmed signed-out (or unconfigured)
   useEffect(() => {
-    if (!gateOpen && !uid) {
-      const checkedRes = runDailyAndOfflineChecks(stateRef.current, 0);
-      stateRef.current = checkedRes.state;
-      setState(checkedRes.state);
-      saveLocal(checkedRes.state);
-      if (checkedRes.promoToast) addToast(checkedRes.promoToast);
-      if (checkedRes.streakDialog) setDialog(checkedRes.streakDialog);
-    }
-  }, [gateOpen, uid, runDailyAndOfflineChecks, saveLocal, addToast]);
+    const canRunOffline = shouldRunOfflineEntryCheck({
+      isFirebaseConfigured: Boolean(isFirebaseConfigured && auth && db),
+      authResolved,
+      uid,
+      gateOpen,
+      completedEntryKey: entryCheckedKeyRef.current,
+    });
+    if (!canRunOffline) return;
+
+    entryCheckedKeyRef.current = 'offline';
+    const checkedRes = computeDailyAndOfflineChecks(stateRef.current, 0, Date.now() + serverOffsetMsRef.current);
+    stateRef.current = checkedRes.state;
+    setState(checkedRes.state);
+    saveLocal(checkedRes.state);
+    if (checkedRes.promoBannerText) addToast(checkedRes.promoBannerText);
+    const entryDlg = buildEntryDialog(checkedRes);
+    if (entryDlg) setDialog(entryDlg);
+  }, [authResolved, gateOpen, uid, buildEntryDialog, saveLocal, addToast]);
 
   // Trigger initial sync after sign-in if daily/offline rewards updated local state
   useEffect(() => {
@@ -1119,17 +1150,13 @@ export default function App() {
               expectedWalletRevRef.current === newRev;
             walletRevRef.current = newRev;
             if (!isOwnInFlightEcho) {
-              setState((prev) => {
-                const next = {
-                  ...prev,
-                  cash: capValue(w.cash, 1e13),
-                  gems: capValue(w.gems, 1e9),
-                  stk: cleanStickersMap(w.stk),
-                };
-                stateRef.current = next;
-                saveLocal(next);
-                return next;
-              });
+              const cash = capValue(w.cash, 1e13);
+              const gems = capValue(w.gems, 1e9);
+              const stk = cleanStickersMap(w.stk);
+              const next: GameState = { ...stateRef.current, cash, gems, stk };
+              stateRef.current = next;
+              saveLocal(next);
+              setState((prev) => ({ ...prev, cash, gems, stk }));
             }
           }
         },
@@ -1273,8 +1300,23 @@ export default function App() {
             ),
           );
           const nextLive: Record<string, number> = {};
+          const activeIds = new Set<string>();
           for (const p of normalized) {
+            activeIds.add(p.id);
             nextLive[p.id] = Math.max(projLiveRef.current[p.id] || 0, p.progressMs);
+          }
+          // Prune per-project refs for projects removed from the active snapshot window
+          for (const id of Object.keys(projStartedLocalAtRef.current)) {
+            if (!activeIds.has(id)) delete projStartedLocalAtRef.current[id];
+          }
+          for (const id of Object.keys(projLastSyncRef.current)) {
+            if (!activeIds.has(id)) delete projLastSyncRef.current[id];
+          }
+          for (const id of Object.keys(projPrevTickMsRef.current)) {
+            if (!activeIds.has(id)) delete projPrevTickMsRef.current[id];
+          }
+          for (const id of Array.from(projClaimedLocalRef.current)) {
+            if (!activeIds.has(id)) projClaimedLocalRef.current.delete(id);
           }
           const hadPrevLive = Object.keys(projLiveRef.current).length > 0;
           projLiveRef.current = nextLive;
@@ -1381,13 +1423,16 @@ export default function App() {
     };
   }, [uid, cloudReady, needsOnboarding, kicked, presenceEpoch, handleSnapshotError]);
 
-  // Direct messages listener for active DM recipient
+  // Direct messages listener for active DM recipient (keyed on primitive UID/name/cc)
+  const dmUid = dmRecipient?.uid || '';
+  const dmName = dmRecipient?.name || '';
+  const dmCc = dmRecipient?.cc || '';
   useEffect(() => {
-    if (!uid || !cloudReady || !dmRecipient) {
+    if (!uid || !cloudReady || !dmUid) {
       setDmMessages([]);
       return;
     }
-    const q = buildQueryHelpers().dmQuery(uid, dmRecipient.uid);
+    const q = buildQueryHelpers().dmQuery(uid, dmUid);
     const unsub = onSnapshot(
       q,
       (snap) => {
@@ -1398,8 +1443,8 @@ export default function App() {
             return {
               id: d.id,
               uid: String(x.from || ''),
-              name: isMe ? pubProfileRef.current?.username || 'You' : dmRecipient.name,
-              cc: isMe ? stateRef.current.country[0] : dmRecipient.cc,
+              name: isMe ? pubProfileRef.current?.username || 'You' : dmName,
+              cc: isMe ? stateRef.current.country[0] : dmCc,
               rank: 0,
               text: String(x.text || ''),
               ms: timestampToMs(x.createdAt),
@@ -1408,10 +1453,10 @@ export default function App() {
           .reverse();
         setDmMessages(msgs);
       },
-      (err) => handleSnapshotError(`dms/${dmRecipient.uid}`, err),
+      (err) => handleSnapshotError(`dms/${dmUid}`, err),
     );
     return () => unsub();
-  }, [uid, cloudReady, dmRecipient, handleSnapshotError]);
+  }, [uid, cloudReady, dmUid, dmName, dmCc, handleSnapshotError]);
 
   // Collect recent DM contacts from both incoming DM notifications and initiated DMs
   useEffect(() => {
@@ -1512,8 +1557,9 @@ export default function App() {
         // Gov infrastructure decay & daily expenses on active play
         if (isUserActive) {
           const acc = (prev.gx.acc || 0) + 1;
-          const nextCond = { ...prev.gx.cond };
+          let nextCond = prev.gx.cond;
           if (tickCountRef.current % 15 === 0) {
+            nextCond = { ...prev.gx.cond };
             const decayStep = 0.15 * getInfraDecayMult(prev);
             for (const [k] of [...GX_GOV_BUILDINGS, ...GX_ROADS]) {
               nextCond[k] = Math.max(0, (nextCond[k] ?? 100) - decayStep);
@@ -1580,11 +1626,12 @@ export default function App() {
           t: now,
         };
 
-        if (tickCountRef.current % 8 === 0) {
-          saveLocal(updated);
-        }
         return updated;
       });
+
+      if (tickCountRef.current % 8 === 0) {
+        scheduleSaveLocal();
+      }
 
       if (passiveEvent?.kind === 'bonus') {
         addToast(`Trade Windfall! +₨ ${formatNumber(passiveEvent.amt)}`);
@@ -1594,6 +1641,7 @@ export default function App() {
         const dec = EXEC_DECISIONS.find((d) => d.id === triggerDecisionId);
         if (dec) {
           const quote = getExecDecisionQuote(curSnap, dec.id, tradeTier, nowSrv);
+          let decisionHandled = false;
           setDialog({
             title: `Cabinet Briefing: ${dec.title}`,
             body: (
@@ -1620,26 +1668,21 @@ export default function App() {
                 label: `${dec.options[0].label} (−₨ ${formatNumber(quote.spendCost)})`,
                 variant: dec.options[0].variant,
                 onClick: () => {
-                  const res = resolveExecutiveDecision(
-                    stateRef.current,
-                    dec.id,
-                    0,
-                    tradeTier,
-                    Date.now() + serverOffsetMsRef.current,
-                  );
+                  if (decisionHandled) return;
+                  const nowExec = Date.now() + serverOffsetMsRef.current;
+                  const res = resolveExecutiveDecision(stateRef.current, dec.id, 0, tradeTier, nowExec);
                   if (!res.ok) {
                     addToast(res.summary);
                     return;
                   }
-                  const nowExec = Date.now() + serverOffsetMsRef.current;
+                  decisionHandled = true;
                   stateRef.current = res.state;
+                  saveLocal(res.state);
                   playSfx('win', !!res.state.set.sfx);
                   triggerBuzz(16, !!res.state.set.vib);
                   setState((prev) => {
                     const recheck = resolveExecutiveDecision(prev, dec.id, 0, tradeTier, nowExec);
-                    if (!recheck.ok) return prev;
-                    saveLocal(recheck.state);
-                    return recheck.state;
+                    return recheck.ok ? recheck.state : prev;
                   });
                   scheduleCloudSync(800);
                   addToast(res.summary);
@@ -1650,22 +1693,17 @@ export default function App() {
                 label: `${dec.options[1].label} (+₨ ${formatNumber(quote.gainCash)})`,
                 variant: dec.options[1].variant,
                 onClick: () => {
+                  if (decisionHandled) return;
                   const nowExec = Date.now() + serverOffsetMsRef.current;
-                  const res = resolveExecutiveDecision(
-                    stateRef.current,
-                    dec.id,
-                    1,
-                    tradeTier,
-                    nowExec,
-                  );
+                  const res = resolveExecutiveDecision(stateRef.current, dec.id, 1, tradeTier, nowExec);
                   if (res.ok) {
+                    decisionHandled = true;
                     stateRef.current = res.state;
+                    saveLocal(res.state);
                     playSfx('coin', !!res.state.set.sfx);
                     setState((prev) => {
                       const recheck = resolveExecutiveDecision(prev, dec.id, 1, tradeTier, nowExec);
-                      if (!recheck.ok) return prev;
-                      saveLocal(recheck.state);
-                      return recheck.state;
+                      return recheck.ok ? recheck.state : prev;
                     });
                     scheduleCloudSync(800);
                     addToast(res.summary);
@@ -1720,10 +1758,33 @@ export default function App() {
       }
 
       // Tick active Gov Projects in Firestore
-      if (curUid && projectsRef.current.length > 0) {
+      if (
+        curUid &&
+        cloudReadyRef.current &&
+        projectsRef.current.length > 0 &&
+        !cloudSyncPermDeniedRef.current &&
+        !cloudSyncQuotaPausedRef.current
+      ) {
         let liveDirty = false;
         const speedMult = getProjectSpeedMult(stateRef.current, nowSrv);
         const stepMs = Math.max(1000, Math.floor(1000 * speedMult));
+        const onProjWriteErr = (pid: string, err: unknown) => {
+          const code = extractErrorCode(err);
+          if (code === 'resource-exhausted') {
+            cloudSyncQuotaPausedRef.current = true;
+            quotaPausedAtRef.current = Date.now();
+            setCloudStatus({ cls: 'bad', text: 'Quota paused' });
+            return;
+          }
+          if (code === 'permission-denied') {
+            cloudSyncPermDeniedRef.current = true;
+            setCloudStatus({ cls: 'bad', text: 'Rules blocked sync' });
+          }
+          if (code !== 'aborted') {
+            recordFirestoreError(err, OperationType.UPDATE, `players/${curUid}/projects/${pid}`);
+          }
+        };
+
         for (const p of projectsRef.current) {
           if (p.status === 'active') {
             const curLive = Math.max(p.progressMs, projLiveRef.current[p.id] || 0);
@@ -1734,11 +1795,7 @@ export default function App() {
                 projLastSyncRef.current[p.id] = now;
                 projBusyRef.current.add(p.id);
                 void finishGovProject(curUid, p.id, 'done', p.t.dur)
-                  .catch((err) => {
-                    if (extractErrorCode(err) !== 'aborted') {
-                      recordFirestoreError(err, OperationType.UPDATE, `players/${curUid}/projects/${p.id}`);
-                    }
-                  })
+                  .catch((err) => onProjWriteErr(p.id, err))
                   .finally(() => projBusyRef.current.delete(p.id));
               }
             } else if (
@@ -1751,11 +1808,7 @@ export default function App() {
               if (!projBusyRef.current.has(p.id)) {
                 projBusyRef.current.add(p.id);
                 void finishGovProject(curUid, p.id, 'failed')
-                  .catch((err) => {
-                    if (extractErrorCode(err) !== 'aborted') {
-                      recordFirestoreError(err, OperationType.UPDATE, `players/${curUid}/projects/${p.id}`);
-                    }
-                  })
+                  .catch((err) => onProjWriteErr(p.id, err))
                   .finally(() => projBusyRef.current.delete(p.id));
               }
             } else if (isUserActive && !p.pending) {
@@ -1768,11 +1821,7 @@ export default function App() {
                   projLastSyncRef.current[p.id] = now;
                   projBusyRef.current.add(p.id);
                   void finishGovProject(curUid, p.id, 'done', p.t.dur)
-                    .catch((err) => {
-                      if (extractErrorCode(err) !== 'aborted') {
-                        recordFirestoreError(err, OperationType.UPDATE, `players/${curUid}/projects/${p.id}`);
-                      }
-                    })
+                    .catch((err) => onProjWriteErr(p.id, err))
                     .finally(() => projBusyRef.current.delete(p.id));
                 } else {
                   const lastSync = projLastSyncRef.current[p.id] || 0;
@@ -1781,11 +1830,7 @@ export default function App() {
                     projLastSyncRef.current[p.id] = now;
                     projBusyRef.current.add(p.id);
                     void tickGovProject(curUid, p.id, nextMs)
-                      .catch((err) => {
-                        if (extractErrorCode(err) !== 'aborted') {
-                          recordFirestoreError(err, OperationType.UPDATE, `players/${curUid}/projects/${p.id}`);
-                        }
-                      })
+                      .catch((err) => onProjWriteErr(p.id, err))
                       .finally(() => projBusyRef.current.delete(p.id));
                   }
                 }
@@ -1793,66 +1838,63 @@ export default function App() {
                 projLastSyncRef.current[p.id] = now;
                 projBusyRef.current.add(p.id);
                 void tickGovProject(curUid, p.id, capMs)
-                  .catch((err) => {
-                    if (extractErrorCode(err) !== 'aborted') {
-                      recordFirestoreError(err, OperationType.UPDATE, `players/${curUid}/projects/${p.id}`);
-                    }
-                  })
+                  .catch((err) => onProjWriteErr(p.id, err))
                   .finally(() => projBusyRef.current.delete(p.id));
               }
             }
-          } else if (!p.claimed && (p.status === 'done' || p.status === 'failed')) {
+          } else if (
+            !p.claimed &&
+            !projClaimedLocalRef.current.has(p.id) &&
+            (p.status === 'done' || p.status === 'failed')
+          ) {
             if (!projBusyRef.current.has(p.id)) {
               projBusyRef.current.add(p.id);
               void claimGovProject(curUid, p.id)
                 .then((resStatus) => {
+                  if (resStatus) projClaimedLocalRef.current.add(p.id);
                   if (resStatus === 'done') {
                     const early = p.rs > 0 && p.dl > p.st && (p.dl - p.rs) / (p.dl - p.st) > 0.5;
                     const profit = Math.ceil(p.t.cost * 0.4 * (early ? 1.5 : 1));
                     const cashReward = p.t.cost + profit;
-                    setState((s) => {
-                      const next = {
-                        ...s,
-                        cash: Math.min(1e13, s.cash + cashReward),
-                        hap: Math.min(100, s.hap + 3),
-                        gx: {
-                          ...s.gx,
-                          pb: Math.min(0.25, (s.gx.pb || 0) + p.t.pb),
-                          ph: Math.min(10, (s.gx.ph || 0) + p.t.ph),
-                          log: [
-                            `${p.t.n} completed${early ? ' EARLY' : ''}! +₨ ${formatNumber(cashReward)}`,
-                            ...s.gx.log,
-                          ].slice(0, 8),
-                        },
-                      };
-                      saveLocal(next);
-                      return next;
+                    const applyDoneReward = (s: GameState): GameState => ({
+                      ...s,
+                      cash: Math.min(1e13, s.cash + cashReward),
+                      hap: Math.min(100, s.hap + 3),
+                      gx: {
+                        ...s.gx,
+                        pb: Math.min(0.25, (s.gx.pb || 0) + p.t.pb),
+                        ph: Math.min(10, (s.gx.ph || 0) + p.t.ph),
+                        log: [
+                          `${p.t.n} completed${early ? ' EARLY' : ''}! +₨ ${formatNumber(cashReward)}`,
+                          ...s.gx.log,
+                        ].slice(0, 8),
+                      },
                     });
+                    const nextSnap = applyDoneReward(stateRef.current);
+                    stateRef.current = nextSnap;
+                    saveLocal(nextSnap);
+                    setState(applyDoneReward);
                     addToast(`${p.t.n} finished! +₨ ${formatNumber(cashReward)}`);
-                    scheduleCloudSync(2000);
+                    scheduleCloudSync(150);
                   } else if (resStatus === 'failed') {
                     const refund = Math.ceil((p.t.cost / PROJECT_STAGES) * p.paid * 0.75);
-                    setState((s) => {
-                      const next = {
-                        ...s,
-                        cash: Math.min(1e13, s.cash + refund),
-                        gx: {
-                          ...s.gx,
-                          log: [`${p.t.n} missed deadline (75% refunded)`, ...s.gx.log].slice(0, 8),
-                        },
-                      };
-                      saveLocal(next);
-                      return next;
+                    const applyFailedRefund = (s: GameState): GameState => ({
+                      ...s,
+                      cash: Math.min(1e13, s.cash + refund),
+                      gx: {
+                        ...s.gx,
+                        log: [`${p.t.n} missed deadline (75% refunded)`, ...s.gx.log].slice(0, 8),
+                      },
                     });
+                    const nextSnap = applyFailedRefund(stateRef.current);
+                    stateRef.current = nextSnap;
+                    saveLocal(nextSnap);
+                    setState(applyFailedRefund);
                     addToast(`${p.t.n} missed deadline — ₨ ${formatNumber(refund)} refunded`);
-                    scheduleCloudSync(2000);
+                    scheduleCloudSync(150);
                   }
                 })
-                .catch((err) => {
-                  if (extractErrorCode(err) !== 'aborted') {
-                    recordFirestoreError(err, OperationType.UPDATE, `players/${curUid}/projects/${p.id}`);
-                  }
-                })
+                .catch((err) => onProjWriteErr(p.id, err))
                 .finally(() => projBusyRef.current.delete(p.id));
             }
           }
@@ -1871,19 +1913,19 @@ export default function App() {
     tradeTier,
     addToast,
     saveLocal,
+    scheduleSaveLocal,
     performCloudSync,
     scheduleCloudSync,
+    handleKicked,
   ]);
 
-  // Helper to commit state + persist + sync
+  // Helper to commit state + persist + sync (keeps setState updater pure)
   const updateState = useCallback(
     (updater: (prev: GameState) => GameState, syncDelay = 10_000) => {
-      setState((prev) => {
-        const next = updater(prev);
-        stateRef.current = next;
-        saveLocal(next);
-        return next;
-      });
+      const immediateNext = updater(stateRef.current);
+      stateRef.current = immediateNext;
+      saveLocal(immediateNext);
+      setState(updater);
       scheduleCloudSync(syncDelay);
     },
     [saveLocal, scheduleCloudSync],
@@ -1904,6 +1946,7 @@ export default function App() {
         return;
       }
       stateRef.current = res.state;
+      saveLocal(res.state);
       playSfx('coin', !!res.state.set.sfx);
       triggerBuzz(14, !!res.state.set.vib);
       setBurstKey((k) => k + 1);
@@ -1912,9 +1955,7 @@ export default function App() {
 
       setState((prev) => {
         const recheck = applyCollectTax(prev, tradeTier, nowSrv, makeRng());
-        if (!recheck.ok) return prev;
-        saveLocal(recheck.state);
-        return recheck.state;
+        return recheck.ok ? recheck.state : prev;
       });
       scheduleCloudSync(10_000);
 
@@ -1934,13 +1975,12 @@ export default function App() {
     const res = applyActivateGemBoost(stateRef.current);
     if (!res.ok) return;
     stateRef.current = res.state;
+    saveLocal(res.state);
     playSfx('buy', !!res.state.set.sfx);
     triggerBuzz(18, !!res.state.set.vib);
     setState((prev) => {
       const recheck = applyActivateGemBoost(prev);
-      if (!recheck.ok) return prev;
-      saveLocal(recheck.state);
-      return recheck.state;
+      return recheck.ok ? recheck.state : prev;
     });
     scheduleCloudSync(10_000);
     addToast('×2 Boost active for 30s!');
@@ -1980,6 +2020,7 @@ export default function App() {
       if (!res.ok) return;
 
       stateRef.current = res.state;
+      saveLocal(res.state);
       playSfx('buy', !!res.state.set.sfx);
       triggerBuzz(15, !!res.state.set.vib);
       setBurstKey((k) => k + 1);
@@ -1988,9 +2029,7 @@ export default function App() {
 
       setState((prev) => {
         const recheck = applyBuyBuilding(prev, id, qty, nowSrv);
-        if (!recheck.ok) return prev;
-        saveLocal(recheck.state);
-        return recheck.state;
+        return recheck.ok ? recheck.state : prev;
       });
       scheduleCloudSync(10_000);
     },
@@ -2003,12 +2042,11 @@ export default function App() {
       const res = applyFixInfra(stateRef.current, key, full, nowSrv);
       if (!res.ok) return;
       stateRef.current = res.state;
+      saveLocal(res.state);
       playSfx('buy', !!res.state.set.sfx);
       setState((prev) => {
         const recheck = applyFixInfra(prev, key, full, nowSrv);
-        if (!recheck.ok) return prev;
-        saveLocal(recheck.state);
-        return recheck.state;
+        return recheck.ok ? recheck.state : prev;
       });
       scheduleCloudSync(10_000);
       addToast('Infrastructure repaired!');
@@ -2022,12 +2060,11 @@ export default function App() {
       const res = applyUpgradeBuilding(stateRef.current, id, nowSrv);
       if (!res.ok) return;
       stateRef.current = res.state;
+      saveLocal(res.state);
       playSfx('buy', !!res.state.set.sfx);
       setState((prev) => {
         const recheck = applyUpgradeBuilding(prev, id, nowSrv);
-        if (!recheck.ok) return prev;
-        saveLocal(recheck.state);
-        return recheck.state;
+        return recheck.ok ? recheck.state : prev;
       });
       scheduleCloudSync(10_000);
       addToast('Building upgraded!');
@@ -2045,15 +2082,14 @@ export default function App() {
         return;
       }
       stateRef.current = res.state;
+      saveLocal(res.state);
       playSfx('win', !!res.state.set.sfx);
       triggerBuzz(18, !!res.state.set.vib);
       const rect = e.currentTarget.getBoundingClientRect();
       spawnFloat(tDef.n, rect.left + rect.width / 2, rect.top, '#a88bff');
       setState((prev) => {
         const recheck = applyUnlockTech(prev, techId);
-        if (!recheck.ok) return prev;
-        saveLocal(recheck.state);
-        return recheck.state;
+        return recheck.ok ? recheck.state : prev;
       });
       scheduleCloudSync(5_000);
       addToast(`Researched ${tDef.n}!`);
@@ -2064,15 +2100,18 @@ export default function App() {
   const handleStartProject = useCallback(
     async (type: ProjectType) => {
       const currentUid = uidRef.current;
-      if (!currentUid || projCreatingRef.current) return;
-      const activeCount = projectsRef.current.filter((p) => p.status === 'active').length;
+      if (!currentUid || !cloudReadyRef.current || projCreatingRef.current) return;
+      const pendingNewCount = Array.from(justCreatedProjIdsRef.current).filter(
+        (id) => !projectsRef.current.some((p) => p.id === id),
+      ).length;
+      const activeCount = projectsRef.current.filter((p) => p.status === 'active').length + pendingNewCount;
       if (activeCount >= 3) {
         addToast('Max 3 active projects at once.');
         return;
       }
       const def = GX_PROJECT_TYPES[type];
       const stageCost = Math.ceil(def.cost / PROJECT_STAGES);
-      if (stateRef.current.cash < stageCost) {
+      if (!Number.isFinite(stateRef.current.cash) || stateRef.current.cash < stageCost) {
         addToast('Not enough cash for Stage 1.');
         return;
       }
@@ -2100,11 +2139,11 @@ export default function App() {
   const handlePayProjectStage = useCallback(
     async (projectId: string) => {
       const currentUid = uidRef.current;
-      if (!currentUid || projPayBusyRef.current.has(projectId)) return;
+      if (!currentUid || !cloudReadyRef.current || projPayBusyRef.current.has(projectId)) return;
       const proj = projectsRef.current.find((p) => p.id === projectId);
       if (!proj || proj.status !== 'active' || proj.paid >= PROJECT_STAGES) return;
       const stageCost = Math.ceil(proj.t.cost / PROJECT_STAGES);
-      if (stateRef.current.cash < stageCost) {
+      if (!Number.isFinite(stateRef.current.cash) || stateRef.current.cash < stageCost) {
         addToast('Not enough cash for next stage.');
         return;
       }
@@ -2130,11 +2169,11 @@ export default function App() {
       const bounds = POLICY_BOUNDS[key as string];
       if (!bounds || !Number.isFinite(value)) return;
       const clamped = Math.round(Math.max(bounds[0], Math.min(bounds[1], value)));
+      if (stateRef.current[key] === clamped) return;
+      stateRef.current = { ...stateRef.current, [key]: clamped };
       setState((prev) => {
         if (prev[key] === clamped) return prev;
-        const next = { ...prev, [key]: clamped };
-        stateRef.current = next;
-        return next;
+        return { ...prev, [key]: clamped };
       });
       scheduleSaveLocal();
       scheduleCloudSync(10_000);
@@ -2158,12 +2197,11 @@ export default function App() {
       const res = applyChangeGov(stateRef.current, govId, nowSrv);
       if (!res.ok || !res.govName) return;
       stateRef.current = res.state;
+      saveLocal(res.state);
       playSfx('win', !!res.state.set.sfx);
       setState((prev) => {
         const recheck = applyChangeGov(prev, govId, nowSrv);
-        if (!recheck.ok) return prev;
-        saveLocal(recheck.state);
-        return recheck.state;
+        return recheck.ok ? recheck.state : prev;
       });
       scheduleCloudSync(8_000);
       addToast(`Switched government to ${res.govName}!`);
@@ -2180,13 +2218,12 @@ export default function App() {
         return;
       }
       stateRef.current = res.state;
+      saveLocal(res.state);
       playSfx('win', !!res.state.set.sfx);
       triggerBuzz(20, !!res.state.set.vib);
       setState((prev) => {
         const recheck = fuseSticker(prev, stickerId, () => roll);
-        if (!recheck.ok) return prev;
-        saveLocal(recheck.state);
-        return recheck.state;
+        return recheck.ok ? recheck.state : prev;
       });
       scheduleCloudSync(8_000);
       setDialog({
@@ -2220,15 +2257,14 @@ export default function App() {
         return;
       }
       stateRef.current = res.state;
+      saveLocal(res.state);
       playSfx('win', !!res.state.set.sfx);
       triggerBuzz(18, !!res.state.set.vib);
       const rect = e.currentTarget.getBoundingClientRect();
       spawnFloat(`+${res.granted.length} Sticker`, rect.left + rect.width / 2, rect.top, '#ffc23d');
       setState((prev) => {
         const recheck = buyStickerCrate(prev, kind, nowSrv, makeRng());
-        if (!recheck.ok) return prev;
-        saveLocal(recheck.state);
-        return recheck.state;
+        return recheck.ok ? recheck.state : prev;
       });
       scheduleCloudSync(8_000);
       setDialog({
@@ -2260,15 +2296,14 @@ export default function App() {
       if (!res.ok) return;
 
       stateRef.current = res.state;
+      saveLocal(res.state);
       playSfx('win', !!res.state.set.sfx);
       triggerBuzz(16, !!res.state.set.vib);
       const rect = e.currentTarget.getBoundingClientRect();
       spawnFloat(`+${res.gemsAdded} Gems`, rect.left + rect.width / 2, rect.top, '#5ccbff');
       setState((prev) => {
         const recheck = applyClaimQuest(prev, questId, today, rankPos);
-        if (!recheck.ok) return prev;
-        saveLocal(recheck.state);
-        return recheck.state;
+        return recheck.ok ? recheck.state : prev;
       });
       scheduleCloudSync(8_000);
     },
@@ -2283,15 +2318,14 @@ export default function App() {
         return;
       }
       stateRef.current = res.state;
+      saveLocal(res.state);
       playSfx('win', !!res.state.set.sfx);
       triggerBuzz(18, !!res.state.set.vib);
       const rect = e.currentTarget.getBoundingClientRect();
       spawnFloat(`+${res.gemsAdded} Gems`, rect.left + rect.width / 2, rect.top, '#5ccbff');
       setState((prev) => {
         const recheck = claimMilestone(prev, milestoneId);
-        if (!recheck.ok) return prev;
-        saveLocal(recheck.state);
-        return recheck.state;
+        return recheck.ok ? recheck.state : prev;
       });
       scheduleCloudSync(6_000);
       addToast(`Milestone completed! +${res.gemsAdded} Gems`);
@@ -2308,15 +2342,14 @@ export default function App() {
       }
       const rk = RANKS[rankId];
       stateRef.current = res.state;
+      saveLocal(res.state);
       playSfx('win', !!res.state.set.sfx);
       triggerBuzz(20, !!res.state.set.vib);
       const rect = e.currentTarget.getBoundingClientRect();
       spawnFloat(rk.n, rect.left + rect.width / 2, rect.top, '#ffc23d');
       setState((prev) => {
         const recheck = applyBuyRank(prev, rankId);
-        if (!recheck.ok) return prev;
-        saveLocal(recheck.state);
-        return recheck.state;
+        return recheck.ok ? recheck.state : prev;
       });
       scheduleCloudSync(2_000);
       addToast(`Promoted to ${rk.n}!`);
@@ -2335,15 +2368,14 @@ export default function App() {
         return;
       }
       stateRef.current = res.state;
+      saveLocal(res.state);
       playSfx('win', !!res.state.set.sfx);
       triggerBuzz(20, !!res.state.set.vib);
       const rect = e.currentTarget.getBoundingClientRect();
       spawnFloat(subDef.n, rect.left + rect.width / 2, rect.top, '#ffc23d');
       setState((prev) => {
         const recheck = applyBuySubscription(prev, subDef, nowSrv);
-        if (!recheck.ok) return prev;
-        saveLocal(recheck.state);
-        return recheck.state;
+        return recheck.ok ? recheck.state : prev;
       });
       scheduleCloudSync(2_000);
       if (res.paidCost && res.paidCost < subDef.cost) {
@@ -2365,6 +2397,7 @@ export default function App() {
         return;
       }
       stateRef.current = res.state;
+      saveLocal(res.state);
       playSfx('coin', !!res.state.set.sfx);
       triggerBuzz(16, !!res.state.set.vib);
       const rect = e.currentTarget.getBoundingClientRect();
@@ -2376,9 +2409,7 @@ export default function App() {
       );
       setState((prev) => {
         const recheck = claimSubscriptionDaily(prev, today, nowSrv);
-        if (!recheck.ok) return prev;
-        saveLocal(recheck.state);
-        return recheck.state;
+        return recheck.ok ? recheck.state : prev;
       });
       scheduleCloudSync(5_000);
       addToast(
@@ -2399,15 +2430,14 @@ export default function App() {
         return;
       }
       stateRef.current = res.state;
+      saveLocal(res.state);
       playSfx('buy', !!res.state.set.sfx);
       triggerBuzz(16, !!res.state.set.vib);
       const rect = e.currentTarget.getBoundingClientRect();
       spawnFloat(b.n, rect.left + rect.width / 2, rect.top, '#3fe0b0');
       setState((prev) => {
         const recheck = applyBuyBooster(prev, b, nowSrv);
-        if (!recheck.ok) return prev;
-        saveLocal(recheck.state);
-        return recheck.state;
+        return recheck.ok ? recheck.state : prev;
       });
       scheduleCloudSync(8_000);
       addToast(`${b.n} activated!`);
@@ -2415,12 +2445,14 @@ export default function App() {
     [addToast, spawnFloat, saveLocal, scheduleCloudSync],
   );
 
-  // Auth handlers
+  // Auth handlers (guarded against double submission)
   const handleGoogleLogin = useCallback(async () => {
     if (!isFirebaseConfigured || !auth) {
       setAuthMsg('Cloud sign-in is not configured. Play offline or configure Firebase env vars.');
       return;
     }
+    if (authBusyRef.current) return;
+    authBusyRef.current = true;
     setAuthMsg('Signing in with Google…');
     try {
       await signInWithPopup(auth, new GoogleAuthProvider());
@@ -2447,6 +2479,8 @@ export default function App() {
         }
         setAuthMsg(formatFirebaseError(err));
       }
+    } finally {
+      authBusyRef.current = false;
     }
   }, []);
 
@@ -2455,10 +2489,12 @@ export default function App() {
       setAuthMsg('Cloud sign-in is not configured. Play offline or configure Firebase env vars.');
       return;
     }
+    if (authBusyRef.current) return;
     if (!email.trim() || password.length < 6) {
       setAuthMsg('Enter a valid email and password (min 6 chars).');
       return;
     }
+    authBusyRef.current = true;
     setAuthMsg(register ? 'Creating account…' : 'Signing in…');
     try {
       if (register) {
@@ -2473,17 +2509,30 @@ export default function App() {
         message: extractErrorMessage(err),
       });
       setAuthMsg(formatFirebaseError(err));
+    } finally {
+      authBusyRef.current = false;
     }
   }, []);
 
   const handleSignOut = useCallback(async () => {
+    if (
+      uidRef.current &&
+      cloudReadyRef.current &&
+      pendingDirtyRef.current &&
+      !kickedRef.current &&
+      !needsOnboardingRef.current &&
+      navigator.onLine !== false
+    ) {
+      await performCloudSync(true).catch(() => null);
+    }
     if (auth) {
       await signOut(auth);
     }
+    setDialog(null);
     setProfileView(null);
     setSettingsOpen(false);
     addToast('Signed out — switched to offline mode');
-  }, [addToast]);
+  }, [addToast, performCloudSync]);
 
   const handleResetGame = useCallback(() => {
     setDialog({
@@ -2495,6 +2544,7 @@ export default function App() {
           variant: 'red',
           onClick: () => {
             const fresh = freshState();
+            stateRef.current = fresh;
             setState(fresh);
             saveLocal(fresh);
             setDialog(null);
@@ -2508,11 +2558,12 @@ export default function App() {
   }, [addToast, saveLocal]);
 
   const rankPosition = useMemo(() => {
+    const rankSlice = { cash: state.cash, country: state.country };
     if (uid && lbLoaded && leaderboard.length > 0) {
-      return calculateOnlineRank(state, uid, leaderboard);
+      return calculateOnlineRank(rankSlice as GameState, uid, leaderboard);
     }
-    return calculateOfflineRank(state);
-  }, [uid, lbLoaded, leaderboard, state]);
+    return calculateOfflineRank(rankSlice as GameState);
+  }, [uid, lbLoaded, leaderboard, state.cash, state.country]);
   rankPositionRef.current = rankPosition;
 
   const currentSecond = Math.floor(state.t / 1000);
@@ -2643,7 +2694,7 @@ export default function App() {
     setNotifsOpen(true);
     const currentUid = uidRef.current;
     if (currentUid) {
-      const unreadIds = notifications
+      const unreadIds = notificationsRef.current
         .filter((n) => !n.read && !markingNotifIdsRef.current.has(n.id))
         .map((n) => n.id);
       if (unreadIds.length) {
@@ -2657,7 +2708,7 @@ export default function App() {
           });
       }
     }
-  }, [notifications]);
+  }, []);
   const handleSaveCloudNow = useCallback(() => void performCloudSync(true), [performCloudSync]);
   const handleStartProjectCb = useCallback(
     (type: ProjectType) => void handleStartProject(type),
@@ -2741,7 +2792,7 @@ export default function App() {
     [],
   );
   const handleAcceptTrade = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<boolean> => {
       try {
         const res = await acceptGiftOffer(id, sidRef.current, handleKicked, serverOffsetMsRef.current);
         if (res.status === 'accepted') {
@@ -2751,15 +2802,17 @@ export default function App() {
         } else {
           addToast(`Gift is already ${res.status}.`);
         }
+        return true;
       } catch (err) {
         recordFirestoreError(err, OperationType.UPDATE, `trades/${id}`);
         addToast(formatFirebaseError(err));
+        return false;
       }
     },
     [addToast, handleKicked],
   );
   const handleRejectTrade = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<boolean> => {
       try {
         const res = await rejectGiftOffer(id, sidRef.current, handleKicked, serverOffsetMsRef.current);
         if (res.status === 'rejected') {
@@ -2769,15 +2822,17 @@ export default function App() {
         } else {
           addToast(`Gift is already ${res.status}.`);
         }
+        return true;
       } catch (err) {
         recordFirestoreError(err, OperationType.UPDATE, `trades/${id}`);
         addToast(formatFirebaseError(err));
+        return false;
       }
     },
     [addToast, handleKicked],
   );
   const handleCancelTrade = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<boolean> => {
       try {
         const status = await endSenderOffer(id, 'cancelled', sidRef.current, handleKicked, serverOffsetMsRef.current);
         if (status === 'cancelled') {
@@ -2787,9 +2842,11 @@ export default function App() {
         } else {
           addToast(`Gift is already ${status}.`);
         }
+        return true;
       } catch (err) {
         recordFirestoreError(err, OperationType.UPDATE, `trades/${id}`);
         addToast(formatFirebaseError(err));
+        return false;
       }
     },
     [addToast, handleKicked],
@@ -2803,6 +2860,77 @@ export default function App() {
       recordFirestoreError(err, OperationType.LIST, 'players');
       return [];
     }
+  }, []);
+
+  const handleToggleSetting = useCallback(
+    (key: 'sfx' | 'vib' | 'anim') => {
+      updateState(
+        (prev) => ({
+          ...prev,
+          set: { ...prev.set, [key]: prev.set[key] ? 0 : 1 },
+        }),
+        1500,
+      );
+    },
+    [updateState],
+  );
+  const handleOpenErrorLog = useCallback(() => setErrorLogOpen(true), []);
+  const handleCloseErrorLog = useCallback(() => setErrorLogOpen(false), []);
+  const handleOpenAuthFromSettings = useCallback(() => {
+    setSettingsOpen(false);
+    if (uidRef.current) openOwnProfile();
+    else setGateOpen(true);
+  }, [openOwnProfile]);
+  const handleOpenErrorLogFromSettings = useCallback(() => {
+    setSettingsOpen(false);
+    setErrorLogOpen(true);
+  }, []);
+  const handleRetrySyncFromErrorLog = useCallback(() => {
+    setErrorLogOpen(false);
+    handleSaveCloudNow();
+  }, [handleSaveCloudNow]);
+  const handleClearErrorLog = useCallback(() => {
+    clearErrorLog();
+    setDismissedErrorId(null);
+    addToast('Error log cleared');
+  }, [addToast]);
+  const handleCopiedToast = useCallback(() => addToast('Error details copied!'), [addToast]);
+  const handleSelectNotification = useCallback((n: NotificationItem) => {
+    setNotifsOpen(false);
+    if (n.type === 'dm' && n.from) {
+      setDmRecipient({ uid: n.from, name: n.fromName || 'Player', cc: n.fromCc || '' });
+      setTab('rivals');
+      setPlayersSubTab('dm');
+    } else {
+      setTab('trade');
+      setGiftsSubTab(n.type === 'new_offer' ? 'in' : 'hist');
+    }
+  }, []);
+  const handleGiftFromProfile = useCallback((p: PlayerProfile) => {
+    setProfileView(null);
+    setGiftModal({ mode: 'compose', target: p, trade: null });
+  }, []);
+  const handleMessageFromProfile = useCallback((p: PlayerProfile) => {
+    setProfileView(null);
+    const rec = { uid: p.id, name: p.username, cc: p.countryCode };
+    setSentDmContacts((prev) => (prev.some((x) => x.uid === rec.uid) ? prev : [rec, ...prev]));
+    setDmRecipient(rec);
+    setTab('rivals');
+    setPlayersSubTab('dm');
+  }, []);
+  const handleSignOutCb = useCallback(() => void handleSignOut(), [handleSignOut]);
+  const handleClaimTabHere = useCallback(() => {
+    if (kickedRef.current) {
+      window.location.reload();
+      return;
+    }
+    try {
+      localStorage.setItem(TAB_LOCK_KEY, JSON.stringify({ id: sidRef.current, t: Date.now() }));
+    } catch {
+      // ignore storage errors
+    }
+    otherTabLockedRef.current = false;
+    setOtherTabLocked(false);
   }, []);
 
   const handleCopyBannerError = useCallback(async () => {
@@ -2859,7 +2987,7 @@ export default function App() {
               : 'Country Economy Tycoon is active in another tab.'}
           </p>
           <div className="acts">
-            <button type="button" className="btn gold" onClick={() => window.location.reload()}>
+            <button type="button" className="btn gold" onClick={handleClaimTabHere}>
               Use Here Instead
             </button>
           </div>
@@ -2886,7 +3014,7 @@ export default function App() {
           </div>
           <div className="err-banner-msg">{latestBannerError.message}</div>
           <div className="err-banner-acts">
-            <button type="button" className="primary" onClick={() => setErrorLogOpen(true)}>
+            <button type="button" className="primary" onClick={handleOpenErrorLog}>
               Details / Fix
             </button>
             <button type="button" className="copy" onClick={() => void handleCopyBannerError()}>
@@ -3096,7 +3224,7 @@ export default function App() {
         <button
           type="button"
           id="errPill"
-          onClick={() => setErrorLogOpen(true)}
+          onClick={handleOpenErrorLog}
         >
           ⚠️ {appErrors.length} {appErrors.length === 1 ? 'Error' : 'Errors'}
         </button>
@@ -3108,7 +3236,7 @@ export default function App() {
           id="cloudPill"
           className={cloudStatus.cls}
           onClick={() => {
-            if (cloudStatus.cls === 'bad') setErrorLogOpen(true);
+            if (cloudStatus.cls === 'bad') handleOpenErrorLog();
             else handleSaveCloudNow();
           }}
         >
@@ -3121,19 +3249,9 @@ export default function App() {
         isMe={!profileView || profileView.id === uid || profileView.id === 'offline'}
         uid={uid}
         onClose={handleCloseProfile}
-        onGift={(p) => {
-          setProfileView(null);
-          setGiftModal({ mode: 'compose', target: p, trade: null });
-        }}
-        onMessage={(p) => {
-          setProfileView(null);
-          const rec = { uid: p.id, name: p.username, cc: p.countryCode };
-          setSentDmContacts((prev) => (prev.some((x) => x.uid === rec.uid) ? prev : [rec, ...prev]));
-          setDmRecipient(rec);
-          setTab('rivals');
-          setPlayersSubTab('dm');
-        }}
-        onSignOut={() => void handleSignOut()}
+        onGift={handleGiftFromProfile}
+        onMessage={handleMessageFromProfile}
+        onSignOut={handleSignOutCb}
       />
 
       <SettingsModal
@@ -3142,21 +3260,9 @@ export default function App() {
         uid={uid}
         email={user?.email || null}
         errorCount={appErrors.length}
-        onToggleSetting={(key) => {
-          updateState((prev) => ({
-            ...prev,
-            set: { ...prev.set, [key]: prev.set[key] ? 0 : 1 },
-          }), 1500);
-        }}
-        onOpenAuth={() => {
-          setSettingsOpen(false);
-          if (uid) openOwnProfile();
-          else setGateOpen(true);
-        }}
-        onOpenErrorLog={() => {
-          setSettingsOpen(false);
-          setErrorLogOpen(true);
-        }}
+        onToggleSetting={handleToggleSetting}
+        onOpenAuth={handleOpenAuthFromSettings}
+        onOpenErrorLog={handleOpenErrorLogFromSettings}
         onRequestReset={handleResetGame}
         onClose={handleCloseSettings}
       />
@@ -3166,34 +3272,17 @@ export default function App() {
         errors={appErrors}
         uid={uid}
         email={user?.email || null}
-        onRetrySync={() => {
-          setErrorLogOpen(false);
-          handleSaveCloudNow();
-        }}
-        onClear={() => {
-          clearErrorLog();
-          setDismissedErrorId(null);
-          addToast('Error log cleared');
-        }}
-        onCopied={() => addToast('Error details copied!')}
-        onClose={() => setErrorLogOpen(false)}
+        onRetrySync={handleRetrySyncFromErrorLog}
+        onClear={handleClearErrorLog}
+        onCopied={handleCopiedToast}
+        onClose={handleCloseErrorLog}
       />
 
       <NotificationsModal
         open={notifsOpen}
         notifications={notifications}
         onClose={handleCloseNotifs}
-        onSelectNotification={(n) => {
-          setNotifsOpen(false);
-          if (n.type === 'dm' && n.from) {
-            setDmRecipient({ uid: n.from, name: n.fromName || 'Player', cc: n.fromCc || '' });
-            setTab('rivals');
-            setPlayersSubTab('dm');
-          } else {
-            setTab('trade');
-            setGiftsSubTab(n.type === 'new_offer' ? 'in' : 'hist');
-          }
-        }}
+        onSelectNotification={handleSelectNotification}
       />
 
       <OnboardingModal
@@ -3201,34 +3290,52 @@ export default function App() {
         defaultCountryCode={state.country?.[0]}
         onCheckUsername={checkUsernameAvailability}
         onSubmitProfile={async (username, cc) => {
+          const currentUid = uidRef.current;
+          if (!currentUid) return;
           try {
             const res = await createPlayerProfile(username, cc, stateRef.current, sidRef.current, handleKicked);
             walletRevRef.current = res.walletRev;
             cloudSyncPermDeniedRef.current = false;
             permWarnShownRef.current = false;
             syncRetryCountRef.current = 0;
-            const p = await fetchPlayerProfile(uid!);
+            const p = await fetchPlayerProfile(currentUid);
             if (p) setPubProfile(p);
             const chosen = COUNTRIES.find((c) => c[0] === cc) || COUNTRIES[0];
+            const base = res.restoredSave ? migrateState(res.restoredSave) : stateRef.current;
+            let merged: GameState = { ...base, country: chosen };
+            if (res.wallet) {
+              merged = {
+                ...merged,
+                cash: res.wallet.cash,
+                gems: res.wallet.gems,
+                stk: res.wallet.stk,
+              };
+            }
+            const cloudEntryKey = `cloud:${currentUid}`;
+            if (entryCheckedKeyRef.current !== cloudEntryKey) {
+              entryCheckedKeyRef.current = cloudEntryKey;
+              const tier = tierOfCompletedTrades(p?.stats?.completedTrades);
+              const checkedRes = computeDailyAndOfflineChecks(merged, tier, Date.now() + serverOffsetMsRef.current);
+              merged = checkedRes.state;
+              if (checkedRes.promoBannerText) addToast(checkedRes.promoBannerText);
+              const entryDlg = buildEntryDialog(checkedRes);
+              if (entryDlg) setDialog(entryDlg);
+            }
+            stateRef.current = merged;
+            saveLocal(merged);
+            setState(merged);
             needsOnboardingRef.current = false;
             cloudReadyRef.current = true;
-            setState((prev) => {
-              const base = res.restoredSave ? migrateState(res.restoredSave) : prev;
-              const next = { ...base, country: chosen };
-              stateRef.current = next;
-              saveLocal(next);
-              return next;
-            });
             setNeedsOnboarding(false);
             setCloudReady(true);
             scheduleCloudSync(500);
             addToast(`Welcome, ${username}!`);
           } catch (err) {
-            recordFirestoreError(err, OperationType.CREATE, `players/${uid}`);
+            recordFirestoreError(err, OperationType.CREATE, `players/${currentUid}`);
             addToast(formatFirebaseError(err));
           }
         }}
-        onSignOut={() => void handleSignOut()}
+        onSignOut={handleSignOutCb}
       />
 
       {giftModal && uid && (
@@ -3252,6 +3359,9 @@ export default function App() {
                   const srvMs = timestampToMs(sesSnap.data()?.t);
                   if (srvMs > 0) updateServerOffset(srvMs);
                 }
+              }
+              if (pendingDirtyRef.current || cloudSyncBusyRef.current) {
+                await performCloudSync(true);
               }
               await createGiftOffer({
                 ...payload,

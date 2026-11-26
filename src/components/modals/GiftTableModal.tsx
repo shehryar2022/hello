@@ -21,9 +21,9 @@ interface GiftTableModalProps {
     offerStk: Record<string, number>;
     message: string;
   }) => Promise<boolean>;
-  onAcceptTrade: (tradeId: string) => Promise<void>;
-  onRejectTrade: (tradeId: string) => Promise<void>;
-  onCancelTrade: (tradeId: string) => Promise<void>;
+  onAcceptTrade: (tradeId: string) => Promise<boolean | void>;
+  onRejectTrade: (tradeId: string) => Promise<boolean | void>;
+  onCancelTrade: (tradeId: string) => Promise<boolean | void>;
 }
 
 interface SlotEntry {
@@ -56,6 +56,7 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
   const [message, setMessage] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [nowLocal, setNowLocal] = useState(() => Date.now());
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -64,6 +65,13 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  useEffect(() => {
+    if (mode !== 'review' || trade?.status !== 'pending') return;
+    setNowLocal(Date.now());
+    const iv = window.setInterval(() => setNowLocal(Date.now()), 1000);
+    return () => window.clearInterval(iv);
+  }, [mode, trade?.status, trade?.id]);
 
   const maxCash = Math.max(0, Math.min(1e12, Math.floor(state.cash)));
   const maxGems = Math.max(0, Math.min(1e9, Math.floor(state.gems)));
@@ -160,7 +168,7 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
         ? `Outgoing gift · ${trade.status}`
         : `Incoming gift · ${trade?.status || ''}`;
 
-  const nowSrv = Date.now() + serverOffsetMs;
+  const nowSrv = nowLocal + serverOffsetMs;
   const isIncomingPending =
     mode === 'review' && trade && trade.to === uid && trade.status === 'pending' && trade.expMs > nowSrv;
   const isOutgoingPending =
@@ -449,8 +457,8 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
                   onClick={async () => {
                     setBusy(true);
                     try {
-                      await onRejectTrade(trade.id);
-                      onClose();
+                      const ok = await onRejectTrade(trade.id);
+                      if (ok !== false) onClose();
                     } finally {
                       setBusy(false);
                     }
@@ -465,8 +473,8 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
                   onClick={async () => {
                     setBusy(true);
                     try {
-                      await onAcceptTrade(trade.id);
-                      onClose();
+                      const ok = await onAcceptTrade(trade.id);
+                      if (ok !== false) onClose();
                     } finally {
                       setBusy(false);
                     }
@@ -484,8 +492,8 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
                 onClick={async () => {
                   setBusy(true);
                   try {
-                    await onCancelTrade(trade.id);
-                    onClose();
+                    const ok = await onCancelTrade(trade.id);
+                    if (ok !== false) onClose();
                   } finally {
                     setBusy(false);
                   }

@@ -5,6 +5,7 @@ import {
   CRATE_CD_MS,
   CRATE_COST_CASH,
   CRATE_COST_GEMS,
+  DAILY_REWARDS,
   EV_LEN_MS,
   EV_SLOT_MS,
   EXEC_DECISIONS,
@@ -604,7 +605,7 @@ export function canUnlockTech(s: GameState, techId: string): { ok: boolean; reas
   if (ownedBldgs < def.reqBuildings) {
     return { ok: false, reason: `Requires ${def.reqBuildings} total buildings (${ownedBldgs}/${def.reqBuildings})` };
   }
-  if (s.cash < def.cost) {
+  if (!Number.isFinite(s.cash) || s.cash < def.cost) {
     return { ok: false, reason: 'Not enough cash' };
   }
   return { ok: true };
@@ -910,7 +911,7 @@ export function canBuyBooster(
   if (booster.fx === 'rally' && s.hap >= 100 && s.appr >= 100) {
     return { ok: false, reason: 'Happiness & Approval are already at 100%', cooldownLeftSec: 0 };
   }
-  if (s.cash < booster.cost) {
+  if (!Number.isFinite(s.cash) || s.cash < booster.cost) {
     return { ok: false, reason: 'Not enough cash', cooldownLeftSec: 0 };
   }
   return { ok: true, cooldownLeftSec: 0 };
@@ -959,7 +960,7 @@ export function canBuyRank(s: GameState, rankId: number): { ok: boolean; reason?
   const r = RANKS[rankId];
   if (!r || !r.cost) return { ok: false, reason: 'Invalid rank' };
   if (rankId !== (s.rank || 0) + 1) return { ok: false, reason: 'Buy ranks in order' };
-  if (s.cash < r.cost) return { ok: false, reason: 'Not enough cash' };
+  if (!Number.isFinite(s.cash) || s.cash < r.cost) return { ok: false, reason: 'Not enough cash' };
   return { ok: true };
 }
 
@@ -1014,6 +1015,11 @@ const KARACHI_YMD_FORMATTER = new Intl.DateTimeFormat('en-CA', {
   month: '2-digit',
   day: '2-digit',
 });
+
+export function dayKeyFor(ms: number): string {
+  const safeMs = Number.isFinite(ms) ? ms : Date.now();
+  return KARACHI_YMD_FORMATTER.format(new Date(safeMs));
+}
 
 export function weekKeyFor(nowMs: number): string {
   const ymd = KARACHI_YMD_FORMATTER.format(new Date(nowMs));
@@ -1103,7 +1109,7 @@ export function canBuySubscription(
     }
   }
   const { finalCost } = getSubscriptionPrice(s, subDef, nowMs);
-  if (s.cash < finalCost) {
+  if (!Number.isFinite(s.cash) || s.cash < finalCost) {
     return { ok: false, reason: 'Not enough cash' };
   }
   return { ok: true };
@@ -1248,7 +1254,7 @@ export function buyStickerCrate(
     if (cdLeft > 0) {
       return { ok: false, state: s, granted: [], reason: `Crate cooldown: ${cdLeft}s` };
     }
-    if (s.cash < CRATE_COST_CASH) {
+    if (!Number.isFinite(s.cash) || s.cash < CRATE_COST_CASH) {
       return { ok: false, state: s, granted: [], reason: 'Not enough cash' };
     }
     const r = rng();
@@ -1267,7 +1273,7 @@ export function buyStickerCrate(
     };
   }
 
-  if (s.gems < CRATE_COST_GEMS) {
+  if (!Number.isFinite(s.gems) || s.gems < CRATE_COST_GEMS) {
     return { ok: false, state: s, granted: [], reason: 'Not enough diamonds' };
   }
   const firstRarity: 2 | 3 = rng() < 0.8 ? 2 : 3;
@@ -1485,7 +1491,7 @@ export function resolveExecutiveDecision(
     };
   }
 
-  if (s.cash < quote.spendCost) {
+  if (!Number.isFinite(s.cash) || s.cash < quote.spendCost) {
     return { ok: false, state: s, summary: 'Not enough cash for this option' };
   }
 
@@ -1728,7 +1734,7 @@ export function applyCollectTax(
 
 export function applyActivateGemBoost(s: GameState): { ok: boolean; state: GameState; reason?: string } {
   if (s.boost > 0) return { ok: false, state: s, reason: 'Boost is already active' };
-  if (s.gems < 5) return { ok: false, state: s, reason: 'Need 5 diamonds' };
+  if (!Number.isFinite(s.gems) || s.gems < 5) return { ok: false, state: s, reason: 'Need 5 diamonds' };
   return {
     ok: true,
     state: {
@@ -1751,7 +1757,7 @@ export function applyBuyBuilding(
   if (count >= 10_000) return { ok: false, state: s, newCount: count, cost: 0, reason: 'Max building count reached' };
   const clampedQty = Math.min(qty, 10_000 - count);
   const cost = bulkBuildingCost(def, count, clampedQty, getDevelopmentDiscount(s, nowMs));
-  if (s.cash < cost) return { ok: false, state: s, newCount: count, cost, reason: 'Not enough cash' };
+  if (!Number.isFinite(s.cash) || s.cash < cost) return { ok: false, state: s, newCount: count, cost, reason: 'Not enough cash' };
   const newCount = count + clampedQty;
   return {
     ok: true,
@@ -1773,7 +1779,7 @@ export function applyFixInfra(
 ): { ok: boolean; state: GameState; cost: number; reason?: string } {
   const cost = gxRepairCost(s, key, full, nowMs);
   if (cost <= 0) return { ok: false, state: s, cost: 0, reason: 'Already at full condition' };
-  if (s.cash < cost) return { ok: false, state: s, cost, reason: 'Not enough cash' };
+  if (!Number.isFinite(s.cash) || s.cash < cost) return { ok: false, state: s, cost, reason: 'Not enough cash' };
   return {
     ok: true,
     cost,
@@ -1799,7 +1805,7 @@ export function applyUpgradeBuilding(
   const lvl = s.gx?.lvl?.[id] || 1;
   const cost = gxUpgradeCost(s, id, nowMs);
   if (lvl >= 5 || cost <= 0) return { ok: false, state: s, newLevel: lvl, cost: 0, reason: 'Already at max level' };
-  if (s.cash < cost) return { ok: false, state: s, newLevel: lvl, cost, reason: 'Not enough cash' };
+  if (!Number.isFinite(s.cash) || s.cash < cost) return { ok: false, state: s, newLevel: lvl, cost, reason: 'Not enough cash' };
   return {
     ok: true,
     newLevel: lvl + 1,
@@ -1824,7 +1830,7 @@ export function applyChangeGov(
   if (!g) return { ok: false, state: s, reason: 'Unknown government type' };
   if (s.gov === govId) return { ok: false, state: s, reason: 'Already active' };
   if ((s.govT || 0) + GOV_CHANGE_CD_MS > nowMs) return { ok: false, state: s, reason: 'Government change on cooldown' };
-  if (s.cash < g.cost) return { ok: false, state: s, reason: 'Not enough cash' };
+  if (!Number.isFinite(s.cash) || s.cash < g.cost) return { ok: false, state: s, reason: 'Not enough cash' };
   return {
     ok: true,
     govName: g.n,
@@ -1867,6 +1873,120 @@ export function applyClaimQuest(
       gems: Math.min(1e9, Math.floor(s.gems) + q.r),
       claimed: cleanClaimed,
     },
+  };
+}
+
+export interface EntryCheckGateInput {
+  isFirebaseConfigured: boolean;
+  authResolved: boolean;
+  uid: string | null;
+  gateOpen: boolean;
+  completedEntryKey: string | null;
+}
+
+export function shouldRunOfflineEntryCheck(input: EntryCheckGateInput): boolean {
+  if (input.gateOpen) return false;
+  if (input.isFirebaseConfigured && !input.authResolved) return false;
+  if (input.uid !== null) return false;
+  if (input.completedEntryKey !== null) return false;
+  return true;
+}
+
+export interface DailyOfflineCheckResult {
+  state: GameState;
+  changed: boolean;
+  offlineCredited: number;
+  offlineWasCapped: boolean;
+  dailyGrant: {
+    streak: number;
+    cashAdded: number;
+    gemsAdded: number;
+    sticker: StickerDef | null;
+  } | null;
+  promoBannerText: string | null;
+}
+
+export function computeDailyAndOfflineChecks(
+  baseState: GameState,
+  tradeTier = 0,
+  nowMs = Date.now(),
+  rng: () => number = Math.random,
+): DailyOfflineCheckResult {
+  let working = { ...baseState };
+  const todayKey = dayKeyFor(nowMs);
+  let changed = false;
+
+  if (working.questDay !== todayKey) {
+    working = {
+      ...working,
+      questDay: todayKey,
+      questIds: selectDailyQuestIds(todayKey),
+      claimed: {},
+    };
+    changed = true;
+  }
+
+  let promoBannerText: string | null = null;
+  const promoRes = rollWeeklySubPromo(working, nowMs, rng);
+  working = promoRes.state;
+  if (promoRes.rolled && promoRes.promo) {
+    changed = true;
+    const promoTier = SUBSCRIPTIONS.find((x) => x.id === promoRes.promo!.tier);
+    if (promoTier) {
+      promoBannerText = `Weekly Flash Deal: −${promoRes.promo.pct}% off ${promoTier.n}!`;
+    }
+  }
+
+  const off = applyOfflineEarnings(working, nowMs, tradeTier);
+  working = off.state;
+  if (off.credited >= 1) {
+    changed = true;
+  }
+
+  let dailyGrant: DailyOfflineCheckResult['dailyGrant'] = null;
+  const lastTs = working.lastDaily || 0;
+  const lastKey = lastTs > 0 ? dayKeyFor(lastTs) : '';
+  // Guard minor client/server clock skew so returning within the same logical day never double-grants
+  const alreadyClaimedToday =
+    lastKey === todayKey || (lastTs > nowMs && lastTs - nowMs < 86_400_000);
+
+  if (!alreadyClaimedToday) {
+    const ydayKey = dayKeyFor(nowMs - 86_400_000);
+    const nextStreak = lastKey === ydayKey ? Math.min(10_000, Math.floor(working.streak || 0) + 1) : 1;
+    const rw = DAILY_REWARDS[Math.min(DAILY_REWARDS.length - 1, nextStreak - 1)];
+    const nextStk = { ...(working.stk || {}) };
+    let grantedSticker: StickerDef | null = null;
+    if (rw.e) {
+      const picked = STICKERS[Math.floor(rng() * STICKERS.length) % STICKERS.length];
+      nextStk[picked.id] = (nextStk[picked.id] || 0) + 1;
+      grantedSticker = picked;
+    }
+    const safeCash = Number.isFinite(working.cash) ? working.cash : 0;
+    const safeGems = Number.isFinite(working.gems) ? Math.floor(working.gems) : 0;
+    working = {
+      ...working,
+      cash: Math.min(1e13, Math.max(0, safeCash + rw.c)),
+      gems: Math.min(1e9, Math.max(0, safeGems + rw.g)),
+      stk: nextStk,
+      streak: nextStreak,
+      lastDaily: nowMs,
+    };
+    dailyGrant = {
+      streak: nextStreak,
+      cashAdded: rw.c,
+      gemsAdded: rw.g,
+      sticker: grantedSticker,
+    };
+    changed = true;
+  }
+
+  return {
+    state: working,
+    changed,
+    offlineCredited: off.credited,
+    offlineWasCapped: off.wasCapped,
+    dailyGrant,
+    promoBannerText,
   };
 }
 

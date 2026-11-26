@@ -1,4 +1,4 @@
-import React, { memo, useMemo, useState } from 'react';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { DAILY_GIFT_MAX } from '../../game/constants';
 import { formatNumber } from '../../game/rules';
 import type { GiftsSubTab, PlayerProfile, TradeOffer } from '../../game/types';
@@ -25,9 +25,9 @@ interface GiftsTabProps {
   onOpenLogin: () => void;
   onOpenGiftCompose: (target: PlayerProfile) => void;
   onOpenGiftReview: (trade: TradeOffer) => void;
-  onAcceptTrade: (tradeId: string) => Promise<void> | void;
-  onRejectTrade: (tradeId: string) => Promise<void> | void;
-  onCancelTrade: (tradeId: string) => Promise<void> | void;
+  onAcceptTrade: (tradeId: string) => Promise<boolean | void> | void;
+  onRejectTrade: (tradeId: string) => Promise<boolean | void> | void;
+  onCancelTrade: (tradeId: string) => Promise<boolean | void> | void;
   onSearchPlayers: (q: string) => Promise<PlayerProfile[]>;
 }
 
@@ -61,8 +61,19 @@ export const GiftsTab: React.FC<GiftsTabProps> = memo(({
   const [searchResults, setSearchResults] = useState<PlayerProfile[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [busyIds, setBusyIds] = useState<Record<string, boolean>>({});
+  const searchTimerRef = useRef<number | null>(null);
+  const searchSeqRef = useRef(0);
 
-  const runTradeAction = async (id: string, fn: (tradeId: string) => Promise<void> | void) => {
+  useEffect(() => {
+    return () => {
+      if (searchTimerRef.current !== null) {
+        window.clearTimeout(searchTimerRef.current);
+      }
+      searchSeqRef.current += 1;
+    };
+  }, []);
+
+  const runTradeAction = async (id: string, fn: (tradeId: string) => Promise<boolean | void> | void) => {
     if (busyIds[id]) return;
     setBusyIds((prev) => ({ ...prev, [id]: true }));
     try {
@@ -114,20 +125,33 @@ export const GiftsTab: React.FC<GiftsTabProps> = memo(({
 
   const nowSrv = nowSrvMs || Date.now();
 
-  const handleSearch = async (val: string) => {
+  const handleSearch = (val: string) => {
     setSearchText(val);
+    if (searchTimerRef.current !== null) {
+      window.clearTimeout(searchTimerRef.current);
+      searchTimerRef.current = null;
+    }
+    const seq = ++searchSeqRef.current;
     const trimmed = val.trim();
     if (trimmed.length < 2) {
+      setSearching(false);
       setSearchResults(null);
       return;
     }
     setSearching(true);
-    try {
-      const res = await onSearchPlayers(trimmed);
-      setSearchResults(res);
-    } finally {
-      setSearching(false);
-    }
+    searchTimerRef.current = window.setTimeout(async () => {
+      searchTimerRef.current = null;
+      try {
+        const res = await onSearchPlayers(trimmed);
+        if (searchSeqRef.current === seq) {
+          setSearchResults(res);
+        }
+      } finally {
+        if (searchSeqRef.current === seq) {
+          setSearching(false);
+        }
+      }
+    }, 250);
   };
 
   const candidatePlayers =
@@ -325,7 +349,7 @@ export const GiftsTab: React.FC<GiftsTabProps> = memo(({
             className="inp"
             placeholder="Search username (min 2 chars)…"
             value={searchText}
-            onChange={(e) => void handleSearch(e.target.value)}
+            onChange={(e) => handleSearch(e.target.value)}
           />
           {searching ? (
             <p className="dim">Searching…</p>
