@@ -97,19 +97,24 @@ import {
   TECH_TREE,
 } from './game/constants';
 import {
+  applyActivateGemBoost,
   applyBuyBooster,
+  applyBuyBuilding,
   applyBuyRank,
   applyBuySubscription,
+  applyChangeGov,
+  applyClaimQuest,
+  applyCollectTax,
+  applyFixInfra,
   applyOfflineEarnings,
   applyPolicyPreset,
   applyUnlockTech,
-  bulkBuildingCost,
+  applyUpgradeBuilding,
   buyStickerCrate,
   calculateGdp,
   calculateIncome,
   calculateOfflineRank,
   calculateOnlineRank,
-  calculateTaxCollect,
   claimMilestone,
   claimSubscriptionDaily,
   cleanStickersMap,
@@ -117,19 +122,14 @@ import {
   freshState,
   fuseSticker,
   getActiveSubscription,
-  getDevelopmentDiscount,
   getExecDecisionQuote,
   getInfraDecayMult,
   getProjectSpeedMult,
   getTaxPoolCapSeconds,
-  gxRepairCost,
-  gxUpgradeCost,
   migrateState,
   playerLevel,
   POLICY_BOUNDS,
-  QUEST_POOL,
   resolveExecutiveDecision,
-  rollTradePortExport,
   rollWeeklySubPromo,
   selectDailyQuestIds,
   targetHappiness,
@@ -263,6 +263,11 @@ export default function App() {
   pubProfileRef.current = pubProfile;
   const uidRef = useRef<string | null>(null);
   uidRef.current = uid;
+  const cloudReadyRef = useRef<boolean>(false);
+  cloudReadyRef.current = cloudReady;
+  const needsOnboardingRef = useRef<boolean>(false);
+  needsOnboardingRef.current = needsOnboarding;
+  const authSeqRef = useRef<number>(0);
   const kickedRef = useRef<boolean>(false);
   kickedRef.current = kicked;
   const completedTradesRef = useRef<number>(0);
@@ -276,6 +281,9 @@ export default function App() {
   const projPrevTickMsRef = useRef<Record<string, number>>({});
   const lastCityTapRef = useRef<number>(0);
   const settlingTradesRef = useRef<boolean>(false);
+  const tradesRef = useRef<TradeOffer[]>([]);
+  tradesRef.current = trades;
+  const lastSettledTradeCheckRef = useRef<number>(0);
   const rankPositionRef = useRef<number>(1);
   const modalOpenRef = useRef<boolean>(false);
   const anyModalOpen = Boolean(dialog || giftModal || settingsOpen || notifsOpen || profileView || needsOnboarding);
@@ -450,9 +458,12 @@ export default function App() {
   const performCloudSync = useCallback(
     async (immediate = false) => {
       const currentUid = uidRef.current;
-      if (!currentUid || !cloudReady || kickedRef.current || needsOnboarding) return;
+      if (!currentUid || !cloudReadyRef.current || kickedRef.current || needsOnboardingRef.current) return;
       if (!immediate && cloudSyncPermDeniedRef.current) return;
-      if (immediate) cloudSyncPermDeniedRef.current = false;
+      if (immediate) {
+        cloudSyncPermDeniedRef.current = false;
+        syncRetryCountRef.current = 0;
+      }
       if (syncRetryTimerRef.current) {
         window.clearTimeout(syncRetryTimerRef.current);
         syncRetryTimerRef.current = null;
@@ -477,6 +488,7 @@ export default function App() {
         walletRevRef.current = res.wallet.rev;
         syncRetryCountRef.current = 0;
         cloudSyncPermDeniedRef.current = false;
+        permWarnShownRef.current = false;
         lastSyncedAtRef.current = Date.now();
         if (!res.accepted) {
           setState((prev) => {
@@ -486,6 +498,7 @@ export default function App() {
               gems: res.wallet.gems,
               stk: res.wallet.stk,
             };
+            stateRef.current = next;
             saveLocal(next);
             return next;
           });
@@ -497,11 +510,29 @@ export default function App() {
       } catch (err) {
         const code = (err as { code?: string })?.code || '';
         const msg = err instanceof Error ? err.message : String(err || '');
+        const combined = `${code} ${msg}`;
         if (code === 'aborted' && msg.includes('Another session')) {
           setCloudStatus({ cls: 'bad', text: 'Session displaced' });
+        } else if (code === 'failed-precondition' && /not initialized/i.test(msg)) {
+          if (db) {
+            const pRef = doc(db, 'players', currentUid);
+            const pCheck = await getDocFromServer(pRef)
+              .catch(() => getDoc(pRef))
+              .catch(() => null);
+            if (pCheck && !pCheck.exists()) {
+              needsOnboardingRef.current = true;
+              cloudReadyRef.current = false;
+              setNeedsOnboarding(true);
+              setCloudReady(false);
+              setCloudStatus({ cls: 'warn', text: 'Setup profile' });
+              return;
+            }
+          }
+          setCloudStatus({ cls: 'warn', text: 'Retrying…' });
+          cloudDirtyRef.current = true;
         } else if (
           code === 'permission-denied' ||
-          /permission-denied|Missing or insufficient permissions/i.test(`${code} ${msg}`)
+          /permission-denied|Missing or insufficient permissions/i.test(combined)
         ) {
           cloudSyncPermDeniedRef.current = true;
           cloudDirtyRef.current = false;
@@ -512,15 +543,13 @@ export default function App() {
             addToast(formatFirebaseError(err));
           }
         } else if (
-          code === 'aborted' ||
-          code === 'unavailable' ||
-          code === 'deadline-exceeded' ||
-          code === 'internal' ||
-          code === 'cancelled'
+          /aborted|unavailable|deadline-exceeded|internal|cancelled|resource-exhausted|network|offline|unauthenticated|unknown/i.test(
+            combined,
+          )
         ) {
-          if (syncRetryCountRef.current < 3) {
+          if (syncRetryCountRef.current < 4) {
             syncRetryCountRef.current += 1;
-            const backoff = 2000 * Math.pow(2, syncRetryCountRef.current - 1);
+            const backoff = Math.min(16_000, 2000 * Math.pow(2, syncRetryCountRef.current - 1));
             setCloudStatus({ cls: 'warn', text: 'Retrying…' });
             syncRetryTimerRef.current = window.setTimeout(() => {
               syncRetryTimerRef.current = null;
@@ -531,8 +560,17 @@ export default function App() {
             if (immediate) addToast(formatFirebaseError(err));
           }
         } else {
-          setCloudStatus({ cls: 'bad', text: 'Sync failed' });
-          if (immediate) addToast(formatFirebaseError(err));
+          if (syncRetryCountRef.current < 2) {
+            syncRetryCountRef.current += 1;
+            setCloudStatus({ cls: 'warn', text: 'Retrying…' });
+            syncRetryTimerRef.current = window.setTimeout(() => {
+              syncRetryTimerRef.current = null;
+              void performCloudSync(false);
+            }, 3000);
+          } else {
+            setCloudStatus({ cls: 'bad', text: 'Sync failed' });
+            if (immediate) addToast(formatFirebaseError(err));
+          }
         }
       } finally {
         expectedWalletRevRef.current = null;
@@ -543,7 +581,7 @@ export default function App() {
         }
       }
     },
-    [addToast, cloudReady, handleKicked, needsOnboarding, saveLocal],
+    [addToast, handleKicked, saveLocal],
   );
 
   const scheduleCloudSync = useCallback(
@@ -551,12 +589,15 @@ export default function App() {
       pendingDirtyRef.current = true;
       if (
         !uidRef.current ||
-        !cloudReady ||
+        !cloudReadyRef.current ||
         kickedRef.current ||
-        needsOnboarding ||
+        needsOnboardingRef.current ||
         cloudSyncPermDeniedRef.current
       ) {
         return;
+      }
+      if (syncRetryCountRef.current > 0) {
+        syncRetryCountRef.current = 0;
       }
       if (cloudSyncTimerRef.current) window.clearTimeout(cloudSyncTimerRef.current);
       cloudSyncTimerRef.current = window.setTimeout(() => {
@@ -564,10 +605,23 @@ export default function App() {
         void performCloudSync(false);
       }, delayMs);
     },
-    [cloudReady, needsOnboarding, performCloudSync],
+    [performCloudSync],
   );
 
-  // Daily check & offline earnings trigger
+  // Automatically recover cloud sync when browser regains connectivity
+  useEffect(() => {
+    const onOnline = () => {
+      if (uidRef.current && cloudReadyRef.current && !kickedRef.current && !needsOnboardingRef.current) {
+        syncRetryCountRef.current = 0;
+        cloudSyncPermDeniedRef.current = false;
+        void performCloudSync(false);
+      }
+    };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, [performCloudSync]);
+
+  // Daily check & offline earnings calculation (pure computation; caller displays dialog/toast)
   const runDailyAndOfflineChecks = useCallback(
     (baseState: GameState, tradeTier: number, nowOverride?: number) => {
       const now = nowOverride ?? Date.now() + serverOffsetMsRef.current;
@@ -585,15 +639,13 @@ export default function App() {
       }
 
       // Roll weekly random subscription promo (once per Asia/Karachi ISO week)
+      let promoToast: string | null = null;
       const promoRes = rollWeeklySubPromo(working, now);
       working = promoRes.state;
       if (promoRes.rolled && promoRes.promo) {
         const promoTier = SUBSCRIPTIONS.find((x) => x.id === promoRes.promo!.tier);
         if (promoTier) {
-          const pct = promoRes.promo.pct;
-          window.setTimeout(() => {
-            addToast(`Weekly Flash Deal: −${pct}% off ${promoTier.n}!`);
-          }, 250);
+          promoToast = `Weekly Flash Deal: −${promoRes.promo.pct}% off ${promoTier.n}!`;
         }
       }
 
@@ -662,10 +714,9 @@ export default function App() {
         };
       }
 
-      if (streakDialog) setDialog(streakDialog);
-      return working;
+      return { state: working, streakDialog, promoToast };
     },
-    [addToast],
+    [],
   );
 
   // Firebase bootstrap & auth listener
@@ -678,15 +729,42 @@ export default function App() {
     });
 
     const unsub = onAuthStateChanged(auth, async (u) => {
+      const seq = ++authSeqRef.current;
       setUser(u);
       setUid(u?.uid || null);
       if (!u) {
-        serverTimeVerifiedRef.current = false;
-        serverOffsetMsRef.current = 0;
-        setServerOffsetMs(0);
+        if (cloudSyncTimerRef.current) {
+          window.clearTimeout(cloudSyncTimerRef.current);
+          cloudSyncTimerRef.current = null;
+        }
+        if (syncRetryTimerRef.current) {
+          window.clearTimeout(syncRetryTimerRef.current);
+          syncRetryTimerRef.current = null;
+        }
+        walletRevRef.current = 0;
+        expectedWalletRevRef.current = null;
+        lastSyncedAtRef.current = 0;
+        cloudSyncBusyRef.current = false;
+        cloudDirtyRef.current = false;
         pendingDirtyRef.current = false;
+        syncRetryCountRef.current = 0;
         cloudSyncPermDeniedRef.current = false;
         permWarnShownRef.current = false;
+        completedTradesRef.current = 0;
+        settlingTradesRef.current = false;
+        serverTimeVerifiedRef.current = false;
+        serverOffsetMsRef.current = 0;
+        projBusyRef.current.clear();
+        projPayBusyRef.current.clear();
+        projCreatingRef.current = false;
+        justCreatedProjIdsRef.current.clear();
+        projStartedLocalAtRef.current = {};
+        projLiveRef.current = {};
+        projLastSyncRef.current = {};
+        projPrevTickMsRef.current = {};
+        cloudReadyRef.current = false;
+        needsOnboardingRef.current = false;
+        setServerOffsetMs(0);
         setCloudReady(false);
         setNeedsOnboarding(false);
         setPubProfile(null);
@@ -694,11 +772,21 @@ export default function App() {
         setNotifications([]);
         setProjects([]);
         setLeaderboard([]);
+        setLbLoaded(false);
+        setSentToday(0);
+        setLiveProjectProgress({});
+        setGlobalChat([]);
+        setDmMessages([]);
+        setDmRecipient(null);
+        setRecentDms([]);
+        setSentDmContacts([]);
+        setCloudStatus({ cls: '', text: 'Saved' });
         return;
       }
 
       cloudSyncPermDeniedRef.current = false;
       permWarnShownRef.current = false;
+      syncRetryCountRef.current = 0;
       setGateOpen(false);
       setAuthMsg('');
       try {
@@ -707,16 +795,22 @@ export default function App() {
           sid: sidRef.current,
           t: serverTimestamp(),
         });
+        if (authSeqRef.current !== seq) return;
 
         // Estimate server clock offset strictly from server (never fall back to stale cache)
         const sesSnap = await getDocFromServer(doc(db, 'players', u.uid, 'private', 'session')).catch(() => null);
+        if (authSeqRef.current !== seq) return;
         if (sesSnap && sesSnap.exists()) {
           const srvMs = timestampToMs(sesSnap.data()?.t);
           if (srvMs > 0) updateServerOffset(srvMs);
         }
 
-        const pSnap = await getDoc(doc(db, 'players', u.uid));
+        const pRef = doc(db, 'players', u.uid);
+        const pSnap = await getDocFromServer(pRef).catch(() => getDoc(pRef));
+        if (authSeqRef.current !== seq) return;
         if (!pSnap.exists()) {
+          needsOnboardingRef.current = true;
+          cloudReadyRef.current = false;
           setNeedsOnboarding(true);
           setCloudReady(false);
           return;
@@ -725,11 +819,14 @@ export default function App() {
         const pData = pSnap.data() as Omit<PlayerProfile, 'id'>;
         setPubProfile({ ...pData, id: u.uid, seen: timestampToMs(pData.lastSeen) });
 
-        // Load wallet + save
+        // Load authoritative wallet + save from server when online (fallback to cache offline)
+        const wRef = doc(db, 'players', u.uid, 'private', 'wallet');
+        const sRef = doc(db, 'saves', u.uid);
         const [wSnap, sSnap] = await Promise.all([
-          getDoc(doc(db, 'players', u.uid, 'private', 'wallet')),
-          getDoc(doc(db, 'saves', u.uid)),
+          getDocFromServer(wRef).catch(() => getDoc(wRef)),
+          getDocFromServer(sRef).catch(() => getDoc(sRef)),
         ]);
+        if (authSeqRef.current !== seq) return;
 
         let loaded = sSnap.exists()
           ? migrateState((sSnap.data()?.save as Partial<GameState>) || {})
@@ -745,15 +842,20 @@ export default function App() {
 
         if (wSnap.exists()) {
           const w = wSnap.data();
-          walletRevRef.current = Number(w.rev) || 1;
+          const rawRev = Number(w.rev);
+          walletRevRef.current = Number.isFinite(rawRev) ? Math.max(0, Math.floor(rawRev)) : 0;
           loaded.cash = capValue(w.cash, 1e13);
           loaded.gems = capValue(w.gems, 1e9);
           loaded.stk = cleanStickersMap(w.stk);
+        } else {
+          walletRevRef.current = 0;
+          pendingDirtyRef.current = true;
         }
 
         const tier = tierOfCompletedTrades(pData.stats?.completedTrades);
         completedTradesRef.current = pData.stats?.completedTrades || 0;
-        const checked = runDailyAndOfflineChecks(loaded, tier, Date.now() + serverOffsetMsRef.current);
+        const checkedRes = runDailyAndOfflineChecks(loaded, tier, Date.now() + serverOffsetMsRef.current);
+        const checked = checkedRes.state;
         if (
           checked.lastDaily !== loaded.lastDaily ||
           checked.taxPool !== loaded.taxPool ||
@@ -762,28 +864,36 @@ export default function App() {
         ) {
           pendingDirtyRef.current = true;
         }
+        stateRef.current = checked;
         setState(checked);
         saveLocal(checked);
+        if (checkedRes.promoToast) addToast(checkedRes.promoToast);
+        if (checkedRes.streakDialog) setDialog(checkedRes.streakDialog);
+        needsOnboardingRef.current = false;
+        cloudReadyRef.current = true;
         setNeedsOnboarding(false);
         setCloudReady(true);
       } catch (err) {
-        addToast(formatFirebaseError(err));
+        if (authSeqRef.current === seq) {
+          addToast(formatFirebaseError(err));
+        }
       }
     });
 
     return () => unsub();
   }, [addToast, runDailyAndOfflineChecks, saveLocal, updateServerOffset]);
 
-  // Run daily check for offline mode on mount if gate is bypassed
+  // Run daily check for offline mode on mount or when switching back to offline play
   useEffect(() => {
     if (!gateOpen && !uid) {
-      setState((prev) => {
-        const checked = runDailyAndOfflineChecks(prev, 0);
-        saveLocal(checked);
-        return checked;
-      });
+      const checkedRes = runDailyAndOfflineChecks(stateRef.current, 0);
+      stateRef.current = checkedRes.state;
+      setState(checkedRes.state);
+      saveLocal(checkedRes.state);
+      if (checkedRes.promoToast) addToast(checkedRes.promoToast);
+      if (checkedRes.streakDialog) setDialog(checkedRes.streakDialog);
     }
-  }, [gateOpen, uid, runDailyAndOfflineChecks, saveLocal]);
+  }, [gateOpen, uid, runDailyAndOfflineChecks, saveLocal, addToast]);
 
   // Trigger initial sync after sign-in if daily/offline rewards updated local state
   useEffect(() => {
@@ -841,6 +951,7 @@ export default function App() {
           const newRev = Number(w.rev) || 0;
           if (newRev > walletRevRef.current) {
             const isOwnInFlightEcho =
+              !w.tradeId &&
               cloudSyncBusyRef.current &&
               w.sid === sidRef.current &&
               expectedWalletRevRef.current === newRev;
@@ -853,6 +964,7 @@ export default function App() {
                   gems: capValue(w.gems, 1e9),
                   stk: cleanStickersMap(w.stk),
                 };
+                stateRef.current = next;
                 saveLocal(next);
                 return next;
               });
@@ -880,7 +992,7 @@ export default function App() {
     // 4. Active leaderboard listener
     unsubs.push(
       onSnapshot(
-        queries.playersActiveQuery(),
+        queries.playersActiveQuery(serverOffsetMsRef.current),
         (snap) => {
           const nowEst = Date.now() + serverOffsetMsRef.current;
           const rows = snap.docs
@@ -948,17 +1060,7 @@ export default function App() {
       ),
     );
 
-    // 6. Daily gift limit listener
-    const dlKey = `${uid}_${dayKeyFor(Date.now() + serverOffsetMsRef.current)}`;
-    unsubs.push(
-      onSnapshot(
-        doc(db, 'dailyLimits', dlKey),
-        (snap) => {
-          setSentToday(snap.exists() ? Number(snap.data()?.count || 0) : 0);
-        },
-        (err) => handleSnapshotError(`dailyLimits/${dlKey}`, err),
-      ),
-    );
+    // 6. Daily gift limit listener handled in dedicated dayKey effect below
 
     // 7. Notifications listener
     unsubs.push(
@@ -1064,10 +1166,17 @@ export default function App() {
       ),
     );
 
-    // Heartbeat interval
-    void sendHeartbeat(uid).catch(() => {});
+    // Heartbeat interval (skip initial heartbeat if an initial sync is queued to avoid transaction contention)
+    if (!pendingDirtyRef.current) {
+      void sendHeartbeat(uid).catch(() => {});
+    }
     const hb = window.setInterval(() => {
-      if (!document.hidden && !kickedRef.current) {
+      if (
+        !document.hidden &&
+        !kickedRef.current &&
+        !cloudSyncBusyRef.current &&
+        Date.now() - lastSyncedAtRef.current >= HEARTBEAT_MS - 5000
+      ) {
         void sendHeartbeat(uid).catch(() => {});
       }
     }, HEARTBEAT_MS);
@@ -1328,9 +1437,17 @@ export default function App() {
                     addToast(res.summary);
                     return;
                   }
-                  playSfx('win', !!stateRef.current.set.sfx);
-                  triggerBuzz(16, !!stateRef.current.set.vib);
-                  updateState(() => res.state, 800);
+                  const nowExec = Date.now() + serverOffsetMsRef.current;
+                  stateRef.current = res.state;
+                  playSfx('win', !!res.state.set.sfx);
+                  triggerBuzz(16, !!res.state.set.vib);
+                  setState((prev) => {
+                    const recheck = resolveExecutiveDecision(prev, dec.id, 0, tradeTier, nowExec);
+                    if (!recheck.ok) return prev;
+                    saveLocal(recheck.state);
+                    return recheck.state;
+                  });
+                  scheduleCloudSync(800);
                   addToast(res.summary);
                   setDialog(null);
                 },
@@ -1339,16 +1456,24 @@ export default function App() {
                 label: `${dec.options[1].label} (+₨ ${formatNumber(quote.gainCash)})`,
                 variant: dec.options[1].variant,
                 onClick: () => {
+                  const nowExec = Date.now() + serverOffsetMsRef.current;
                   const res = resolveExecutiveDecision(
                     stateRef.current,
                     dec.id,
                     1,
                     tradeTier,
-                    Date.now() + serverOffsetMsRef.current,
+                    nowExec,
                   );
                   if (res.ok) {
-                    playSfx('coin', !!stateRef.current.set.sfx);
-                    updateState(() => res.state, 800);
+                    stateRef.current = res.state;
+                    playSfx('coin', !!res.state.set.sfx);
+                    setState((prev) => {
+                      const recheck = resolveExecutiveDecision(prev, dec.id, 1, tradeTier, nowExec);
+                      if (!recheck.ok) return prev;
+                      saveLocal(recheck.state);
+                      return recheck.state;
+                    });
+                    scheduleCloudSync(800);
                     addToast(res.summary);
                   }
                   setDialog(null);
@@ -1359,27 +1484,66 @@ export default function App() {
         }
       }
 
-      // Dirty-aware cloud sync every 24s if signed in
+      // Dirty-aware cloud sync every 24s if signed in (periodically re-attempts after transient/rules pauses)
       if (
         tickCountRef.current % 24 === 0 &&
         uidRef.current &&
-        !cloudSyncPermDeniedRef.current &&
+        cloudReadyRef.current &&
+        !needsOnboardingRef.current &&
         (pendingDirtyRef.current ||
           (now - lastSyncedAtRef.current >= 24_000 &&
             (isUserActive || calculateIncome(curSnap, { tradeTier, nowMs: nowSrv }).net !== 0)))
       ) {
+        cloudSyncPermDeniedRef.current = false;
+        syncRetryCountRef.current = 0;
         void performCloudSync(false);
       }
 
-      // Tick active Gov Projects in Firestore
+      // Settle expired outgoing gifts periodically (every 5s) even without a new Firestore trade snapshot
       const curUid = uidRef.current;
+      if (
+        curUid &&
+        cloudReadyRef.current &&
+        !settlingTradesRef.current &&
+        now - lastSettledTradeCheckRef.current >= 5000 &&
+        tradesRef.current.some(
+          (t) =>
+            (t.from === curUid && t.status === 'pending' && t.expMs > 0 && t.expMs + 1500 <= nowSrv) ||
+            (t.from === curUid && (t.status === 'rejected' || t.status === 'expired') && !t.refunded),
+        )
+      ) {
+        lastSettledTradeCheckRef.current = now;
+        settlingTradesRef.current = true;
+        void settleExpiredTrades(
+          tradesRef.current,
+          curUid,
+          sidRef.current,
+          handleKicked,
+          serverOffsetMsRef.current,
+        ).finally(() => {
+          settlingTradesRef.current = false;
+        });
+      }
+
+      // Tick active Gov Projects in Firestore
       if (curUid && projectsRef.current.length > 0) {
         let liveDirty = false;
         const speedMult = getProjectSpeedMult(stateRef.current, nowSrv);
         const stepMs = Math.max(1000, Math.floor(1000 * speedMult));
         for (const p of projectsRef.current) {
           if (p.status === 'active') {
-            if (
+            const curLive = Math.max(p.progressMs, projLiveRef.current[p.id] || 0);
+            const alreadyDoneLocally = curLive >= p.t.dur && p.paid >= PROJECT_STAGES;
+            if (alreadyDoneLocally) {
+              const lastSync = projLastSyncRef.current[p.id] || 0;
+              if (now - lastSync >= 5000 && !projBusyRef.current.has(p.id)) {
+                projLastSyncRef.current[p.id] = now;
+                projBusyRef.current.add(p.id);
+                void finishGovProject(curUid, p.id, 'done', p.t.dur)
+                  .catch(() => {})
+                  .finally(() => projBusyRef.current.delete(p.id));
+              }
+            } else if (
               serverTimeVerifiedRef.current &&
               !p.pending &&
               p.st > 0 &&
@@ -1394,16 +1558,16 @@ export default function App() {
               }
             } else if (isUserActive && !p.pending) {
               const capMs = Math.floor((p.t.dur * p.paid) / PROJECT_STAGES);
-              const curLive = Math.max(p.progressMs, projLiveRef.current[p.id] || 0);
               if (curLive < capMs) {
                 const nextMs = Math.min(capMs, curLive + stepMs);
                 projLiveRef.current[p.id] = nextMs;
                 liveDirty = true;
                 if (nextMs >= p.t.dur && p.paid >= PROJECT_STAGES && !projBusyRef.current.has(p.id)) {
+                  projLastSyncRef.current[p.id] = now;
                   projBusyRef.current.add(p.id);
-                  void finishGovProject(curUid, p.id, 'done', p.t.dur).finally(() =>
-                    projBusyRef.current.delete(p.id),
-                  );
+                  void finishGovProject(curUid, p.id, 'done', p.t.dur)
+                    .catch(() => {})
+                    .finally(() => projBusyRef.current.delete(p.id));
                 } else {
                   const lastSync = projLastSyncRef.current[p.id] || 0;
                   const hitStageCap = nextMs >= capMs && p.progressMs < capMs;
@@ -1497,6 +1661,7 @@ export default function App() {
     (updater: (prev: GameState) => GameState, syncDelay = 1500) => {
       setState((prev) => {
         const next = updater(prev);
+        stateRef.current = next;
         saveLocal(next);
         return next;
       });
@@ -1505,63 +1670,62 @@ export default function App() {
     [saveLocal, scheduleCloudSync],
   );
 
-  // Actions
+  // Actions (all mutations validate atomically against both live stateRef and functional React prev)
   const handleCollectTax = useCallback(
     (e: React.MouseEvent<HTMLButtonElement>) => {
-      const cur = stateRef.current;
-      const res = calculateTaxCollect(cur, tradeTier, Date.now() + serverOffsetMsRef.current);
-      if (res.collected < 1) {
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const rolls = [Math.random(), Math.random(), Math.random(), Math.random()];
+      const makeRng = () => {
+        let i = 0;
+        return () => rolls[i++ % rolls.length];
+      };
+      const res = applyCollectTax(stateRef.current, tradeTier, nowSrv, makeRng());
+      if (!res.ok) {
         addToast('Tax pool is empty — wait a moment!');
         return;
       }
-      const portDrop = rollTradePortExport(cur, res.poolAmount, res.baseNet);
-      playSfx('coin', !!cur.set.sfx);
-      triggerBuzz(14, !!cur.set.vib);
+      stateRef.current = res.state;
+      playSfx('coin', !!res.state.set.sfx);
+      triggerBuzz(14, !!res.state.set.vib);
       setBurstKey((k) => k + 1);
       const rect = e.currentTarget.getBoundingClientRect();
       spawnFloat(`+₨ ${formatNumber(res.collected)}`, rect.left + rect.width / 2, rect.top, '#3fe0b0');
 
-      updateState((prev) => {
-        const nextStk = portDrop.sticker
-          ? { ...prev.stk, [portDrop.sticker.id]: (prev.stk[portDrop.sticker.id] || 0) + 1 }
-          : prev.stk;
-        return {
-          ...prev,
-          cash: Math.min(1e13, prev.cash + res.collected),
-          gems: Math.min(1e9, prev.gems + portDrop.gems),
-          stk: nextStk,
-          taxPool: 0,
-          activeFx: res.bonusApplied ? { ...prev.activeFx, taxSurge: 0 } : prev.activeFx,
-        };
-      }, 1000);
+      setState((prev) => {
+        const recheck = applyCollectTax(prev, tradeTier, nowSrv, makeRng());
+        if (!recheck.ok) return prev;
+        saveLocal(recheck.state);
+        return recheck.state;
+      });
+      scheduleCloudSync(1000);
 
       if (res.bonusApplied) {
         addToast(`Tax Surge added +₨ ${formatNumber(res.bonusAmount)}!`);
       }
-      if (portDrop.gems > 0) {
-        addToast(`Trade Port Export: +${portDrop.gems} Gem!`);
-      } else if (portDrop.sticker) {
-        addToast(`Trade Port Export: ${portDrop.sticker.n} sticker!`);
+      if (res.portDrop.gems > 0) {
+        addToast(`Trade Port Export: +${res.portDrop.gems} Gem!`);
+      } else if (res.portDrop.sticker) {
+        addToast(`Trade Port Export: ${res.portDrop.sticker.n} sticker!`);
       }
     },
-    [tradeTier, addToast, spawnFloat, updateState],
+    [tradeTier, addToast, spawnFloat, saveLocal, scheduleCloudSync],
   );
 
   const handleActivateGemBoost = useCallback(() => {
-    const cur = stateRef.current;
-    if (cur.gems < 5 || cur.boost > 0) return;
-    playSfx('buy', !!cur.set.sfx);
-    triggerBuzz(18, !!cur.set.vib);
-    updateState(
-      (prev) => ({
-        ...prev,
-        gems: prev.gems - 5,
-        boost: 30,
-      }),
-      1000,
-    );
+    const res = applyActivateGemBoost(stateRef.current);
+    if (!res.ok) return;
+    stateRef.current = res.state;
+    playSfx('buy', !!res.state.set.sfx);
+    triggerBuzz(18, !!res.state.set.vib);
+    setState((prev) => {
+      const recheck = applyActivateGemBoost(prev);
+      if (!recheck.ok) return prev;
+      saveLocal(recheck.state);
+      return recheck.state;
+    });
+    scheduleCloudSync(1000);
     addToast('×2 Boost active for 30s!');
-  }, [addToast, updateState]);
+  }, [addToast, saveLocal, scheduleCloudSync]);
 
   const handleCityBuildingTap = useCallback(
     (clientX?: number, clientY?: number) => {
@@ -1592,78 +1756,64 @@ export default function App() {
     (id: string, qty: 1 | 5, e: React.MouseEvent<HTMLButtonElement>) => {
       const def = BUILDINGS.find((b) => b.id === id);
       if (!def) return;
-      const cur = stateRef.current;
       const nowSrv = Date.now() + serverOffsetMsRef.current;
-      const count = cur.b[id] || 0;
-      const cost = bulkBuildingCost(def, count, qty, getDevelopmentDiscount(cur, nowSrv));
-      if (cur.cash < cost) return;
+      const res = applyBuyBuilding(stateRef.current, id, qty, nowSrv);
+      if (!res.ok) return;
 
-      playSfx('buy', !!cur.set.sfx);
-      triggerBuzz(15, !!cur.set.vib);
+      stateRef.current = res.state;
+      playSfx('buy', !!res.state.set.sfx);
+      triggerBuzz(15, !!res.state.set.vib);
       setBurstKey((k) => k + 1);
       const rect = e.currentTarget.getBoundingClientRect();
-      spawnFloat(`${def.n} Lv ${count + qty}`, rect.left + rect.width / 2, rect.top, '#ffc23d');
+      spawnFloat(`${def.n} Lv ${res.newCount}`, rect.left + rect.width / 2, rect.top, '#ffc23d');
 
-      updateState(
-        (prev) => ({
-          ...prev,
-          cash: Math.max(0, prev.cash - cost),
-          b: { ...prev.b, [id]: (prev.b[id] || 0) + qty },
-        }),
-        1200,
-      );
+      setState((prev) => {
+        const recheck = applyBuyBuilding(prev, id, qty, nowSrv);
+        if (!recheck.ok) return prev;
+        saveLocal(recheck.state);
+        return recheck.state;
+      });
+      scheduleCloudSync(1200);
     },
-    [spawnFloat, updateState],
+    [spawnFloat, saveLocal, scheduleCloudSync],
   );
 
   const handleFixInfra = useCallback(
     (key: string, full: boolean) => {
-      const cur = stateRef.current;
       const nowSrv = Date.now() + serverOffsetMsRef.current;
-      const cost = gxRepairCost(cur, key, full, nowSrv);
-      if (cur.cash < cost || cost <= 0) return;
-      playSfx('buy', !!cur.set.sfx);
-      updateState(
-        (prev) => ({
-          ...prev,
-          cash: Math.max(0, prev.cash - cost),
-          gx: {
-            ...prev.gx,
-            cond: {
-              ...prev.gx.cond,
-              [key]: full ? 100 : Math.min(100, (prev.gx.cond[key] ?? 100) + 20),
-            },
-          },
-        }),
-        1200,
-      );
+      const res = applyFixInfra(stateRef.current, key, full, nowSrv);
+      if (!res.ok) return;
+      stateRef.current = res.state;
+      playSfx('buy', !!res.state.set.sfx);
+      setState((prev) => {
+        const recheck = applyFixInfra(prev, key, full, nowSrv);
+        if (!recheck.ok) return prev;
+        saveLocal(recheck.state);
+        return recheck.state;
+      });
+      scheduleCloudSync(1200);
       addToast('Infrastructure repaired!');
     },
-    [addToast, updateState],
+    [addToast, saveLocal, scheduleCloudSync],
   );
 
   const handleUpgradeBuilding = useCallback(
     (id: string) => {
-      const cur = stateRef.current;
       const nowSrv = Date.now() + serverOffsetMsRef.current;
-      const cost = gxUpgradeCost(cur, id, nowSrv);
-      const lvl = cur.gx.lvl[id] || 1;
-      if (cur.cash < cost || cost <= 0 || lvl >= 5) return;
-      playSfx('buy', !!cur.set.sfx);
-      updateState(
-        (prev) => ({
-          ...prev,
-          cash: Math.max(0, prev.cash - cost),
-          gx: {
-            ...prev.gx,
-            lvl: { ...prev.gx.lvl, [id]: (prev.gx.lvl[id] || 1) + 1 },
-          },
-        }),
-        1200,
-      );
+      const res = applyUpgradeBuilding(stateRef.current, id, nowSrv);
+      if (!res.ok) return;
+      stateRef.current = res.state;
+      playSfx('buy', !!res.state.set.sfx);
+      setState((prev) => {
+        const recheck = applyUpgradeBuilding(prev, id, nowSrv);
+        if (!recheck.ok) return prev;
+        saveLocal(recheck.state);
+        return recheck.state;
+      });
+      scheduleCloudSync(1200);
       addToast('Building upgraded!');
     },
-    [addToast, updateState],
+    [addToast, saveLocal, scheduleCloudSync],
   );
 
   const handleUnlockTech = useCallback(
@@ -1675,14 +1825,21 @@ export default function App() {
         if (res.reason) addToast(res.reason);
         return;
       }
-      playSfx('win', !!stateRef.current.set.sfx);
-      triggerBuzz(18, !!stateRef.current.set.vib);
+      stateRef.current = res.state;
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(18, !!res.state.set.vib);
       const rect = e.currentTarget.getBoundingClientRect();
       spawnFloat(tDef.n, rect.left + rect.width / 2, rect.top, '#a88bff');
-      updateState(() => res.state, 700);
+      setState((prev) => {
+        const recheck = applyUnlockTech(prev, techId);
+        if (!recheck.ok) return prev;
+        saveLocal(recheck.state);
+        return recheck.state;
+      });
+      scheduleCloudSync(700);
       addToast(`Researched ${tDef.n}!`);
     },
-    [addToast, spawnFloat, updateState],
+    [addToast, spawnFloat, saveLocal, scheduleCloudSync],
   );
 
   const handleStartProject = useCallback(
@@ -1754,7 +1911,9 @@ export default function App() {
       const clamped = Math.round(Math.max(bounds[0], Math.min(bounds[1], value)));
       setState((prev) => {
         if (prev[key] === clamped) return prev;
-        return { ...prev, [key]: clamped };
+        const next = { ...prev, [key]: clamped };
+        stateRef.current = next;
+        return next;
       });
       scheduleSaveLocal();
       scheduleCloudSync(2200);
@@ -1774,38 +1933,41 @@ export default function App() {
 
   const handleChangeGov = useCallback(
     (govId: string) => {
-      const g = GOVS.find((x) => x.id === govId);
-      if (!g) return;
       const nowSrv = Date.now() + serverOffsetMsRef.current;
-      const cur = stateRef.current;
-      if (cur.gov === govId || (cur.govT || 0) + GOV_CHANGE_CD_MS > nowSrv || cur.cash < g.cost) {
-        return;
-      }
-      playSfx('win', !!cur.set.sfx);
-      updateState(
-        (prev) => ({
-          ...prev,
-          cash: Math.max(0, prev.cash - g.cost),
-          gov: govId,
-          govT: nowSrv,
-        }),
-        1000,
-      );
-      addToast(`Switched government to ${g.n}!`);
+      const res = applyChangeGov(stateRef.current, govId, nowSrv);
+      if (!res.ok || !res.govName) return;
+      stateRef.current = res.state;
+      playSfx('win', !!res.state.set.sfx);
+      setState((prev) => {
+        const recheck = applyChangeGov(prev, govId, nowSrv);
+        if (!recheck.ok) return prev;
+        saveLocal(recheck.state);
+        return recheck.state;
+      });
+      scheduleCloudSync(1000);
+      addToast(`Switched government to ${res.govName}!`);
     },
-    [addToast, updateState],
+    [addToast, saveLocal, scheduleCloudSync],
   );
 
   const handleFuseSticker = useCallback(
     (stickerId: string) => {
-      const res = fuseSticker(stateRef.current, stickerId);
+      const roll = Math.random();
+      const res = fuseSticker(stateRef.current, stickerId, () => roll);
       if (!res.ok || !res.granted) {
         if (res.reason) addToast(res.reason);
         return;
       }
-      playSfx('win', !!stateRef.current.set.sfx);
-      triggerBuzz(20, !!stateRef.current.set.vib);
-      updateState(() => res.state, 1000);
+      stateRef.current = res.state;
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(20, !!res.state.set.vib);
+      setState((prev) => {
+        const recheck = fuseSticker(prev, stickerId, () => roll);
+        if (!recheck.ok) return prev;
+        saveLocal(recheck.state);
+        return recheck.state;
+      });
+      scheduleCloudSync(1000);
       setDialog({
         title: 'Sticker Fused!',
         body: (
@@ -1820,22 +1982,34 @@ export default function App() {
         actions: [{ label: 'Awesome', variant: 'gold', onClick: () => setDialog(null) }],
       });
     },
-    [addToast, updateState],
+    [addToast, saveLocal, scheduleCloudSync],
   );
 
   const handleBuyStickerCrate = useCallback(
     (kind: 'cash' | 'gems', e: React.MouseEvent<HTMLButtonElement>) => {
       const nowSrv = Date.now() + serverOffsetMsRef.current;
-      const res = buyStickerCrate(stateRef.current, kind, nowSrv);
+      const rolls = [Math.random(), Math.random(), Math.random(), Math.random()];
+      const makeRng = () => {
+        let i = 0;
+        return () => rolls[i++ % rolls.length];
+      };
+      const res = buyStickerCrate(stateRef.current, kind, nowSrv, makeRng());
       if (!res.ok || res.granted.length === 0) {
         if (res.reason) addToast(res.reason);
         return;
       }
-      playSfx('win', !!stateRef.current.set.sfx);
-      triggerBuzz(18, !!stateRef.current.set.vib);
+      stateRef.current = res.state;
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(18, !!res.state.set.vib);
       const rect = e.currentTarget.getBoundingClientRect();
       spawnFloat(`+${res.granted.length} Sticker`, rect.left + rect.width / 2, rect.top, '#ffc23d');
-      updateState(() => res.state, 800);
+      setState((prev) => {
+        const recheck = buyStickerCrate(prev, kind, nowSrv, makeRng());
+        if (!recheck.ok) return prev;
+        saveLocal(recheck.state);
+        return recheck.state;
+      });
+      scheduleCloudSync(800);
       setDialog({
         title: kind === 'gems' ? 'Royal Crate Opened!' : 'Standard Crate Opened!',
         body: (
@@ -1854,36 +2028,30 @@ export default function App() {
         actions: [{ label: 'Collect', variant: 'gold', onClick: () => setDialog(null) }],
       });
     },
-    [addToast, spawnFloat, updateState],
+    [addToast, spawnFloat, saveLocal, scheduleCloudSync],
   );
 
   const handleClaimQuest = useCallback(
     (questId: string, _rewardGems: number, e: React.MouseEvent<HTMLButtonElement>) => {
-      const cur = stateRef.current;
-      if (cur.claimed?.[questId]) return;
       const today = dayKeyFor(Date.now() + serverOffsetMsRef.current);
-      const activeIds =
-        cur.questIds?.length === 3 && cur.questDay === today ? cur.questIds : selectDailyQuestIds(today);
-      const qIndex = QUEST_POOL.findIndex((q) => q.id === questId);
-      if (qIndex < 0 || !activeIds.includes(qIndex)) return;
-      const q = QUEST_POOL[qIndex];
-      if (q.f(cur, { rank: rankPositionRef.current }) < q.g) return;
+      const rankPos = rankPositionRef.current;
+      const res = applyClaimQuest(stateRef.current, questId, today, rankPos);
+      if (!res.ok) return;
 
-      const verifiedGems = q.r;
-      playSfx('win', !!cur.set.sfx);
-      triggerBuzz(16, !!cur.set.vib);
+      stateRef.current = res.state;
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(16, !!res.state.set.vib);
       const rect = e.currentTarget.getBoundingClientRect();
-      spawnFloat(`+${verifiedGems} Gems`, rect.left + rect.width / 2, rect.top, '#5ccbff');
-      updateState(
-        (prev) => ({
-          ...prev,
-          gems: Math.min(1e9, prev.gems + verifiedGems),
-          claimed: { ...prev.claimed, [questId]: 1 },
-        }),
-        1000,
-      );
+      spawnFloat(`+${res.gemsAdded} Gems`, rect.left + rect.width / 2, rect.top, '#5ccbff');
+      setState((prev) => {
+        const recheck = applyClaimQuest(prev, questId, today, rankPos);
+        if (!recheck.ok) return prev;
+        saveLocal(recheck.state);
+        return recheck.state;
+      });
+      scheduleCloudSync(1000);
     },
-    [spawnFloat, updateState],
+    [spawnFloat, saveLocal, scheduleCloudSync],
   );
 
   const handleClaimMilestone = useCallback(
@@ -1893,14 +2061,21 @@ export default function App() {
         if (res.reason) addToast(res.reason);
         return;
       }
-      playSfx('win', !!stateRef.current.set.sfx);
-      triggerBuzz(18, !!stateRef.current.set.vib);
+      stateRef.current = res.state;
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(18, !!res.state.set.vib);
       const rect = e.currentTarget.getBoundingClientRect();
       spawnFloat(`+${res.gemsAdded} Gems`, rect.left + rect.width / 2, rect.top, '#5ccbff');
-      updateState(() => res.state, 800);
+      setState((prev) => {
+        const recheck = claimMilestone(prev, milestoneId);
+        if (!recheck.ok) return prev;
+        saveLocal(recheck.state);
+        return recheck.state;
+      });
+      scheduleCloudSync(800);
       addToast(`Milestone completed! +${res.gemsAdded} Gems`);
     },
-    [addToast, spawnFloat, updateState],
+    [addToast, spawnFloat, saveLocal, scheduleCloudSync],
   );
 
   const handleBuyRank = useCallback(
@@ -1911,14 +2086,21 @@ export default function App() {
         return;
       }
       const rk = RANKS[rankId];
-      playSfx('win', !!stateRef.current.set.sfx);
-      triggerBuzz(20, !!stateRef.current.set.vib);
+      stateRef.current = res.state;
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(20, !!res.state.set.vib);
       const rect = e.currentTarget.getBoundingClientRect();
       spawnFloat(rk.n, rect.left + rect.width / 2, rect.top, '#ffc23d');
-      updateState(() => res.state, 800);
+      setState((prev) => {
+        const recheck = applyBuyRank(prev, rankId);
+        if (!recheck.ok) return prev;
+        saveLocal(recheck.state);
+        return recheck.state;
+      });
+      scheduleCloudSync(800);
       addToast(`Promoted to ${rk.n}!`);
     },
-    [addToast, spawnFloat, updateState],
+    [addToast, spawnFloat, saveLocal, scheduleCloudSync],
   );
 
   const handleBuySubscription = useCallback(
@@ -1931,18 +2113,25 @@ export default function App() {
         if (res.reason) addToast(res.reason);
         return;
       }
-      playSfx('win', !!stateRef.current.set.sfx);
-      triggerBuzz(20, !!stateRef.current.set.vib);
+      stateRef.current = res.state;
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(20, !!res.state.set.vib);
       const rect = e.currentTarget.getBoundingClientRect();
       spawnFloat(subDef.n, rect.left + rect.width / 2, rect.top, '#ffc23d');
-      updateState(() => res.state, 600);
+      setState((prev) => {
+        const recheck = applyBuySubscription(prev, subDef, nowSrv);
+        if (!recheck.ok) return prev;
+        saveLocal(recheck.state);
+        return recheck.state;
+      });
+      scheduleCloudSync(600);
       if (res.paidCost && res.paidCost < subDef.cost) {
         addToast(`${subDef.n} activated for ₨ ${formatNumber(res.paidCost)} (Weekly Deal)!`);
       } else {
         addToast(`${subDef.n} activated!`);
       }
     },
-    [addToast, spawnFloat, updateState],
+    [addToast, spawnFloat, saveLocal, scheduleCloudSync],
   );
 
   const handleClaimSubDaily = useCallback(
@@ -1954,8 +2143,9 @@ export default function App() {
         if (res.reason) addToast(res.reason);
         return;
       }
-      playSfx('coin', !!stateRef.current.set.sfx);
-      triggerBuzz(16, !!stateRef.current.set.vib);
+      stateRef.current = res.state;
+      playSfx('coin', !!res.state.set.sfx);
+      triggerBuzz(16, !!res.state.set.vib);
       const rect = e.currentTarget.getBoundingClientRect();
       spawnFloat(
         `+₨ ${formatNumber(res.cashAdded)}${res.gemsAdded > 0 ? ` +${res.gemsAdded} Gems` : ''}`,
@@ -1963,31 +2153,45 @@ export default function App() {
         rect.top,
         '#3fe0b0',
       );
-      updateState(() => res.state, 600);
+      setState((prev) => {
+        const recheck = claimSubscriptionDaily(prev, today, nowSrv);
+        if (!recheck.ok) return prev;
+        saveLocal(recheck.state);
+        return recheck.state;
+      });
+      scheduleCloudSync(600);
       addToast(
         `Subscription stipend: +₨ ${formatNumber(res.cashAdded)}${res.gemsAdded > 0 ? ` + ${res.gemsAdded} Gems` : ''}`,
       );
     },
-    [addToast, spawnFloat, updateState],
+    [addToast, spawnFloat, saveLocal, scheduleCloudSync],
   );
 
   const handleBuyBooster = useCallback(
     (boosterId: string, e: React.MouseEvent<HTMLButtonElement>) => {
       const b = BOOSTERS.find((x) => x.id === boosterId);
       if (!b) return;
-      const res = applyBuyBooster(stateRef.current, b, Date.now() + serverOffsetMsRef.current);
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const res = applyBuyBooster(stateRef.current, b, nowSrv);
       if (!res.ok) {
         if (res.reason) addToast(res.reason);
         return;
       }
-      playSfx('buy', !!stateRef.current.set.sfx);
-      triggerBuzz(16, !!stateRef.current.set.vib);
+      stateRef.current = res.state;
+      playSfx('buy', !!res.state.set.sfx);
+      triggerBuzz(16, !!res.state.set.vib);
       const rect = e.currentTarget.getBoundingClientRect();
       spawnFloat(b.n, rect.left + rect.width / 2, rect.top, '#3fe0b0');
-      updateState(() => res.state, 800);
+      setState((prev) => {
+        const recheck = applyBuyBooster(prev, b, nowSrv);
+        if (!recheck.ok) return prev;
+        saveLocal(recheck.state);
+        return recheck.state;
+      });
+      scheduleCloudSync(800);
       addToast(`${b.n} activated!`);
     },
-    [addToast, spawnFloat, updateState],
+    [addToast, spawnFloat, saveLocal, scheduleCloudSync],
   );
 
   // Auth handlers
@@ -2285,8 +2489,14 @@ export default function App() {
   const handleAcceptTrade = useCallback(
     async (id: string) => {
       try {
-        await acceptGiftOffer(id, sidRef.current, handleKicked, serverOffsetMsRef.current);
-        addToast('Gift accepted!');
+        const res = await acceptGiftOffer(id, sidRef.current, handleKicked, serverOffsetMsRef.current);
+        if (res.status === 'accepted') {
+          addToast('Gift accepted!');
+        } else if (res.status === 'expired') {
+          addToast('This gift has already expired.');
+        } else {
+          addToast(`Gift is already ${res.status}.`);
+        }
       } catch (err) {
         addToast(formatFirebaseError(err));
       }
@@ -2296,8 +2506,14 @@ export default function App() {
   const handleRejectTrade = useCallback(
     async (id: string) => {
       try {
-        await rejectGiftOffer(id, sidRef.current, handleKicked, serverOffsetMsRef.current);
-        addToast('Gift declined');
+        const res = await rejectGiftOffer(id, sidRef.current, handleKicked, serverOffsetMsRef.current);
+        if (res.status === 'rejected') {
+          addToast('Gift declined');
+        } else if (res.status === 'expired') {
+          addToast('This gift has already expired.');
+        } else {
+          addToast(`Gift is already ${res.status}.`);
+        }
       } catch (err) {
         addToast(formatFirebaseError(err));
       }
@@ -2307,8 +2523,14 @@ export default function App() {
   const handleCancelTrade = useCallback(
     async (id: string) => {
       try {
-        await endSenderOffer(id, 'cancelled', sidRef.current, handleKicked, serverOffsetMsRef.current);
-        addToast('Gift cancelled & refunded');
+        const status = await endSenderOffer(id, 'cancelled', sidRef.current, handleKicked, serverOffsetMsRef.current);
+        if (status === 'cancelled') {
+          addToast('Gift cancelled & refunded');
+        } else if (status === 'expired') {
+          addToast('Gift expired & refunded');
+        } else {
+          addToast(`Gift is already ${status}.`);
+        }
       } catch (err) {
         addToast(formatFirebaseError(err));
       }
@@ -2328,6 +2550,20 @@ export default function App() {
   const currentTabMeta = TAB_META[tab];
   const srvMinute = Math.floor((state.t + serverOffsetMs) / 60_000);
   const dayKey = useMemo(() => dayKeyFor(srvMinute * 60_000), [srvMinute]);
+
+  // Daily gift limit listener (automatically rotates at midnight Asia/Karachi time)
+  useEffect(() => {
+    if (!uid || !cloudReady || needsOnboarding || kicked || !db) return;
+    const dlKey = `${uid}_${dayKey}`;
+    const unsub = onSnapshot(
+      doc(db, 'dailyLimits', dlKey),
+      (snap) => {
+        setSentToday(snap.exists() ? Number(snap.data()?.count || 0) : 0);
+      },
+      (err) => handleSnapshotError(`dailyLimits/${dlKey}`, err),
+    );
+    return () => unsub();
+  }, [uid, cloudReady, needsOnboarding, kicked, dayKey, handleSnapshotError]);
 
   if (otherTabLocked || kicked) {
     return (
@@ -2618,15 +2854,26 @@ export default function App() {
         onCheckUsername={checkUsernameAvailability}
         onSubmitProfile={async (username, cc) => {
           try {
-            await createPlayerProfile(username, cc, stateRef.current, sidRef.current, handleKicked);
-            walletRevRef.current = 1;
+            const res = await createPlayerProfile(username, cc, stateRef.current, sidRef.current, handleKicked);
+            walletRevRef.current = res.walletRev;
             cloudSyncPermDeniedRef.current = false;
+            permWarnShownRef.current = false;
+            syncRetryCountRef.current = 0;
             const p = await fetchPlayerProfile(uid!);
             if (p) setPubProfile(p);
             const chosen = COUNTRIES.find((c) => c[0] === cc) || COUNTRIES[0];
-            updateState((prev) => ({ ...prev, country: chosen }), 500);
+            needsOnboardingRef.current = false;
+            cloudReadyRef.current = true;
+            setState((prev) => {
+              const base = res.restoredSave ? migrateState(res.restoredSave) : prev;
+              const next = { ...base, country: chosen };
+              stateRef.current = next;
+              saveLocal(next);
+              return next;
+            });
             setNeedsOnboarding(false);
             setCloudReady(true);
+            scheduleCloudSync(500);
             addToast(`Welcome, ${username}!`);
           } catch (err) {
             addToast(formatFirebaseError(err));
@@ -2648,6 +2895,15 @@ export default function App() {
           onClose={handleCloseGiftModal}
           onSendGift={async (payload) => {
             try {
+              if (!serverTimeVerifiedRef.current && db) {
+                const sesRef = doc(db, 'players', uid, 'private', 'session');
+                await setDoc(sesRef, { sid: sidRef.current, t: serverTimestamp() });
+                const sesSnap = await getDocFromServer(sesRef).catch(() => null);
+                if (sesSnap && sesSnap.exists()) {
+                  const srvMs = timestampToMs(sesSnap.data()?.t);
+                  if (srvMs > 0) updateServerOffset(srvMs);
+                }
+              }
               await createGiftOffer({
                 ...payload,
                 sid: sidRef.current,

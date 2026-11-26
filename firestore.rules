@@ -346,7 +346,7 @@ service cloud.firestore {
           && isValidId(uid)
           && isValidSession(incoming())
           && incoming().t == request.time
-          && affectedOnly(['sid', 't']);
+          && (affectedOnly(['sid', 't']) || !existing().keys().hasOnly(['sid', 't']));
         allow delete: if false;
       }
 

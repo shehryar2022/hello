@@ -126,5 +126,6 @@ test('Dirty Dozen security invariants are enforced in firestore.rules', () => {
   assert.match(rules, /data\.save\.questIds is list && data\.save\.questIds\.size\(\) <= 10/);
   assert.match(rules, /data\.save\.questDay is string && data\.save\.questDay\.size\(\) <= 32/);
   assert.match(rules, /data\.save\.set is map && data\.save\.set\.size\(\) <= 10/);
+  assert.match(rules, /!existing\(\)\.keys\(\)\.hasOnly\(\['sid', 't'\]\)/);
 });
 

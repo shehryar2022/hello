@@ -8,6 +8,7 @@ import {
   EV_LEN_MS,
   EV_SLOT_MS,
   EXEC_DECISIONS,
+  GOV_CHANGE_CD_MS,
   GOV_DAY_SEC,
   GOVS,
   GX_GOV_BUILDINGS,
@@ -226,9 +227,14 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
   }
 
   const rawStk = s.stk as Record<string, unknown> | undefined;
-  const legacyFused = rawStk && typeof rawStk.fused === 'number' ? rawStk.fused : 0;
+  const legacyFused =
+    rawStk && Number.isFinite(Number(rawStk.fused))
+      ? Math.min(1_000_000, Math.max(0, Math.floor(Number(rawStk.fused))))
+      : 0;
   s.stk = cleanStickersMap(rawStk);
-  s.fused = Number.isFinite(Number(s.fused)) ? Math.max(0, Math.floor(Number(s.fused))) : legacyFused;
+  s.fused = Number.isFinite(Number(s.fused))
+    ? Math.min(1_000_000, Math.max(0, Math.floor(Number(s.fused))))
+    : legacyFused;
 
   const numFields: Array<keyof GameState> = [
     'cash', 'gems', 'taxPool', 'day', 'tax', 'wel', 'hap', 'appr', 'pop',
@@ -338,6 +344,18 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
     const v = Math.floor(Number(gx.lvl?.[d.id]));
     lvl[d.id] = v >= 1 && v <= 5 ? v : 1;
   }
+  const rawExp = gx.exp && typeof gx.exp === 'object' ? (gx.exp as unknown as Record<string, unknown>) : null;
+  const cleanExp = rawExp
+    ? {
+        sal: Math.max(0, Math.min(1e13, Math.floor(Number(rawExp.sal) || 0))),
+        el: Math.max(0, Math.min(1e13, Math.floor(Number(rawExp.el) || 0))),
+        inf: Math.max(0, Math.min(1e13, Math.floor(Number(rawExp.inf) || 0))),
+        total: Math.max(0, Math.min(1e13, Math.floor(Number(rawExp.total) || 0))),
+        paid: Math.max(0, Math.min(1e13, Math.floor(Number(rawExp.paid) || 0))),
+        n: Math.max(0, Math.min(1_000_000, Math.floor(Number(rawExp.n) || 0))),
+        t: Math.max(0, Math.min(1e13, Math.floor(Number(rawExp.t) || 0))),
+      }
+    : null;
   s.gx = {
     cond,
     lvl,
@@ -345,8 +363,10 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
     blk: Math.max(0, Math.floor(Number(gx.blk) || 0)),
     pb: Math.min(0.25, Math.max(0, Number(gx.pb) || 0)),
     ph: Math.min(10, Math.max(0, Number(gx.ph) || 0)),
-    log: Array.isArray(gx.log) ? gx.log.slice(0, 8) : [],
-    exp: gx.exp && typeof gx.exp === 'object' ? gx.exp : null,
+    log: Array.isArray(gx.log)
+      ? gx.log.filter((x): x is string => typeof x === 'string').map((x) => x.slice(0, 120)).slice(0, 8)
+      : [],
+    exp: cleanExp,
   };
 
   // Subscription migration & sanitization
@@ -1644,3 +1664,193 @@ export function getRecommendedPolicyHint(
   }
   return { id: null, reason: '' };
 }
+
+export function applyCollectTax(
+  s: GameState,
+  tradeTier = 0,
+  nowMs = Date.now(),
+  rng: () => number = Math.random,
+): {
+  ok: boolean;
+  state: GameState;
+  collected: number;
+  bonusApplied: boolean;
+  bonusAmount: number;
+  portDrop: { gems: number; sticker: StickerDef | null };
+} {
+  const res = calculateTaxCollect(s, tradeTier, nowMs);
+  if (res.collected < 1) {
+    return {
+      ok: false,
+      state: s,
+      collected: 0,
+      bonusApplied: false,
+      bonusAmount: 0,
+      portDrop: { gems: 0, sticker: null },
+    };
+  }
+  const portDrop = rollTradePortExport(s, res.poolAmount, res.baseNet, rng);
+  const nextStk = portDrop.sticker
+    ? { ...(s.stk || {}), [portDrop.sticker.id]: ((s.stk || {})[portDrop.sticker.id] || 0) + 1 }
+    : s.stk;
+  return {
+    ok: true,
+    collected: res.collected,
+    bonusApplied: res.bonusApplied,
+    bonusAmount: res.bonusAmount,
+    portDrop,
+    state: {
+      ...s,
+      cash: Math.min(1e13, s.cash + res.collected),
+      gems: Math.min(1e9, Math.floor(s.gems) + portDrop.gems),
+      stk: nextStk,
+      taxPool: 0,
+      activeFx: res.bonusApplied ? { ...(s.activeFx || {}), taxSurge: 0 } : s.activeFx,
+    },
+  };
+}
+
+export function applyActivateGemBoost(s: GameState): { ok: boolean; state: GameState; reason?: string } {
+  if (s.boost > 0) return { ok: false, state: s, reason: 'Boost is already active' };
+  if (s.gems < 5) return { ok: false, state: s, reason: 'Need 5 diamonds' };
+  return {
+    ok: true,
+    state: {
+      ...s,
+      gems: Math.max(0, Math.floor(s.gems) - 5),
+      boost: 30,
+    },
+  };
+}
+
+export function applyBuyBuilding(
+  s: GameState,
+  id: string,
+  qty: 1 | 5,
+  nowMs = Date.now(),
+): { ok: boolean; state: GameState; newCount: number; cost: number; reason?: string } {
+  const def = BUILDINGS.find((b) => b.id === id);
+  if (!def) return { ok: false, state: s, newCount: 0, cost: 0, reason: 'Unknown building' };
+  const count = s.b[id] || 0;
+  if (count >= 10_000) return { ok: false, state: s, newCount: count, cost: 0, reason: 'Max building count reached' };
+  const clampedQty = Math.min(qty, 10_000 - count);
+  const cost = bulkBuildingCost(def, count, clampedQty, getDevelopmentDiscount(s, nowMs));
+  if (s.cash < cost) return { ok: false, state: s, newCount: count, cost, reason: 'Not enough cash' };
+  const newCount = count + clampedQty;
+  return {
+    ok: true,
+    newCount,
+    cost,
+    state: {
+      ...s,
+      cash: Math.max(0, s.cash - cost),
+      b: { ...s.b, [id]: newCount },
+    },
+  };
+}
+
+export function applyFixInfra(
+  s: GameState,
+  key: string,
+  full: boolean,
+  nowMs = Date.now(),
+): { ok: boolean; state: GameState; cost: number; reason?: string } {
+  const cost = gxRepairCost(s, key, full, nowMs);
+  if (cost <= 0) return { ok: false, state: s, cost: 0, reason: 'Already at full condition' };
+  if (s.cash < cost) return { ok: false, state: s, cost, reason: 'Not enough cash' };
+  return {
+    ok: true,
+    cost,
+    state: {
+      ...s,
+      cash: Math.max(0, s.cash - cost),
+      gx: {
+        ...s.gx,
+        cond: {
+          ...s.gx.cond,
+          [key]: full ? 100 : Math.min(100, (s.gx.cond[key] ?? 100) + 20),
+        },
+      },
+    },
+  };
+}
+
+export function applyUpgradeBuilding(
+  s: GameState,
+  id: string,
+  nowMs = Date.now(),
+): { ok: boolean; state: GameState; newLevel: number; cost: number; reason?: string } {
+  const lvl = s.gx?.lvl?.[id] || 1;
+  const cost = gxUpgradeCost(s, id, nowMs);
+  if (lvl >= 5 || cost <= 0) return { ok: false, state: s, newLevel: lvl, cost: 0, reason: 'Already at max level' };
+  if (s.cash < cost) return { ok: false, state: s, newLevel: lvl, cost, reason: 'Not enough cash' };
+  return {
+    ok: true,
+    newLevel: lvl + 1,
+    cost,
+    state: {
+      ...s,
+      cash: Math.max(0, s.cash - cost),
+      gx: {
+        ...s.gx,
+        lvl: { ...s.gx.lvl, [id]: lvl + 1 },
+      },
+    },
+  };
+}
+
+export function applyChangeGov(
+  s: GameState,
+  govId: string,
+  nowMs = Date.now(),
+): { ok: boolean; state: GameState; govName?: string; reason?: string } {
+  const g = GOVS.find((x) => x.id === govId);
+  if (!g) return { ok: false, state: s, reason: 'Unknown government type' };
+  if (s.gov === govId) return { ok: false, state: s, reason: 'Already active' };
+  if ((s.govT || 0) + GOV_CHANGE_CD_MS > nowMs) return { ok: false, state: s, reason: 'Government change on cooldown' };
+  if (s.cash < g.cost) return { ok: false, state: s, reason: 'Not enough cash' };
+  return {
+    ok: true,
+    govName: g.n,
+    state: {
+      ...s,
+      cash: Math.max(0, s.cash - g.cost),
+      gov: govId,
+      govT: nowMs,
+    },
+  };
+}
+
+export function applyClaimQuest(
+  s: GameState,
+  questId: string,
+  todayKey: string,
+  rankPos: number,
+): { ok: boolean; state: GameState; gemsAdded: number; reason?: string } {
+  if (s.claimed?.[questId]) return { ok: false, state: s, gemsAdded: 0, reason: 'Already claimed' };
+  const activeIds =
+    s.questIds?.length === 3 && s.questDay === todayKey ? s.questIds : selectDailyQuestIds(todayKey);
+  const qIndex = QUEST_POOL.findIndex((q) => q.id === questId);
+  if (qIndex < 0 || !activeIds.includes(qIndex)) {
+    return { ok: false, state: s, gemsAdded: 0, reason: 'Quest not active today' };
+  }
+  const q = QUEST_POOL[qIndex];
+  if (q.f(s, { rank: rankPos }) < q.g) {
+    return { ok: false, state: s, gemsAdded: 0, reason: 'Objective not yet completed' };
+  }
+  const cleanClaimed: Record<string, number> = {};
+  for (const [k, v] of Object.entries(s.claimed || {}).slice(0, 19)) {
+    if (Number(v) > 0) cleanClaimed[k] = 1;
+  }
+  cleanClaimed[questId] = 1;
+  return {
+    ok: true,
+    gemsAdded: q.r,
+    state: {
+      ...s,
+      gems: Math.min(1e9, Math.floor(s.gems) + q.r),
+      claimed: cleanClaimed,
+    },
+  };
+}
+

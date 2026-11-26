@@ -65,12 +65,24 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const maxCash = Math.min(1e12, Math.floor(state.cash));
-  const maxGems = Math.min(1e9, Math.floor(state.gems));
+  const maxCash = Math.max(0, Math.min(1e12, Math.floor(state.cash)));
+  const maxGems = Math.max(0, Math.min(1e9, Math.floor(state.gems)));
 
-  const effectiveCash = mode === 'review' && trade ? trade.offerCash : cash;
-  const effectiveGems = mode === 'review' && trade ? trade.offerGems : gems;
-  const effectiveStk = mode === 'review' && trade ? trade.offerStk : stk;
+  const clampedCash = Math.max(0, Math.min(maxCash, Math.floor(cash)));
+  const clampedGems = Math.max(0, Math.min(maxGems, Math.floor(gems)));
+  const clampedStk = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const [id, count] of Object.entries(stk)) {
+      const own = Math.max(0, Math.floor(state.stk[id] || 0));
+      const qty = Math.min(own, Math.max(0, Math.floor(count || 0)));
+      if (qty > 0) out[id] = qty;
+    }
+    return out;
+  }, [stk, state.stk]);
+
+  const effectiveCash = mode === 'review' && trade ? trade.offerCash : clampedCash;
+  const effectiveGems = mode === 'review' && trade ? trade.offerGems : clampedGems;
+  const effectiveStk = mode === 'review' && trade ? trade.offerStk : clampedStk;
 
   const traySlots = useMemo(() => {
     const items: SlotEntry[] = [];
@@ -156,13 +168,17 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
 
   const handleConfirmSend = async () => {
     if (!target || busy) return;
+    if (clampedCash + clampedGems + Object.values(clampedStk).reduce((a, b) => a + b, 0) <= 0) {
+      setConfirming(false);
+      return;
+    }
     setBusy(true);
     try {
       const ok = await onSendGift({
         toUid: target.id,
-        offerCash: cash,
-        offerGems: gems,
-        offerStk: stk,
+        offerCash: clampedCash,
+        offerGems: clampedGems,
+        offerStk: clampedStk,
         message: message.trim().slice(0, 140),
       });
       if (ok) onClose();
@@ -301,7 +317,7 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
                   max={maxCash}
                   className="inp"
                   placeholder="Cash ₨"
-                  value={cash || ''}
+                  value={clampedCash || ''}
                   onChange={(e) => {
                     const n = Math.floor(Number(e.target.value) || 0);
                     setCash(Math.max(0, Math.min(maxCash, n)));
@@ -313,7 +329,7 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
                   max={maxGems}
                   className="inp"
                   placeholder="Diamonds"
-                  value={gems || ''}
+                  value={clampedGems || ''}
                   onChange={(e) => {
                     const n = Math.floor(Number(e.target.value) || 0);
                     setGems(Math.max(0, Math.min(maxGems, n)));
@@ -324,7 +340,7 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
               {ownedStickers.length > 0 && (
                 <div className="stkpick">
                   {ownedStickers.map((s) => {
-                    const added = stk[s.id] || 0;
+                    const added = clampedStk[s.id] || 0;
                     const own = state.stk[s.id] || 0;
                     return (
                       <button
@@ -432,9 +448,12 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
                   disabled={busy}
                   onClick={async () => {
                     setBusy(true);
-                    await onRejectTrade(trade.id);
-                    setBusy(false);
-                    onClose();
+                    try {
+                      await onRejectTrade(trade.id);
+                      onClose();
+                    } finally {
+                      setBusy(false);
+                    }
                   }}
                 >
                   Decline
@@ -445,9 +464,12 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
                   disabled={busy}
                   onClick={async () => {
                     setBusy(true);
-                    await onAcceptTrade(trade.id);
-                    setBusy(false);
-                    onClose();
+                    try {
+                      await onAcceptTrade(trade.id);
+                      onClose();
+                    } finally {
+                      setBusy(false);
+                    }
                   }}
                 >
                   Accept Gift
@@ -461,9 +483,12 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
                 disabled={busy}
                 onClick={async () => {
                   setBusy(true);
-                  await onCancelTrade(trade.id);
-                  setBusy(false);
-                  onClose();
+                  try {
+                    await onCancelTrade(trade.id);
+                    onClose();
+                  } finally {
+                    setBusy(false);
+                  }
                 }}
               >
                 Cancel &amp; Refund

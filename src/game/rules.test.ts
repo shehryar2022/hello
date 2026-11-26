@@ -13,12 +13,19 @@ import {
   TECH_TREE,
 } from './constants';
 import {
+  applyActivateGemBoost,
   applyBuyBooster,
+  applyBuyBuilding,
   applyBuyRank,
   applyBuySubscription,
+  applyChangeGov,
+  applyClaimQuest,
+  applyCollectTax,
+  applyFixInfra,
   applyOfflineEarnings,
   applyPolicyPreset,
   applyUnlockTech,
+  applyUpgradeBuilding,
   buildingCost,
   bulkBuildingCost,
   buyStickerCrate,
@@ -50,6 +57,7 @@ import {
   isProfileSubActive,
   migrateState,
   MILESTONES,
+  QUEST_POOL,
   resolveExecutiveDecision,
   rollTradePortExport,
   rollWeeklySubPromo,
@@ -693,6 +701,105 @@ test('cleanSavePayload strips undefined/country fields and clamps all values wit
   assert.ok(Object.keys(cleaned.boosterCd as Record<string, unknown>).length <= 20);
   assert.ok(Object.keys(cleaned).length <= 72);
 });
+
+test('atomic gameplay updaters prevent double-click double-spend, double-collect, and double-claim', () => {
+  const now = 1_750_000_000_000;
+  let state = freshState();
+  state.cash = 250;
+  state.gems = 6;
+  state.taxPool = 1000;
+  state.activeFx = { taxSurge: 1 };
+
+  // 1. Atomic tax collect consumes pool & taxSurge on first call, blocks second call
+  const t1 = applyCollectTax(state, 0, now, () => 0.9);
+  assert.equal(t1.ok, true);
+  assert.equal(t1.bonusApplied, true);
+  assert.equal(t1.state.taxPool, 0);
+  assert.equal(t1.state.activeFx.taxSurge, 0);
+  assert.equal(applyCollectTax(t1.state, 0, now, () => 0.9).ok, false);
+
+  // 2. Atomic buy building rejects insufficient cash on second rapid click
+  let buyState = freshState();
+  buyState.cash = 220;
+  const b1 = applyBuyBuilding(buyState, 'farm', 1, now);
+  assert.equal(b1.ok, true);
+  assert.equal(b1.newCount, 1);
+  assert.equal(b1.state.cash, 20);
+  assert.equal(applyBuyBuilding(b1.state, 'farm', 1, now).ok, false);
+
+  // 3. Atomic gem boost & gov change & infra fix & upgrade
+  const g1 = applyActivateGemBoost(state);
+  assert.equal(g1.ok, true);
+  assert.equal(g1.state.gems, 1);
+  assert.equal(g1.state.boost, 30);
+  assert.equal(applyActivateGemBoost(g1.state).ok, false);
+
+  let gxState = b1.state;
+  gxState.cash = 100_000_000;
+  gxState.gx.cond.parl = 85;
+  const f1 = applyFixInfra(gxState, 'parl', false, now);
+  assert.equal(f1.ok, true);
+  assert.equal(f1.state.gx.cond.parl, 100);
+  assert.equal(applyFixInfra(f1.state, 'parl', false, now).ok, false);
+
+  let upState = f1.state;
+  upState.gx.lvl.farm = 4;
+  const u1 = applyUpgradeBuilding(upState, 'farm', now);
+  assert.equal(u1.ok, true);
+  assert.equal(u1.newLevel, 5);
+  assert.equal(applyUpgradeBuilding(u1.state, 'farm', now).ok, false);
+
+  const gov1 = applyChangeGov(u1.state, 'tech', now);
+  assert.equal(gov1.ok, true);
+  assert.equal(gov1.state.gov, 'tech');
+  assert.equal(applyChangeGov(gov1.state, 'wlf', now + 1000).ok, false);
+
+  // 4. Atomic quest claim prevents duplicate gem grants on same day
+  const todayKey = '2026-11-26';
+  const qIds = selectDailyQuestIds(todayKey);
+  const firstQuest = QUEST_POOL[qIds[0]];
+  let qState = freshState();
+  qState.questDay = todayKey;
+  qState.questIds = qIds;
+  qState.cash = 1_000_000_000;
+  qState.gems = 50;
+  for (const k of Object.keys(qState.b)) {
+    qState.b[k] = 5;
+  }
+  qState.hap = 100;
+  qState.appr = 95;
+  qState.pop = 500;
+  qState.fused = 20;
+  qState.streak = 20;
+  qState.rank = 10;
+  qState.boosterCd = { quick_profit: 1, boom_surge: 1, happy_days: 1 };
+  qState.stk = Object.fromEntries(STICKERS.slice(0, 22).map((st) => [st.id, 1]));
+  const qc1 = applyClaimQuest(qState, firstQuest.id, todayKey, 1);
+  assert.equal(qc1.ok, true);
+  assert.equal(qc1.gemsAdded, firstQuest.r);
+  assert.equal(applyClaimQuest(qc1.state, firstQuest.id, todayKey, 1).ok, false);
+
+  // 5. migrateState bounds gx.exp, gx.log, and fused
+  const sanitized = migrateState({
+    fused: -5,
+    gx: {
+      cond: {},
+      lvl: {},
+      acc: 0,
+      blk: 0,
+      pb: 0,
+      ph: 0,
+      log: ['ok', 123 as unknown as string, 'x'.repeat(200)],
+      exp: { sal: -10, el: 9e20, inf: 1, total: 2, paid: 3, n: 5, t: 99 },
+    },
+  });
+  assert.equal(sanitized.fused, 0);
+  assert.equal(sanitized.gx.log.length, 2);
+  assert.equal(sanitized.gx.log[1].length, 120);
+  assert.equal(sanitized.gx.exp?.sal, 0);
+  assert.equal(sanitized.gx.exp?.el, 1e13);
+});
+
 
 
 
