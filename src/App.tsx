@@ -70,6 +70,7 @@ import {
 import {
   auth,
   db,
+  FIREBASE_CONFIG,
   formatFirebaseError,
   isFirebaseConfigured,
   OperationType,
@@ -79,6 +80,7 @@ import {
   clearErrorLog,
   extractErrorCode,
   extractErrorMessage,
+  formatErrorLogReport,
   getErrorLog,
   installGlobalErrorListeners,
   recordAppError,
@@ -252,6 +254,7 @@ export default function App() {
     trade: TradeOffer | null;
   } | null>(null);
   const [dialog, setDialog] = useState<DialogConfig | null>(null);
+  const [dismissedErrorId, setDismissedErrorId] = useState<string | null>(null);
   const appErrors = React.useSyncExternalStore(subscribeErrorLog, getErrorLog);
 
   const sidRef = useRef<string>(`${Date.now()}_${Math.random().toString(36).slice(2, 10)}`);
@@ -271,6 +274,7 @@ export default function App() {
   const localSaveTimerRef = useRef<number | null>(null);
   const permWarnShownRef = useRef<boolean>(false);
   const cloudSyncPermDeniedRef = useRef<boolean>(false);
+  const cloudSyncQuotaPausedRef = useRef<boolean>(false);
   const pubProfileRef = useRef<PlayerProfile | null>(null);
   pubProfileRef.current = pubProfile;
   const uidRef = useRef<string | null>(null);
@@ -474,9 +478,10 @@ export default function App() {
     async (immediate = false) => {
       const currentUid = uidRef.current;
       if (!currentUid || !cloudReadyRef.current || kickedRef.current || needsOnboardingRef.current) return;
-      if (!immediate && cloudSyncPermDeniedRef.current) return;
+      if (!immediate && (cloudSyncPermDeniedRef.current || cloudSyncQuotaPausedRef.current)) return;
       if (immediate) {
         cloudSyncPermDeniedRef.current = false;
+        cloudSyncQuotaPausedRef.current = false;
         syncRetryCountRef.current = 0;
       }
       if (syncRetryTimerRef.current) {
@@ -503,6 +508,7 @@ export default function App() {
         walletRevRef.current = res.wallet.rev;
         syncRetryCountRef.current = 0;
         cloudSyncPermDeniedRef.current = false;
+        cloudSyncQuotaPausedRef.current = false;
         permWarnShownRef.current = false;
         lastSyncedAtRef.current = Date.now();
         if (!res.accepted) {
@@ -557,14 +563,26 @@ export default function App() {
             permWarnShownRef.current = true;
             addToast(formatFirebaseError(err));
           }
+        } else if (code === 'resource-exhausted' || /Quota exceeded/i.test(combined)) {
+          cloudSyncQuotaPausedRef.current = true;
+          cloudDirtyRef.current = false;
+          syncRetryCountRef.current = 0;
+          recordAppError({
+            source: 'sync',
+            code: code || 'resource-exhausted',
+            path: `players/${currentUid}`,
+            message: msg || 'Firebase Spark free plan quota reached — auto-sync paused (saved locally).',
+          });
+          setCloudStatus({ cls: 'bad', text: 'Quota paused' });
+          addToast('Firebase free quota limit reached — progress saved locally.');
         } else if (
-          /aborted|unavailable|deadline-exceeded|internal|cancelled|resource-exhausted|network|offline|unauthenticated|unknown/i.test(
+          /aborted|unavailable|deadline-exceeded|internal|cancelled|network|offline|unauthenticated|unknown/i.test(
             combined,
           )
         ) {
-          if (syncRetryCountRef.current < 4) {
+          if (syncRetryCountRef.current < 3) {
             syncRetryCountRef.current += 1;
-            const backoff = Math.min(16_000, 2000 * Math.pow(2, syncRetryCountRef.current - 1));
+            const backoff = Math.min(20_000, 3000 * Math.pow(2, syncRetryCountRef.current - 1));
             setCloudStatus({ cls: 'warn', text: 'Retrying…' });
             syncRetryTimerRef.current = window.setTimeout(() => {
               syncRetryTimerRef.current = null;
@@ -602,9 +620,9 @@ export default function App() {
       } finally {
         expectedWalletRevRef.current = null;
         cloudSyncBusyRef.current = false;
-        if (cloudDirtyRef.current) {
+        if (cloudDirtyRef.current && !cloudSyncPermDeniedRef.current && !cloudSyncQuotaPausedRef.current) {
           cloudDirtyRef.current = false;
-          window.setTimeout(() => void performCloudSync(false), 900);
+          window.setTimeout(() => void performCloudSync(false), 1200);
         }
       }
     },
@@ -612,14 +630,15 @@ export default function App() {
   );
 
   const scheduleCloudSync = useCallback(
-    (delayMs = 2000) => {
+    (delayMs = 10_000) => {
       pendingDirtyRef.current = true;
       if (
         !uidRef.current ||
         !cloudReadyRef.current ||
         kickedRef.current ||
         needsOnboardingRef.current ||
-        cloudSyncPermDeniedRef.current
+        cloudSyncPermDeniedRef.current ||
+        cloudSyncQuotaPausedRef.current
       ) {
         return;
       }
@@ -638,10 +657,18 @@ export default function App() {
   // Automatically recover cloud sync when browser regains connectivity, and flush dirty saves on tab hide
   useEffect(() => {
     const onOnline = () => {
-      if (uidRef.current && cloudReadyRef.current && !kickedRef.current && !needsOnboardingRef.current) {
+      if (
+        uidRef.current &&
+        cloudReadyRef.current &&
+        !kickedRef.current &&
+        !needsOnboardingRef.current &&
+        !cloudSyncPermDeniedRef.current
+      ) {
         syncRetryCountRef.current = 0;
-        cloudSyncPermDeniedRef.current = false;
-        void performCloudSync(false);
+        cloudSyncQuotaPausedRef.current = false;
+        if (pendingDirtyRef.current) {
+          void performCloudSync(false);
+        }
       }
     };
     const onVisChange = () => {
@@ -652,6 +679,8 @@ export default function App() {
           cloudReadyRef.current &&
           !kickedRef.current &&
           !needsOnboardingRef.current &&
+          !cloudSyncPermDeniedRef.current &&
+          !cloudSyncQuotaPausedRef.current &&
           pendingDirtyRef.current &&
           Date.now() - lastSyncedAtRef.current >= 5000
         ) {
@@ -800,6 +829,7 @@ export default function App() {
         pendingDirtyRef.current = false;
         syncRetryCountRef.current = 0;
         cloudSyncPermDeniedRef.current = false;
+        cloudSyncQuotaPausedRef.current = false;
         permWarnShownRef.current = false;
         completedTradesRef.current = 0;
         settlingTradesRef.current = false;
@@ -836,6 +866,7 @@ export default function App() {
       }
 
       cloudSyncPermDeniedRef.current = false;
+      cloudSyncQuotaPausedRef.current = false;
       permWarnShownRef.current = false;
       syncRetryCountRef.current = 0;
       setGateOpen(false);
@@ -1220,9 +1251,9 @@ export default function App() {
     );
 
     // Heartbeat interval (skip initial heartbeat if an initial sync is queued to avoid transaction contention)
-    if (!pendingDirtyRef.current) {
+    if (!pendingDirtyRef.current && !cloudSyncPermDeniedRef.current && !cloudSyncQuotaPausedRef.current) {
       void sendHeartbeat(uid).catch((err) => {
-        if (/permission-denied/i.test(extractErrorCode(err))) {
+        if (extractErrorCode(err) !== 'aborted') {
           recordFirestoreError(err, OperationType.UPDATE, `players/${uid}`);
         }
       });
@@ -1232,10 +1263,12 @@ export default function App() {
         !document.hidden &&
         !kickedRef.current &&
         !cloudSyncBusyRef.current &&
+        !cloudSyncPermDeniedRef.current &&
+        !cloudSyncQuotaPausedRef.current &&
         Date.now() - lastSyncedAtRef.current >= HEARTBEAT_MS - 5000
       ) {
         void sendHeartbeat(uid).catch((err) => {
-          if (/permission-denied/i.test(extractErrorCode(err))) {
+          if (extractErrorCode(err) !== 'aborted') {
             recordFirestoreError(err, OperationType.UPDATE, `players/${uid}`);
           }
         });
@@ -1545,16 +1578,17 @@ export default function App() {
         }
       }
 
-      // Dirty-aware cloud sync every 60s when tab is visible (Spark Free Plan friendly)
+      // Dirty-aware cloud sync every 120s when tab is visible (Spark Free Plan friendly)
       if (
-        tickCountRef.current % 60 === 0 &&
+        tickCountRef.current % 120 === 0 &&
         !document.hidden &&
         uidRef.current &&
         cloudReadyRef.current &&
         !needsOnboardingRef.current &&
-        (pendingDirtyRef.current || (isUserActive && now - lastSyncedAtRef.current >= 60_000))
+        !cloudSyncPermDeniedRef.current &&
+        !cloudSyncQuotaPausedRef.current &&
+        (pendingDirtyRef.current || (isUserActive && now - lastSyncedAtRef.current >= 120_000))
       ) {
-        cloudSyncPermDeniedRef.current = false;
         syncRetryCountRef.current = 0;
         void performCloudSync(false);
       }
@@ -1596,12 +1630,12 @@ export default function App() {
             const alreadyDoneLocally = curLive >= p.t.dur && p.paid >= PROJECT_STAGES;
             if (alreadyDoneLocally) {
               const lastSync = projLastSyncRef.current[p.id] || 0;
-              if (now - lastSync >= 5000 && !projBusyRef.current.has(p.id)) {
+              if (now - lastSync >= 10_000 && !projBusyRef.current.has(p.id)) {
                 projLastSyncRef.current[p.id] = now;
                 projBusyRef.current.add(p.id);
                 void finishGovProject(curUid, p.id, 'done', p.t.dur)
                   .catch((err) => {
-                    if (/permission-denied/i.test(extractErrorCode(err))) {
+                    if (extractErrorCode(err) !== 'aborted') {
                       recordFirestoreError(err, OperationType.UPDATE, `players/${curUid}/projects/${p.id}`);
                     }
                   })
@@ -1618,7 +1652,7 @@ export default function App() {
                 projBusyRef.current.add(p.id);
                 void finishGovProject(curUid, p.id, 'failed')
                   .catch((err) => {
-                    if (/permission-denied/i.test(extractErrorCode(err))) {
+                    if (extractErrorCode(err) !== 'aborted') {
                       recordFirestoreError(err, OperationType.UPDATE, `players/${curUid}/projects/${p.id}`);
                     }
                   })
@@ -1635,7 +1669,7 @@ export default function App() {
                   projBusyRef.current.add(p.id);
                   void finishGovProject(curUid, p.id, 'done', p.t.dur)
                     .catch((err) => {
-                      if (/permission-denied/i.test(extractErrorCode(err))) {
+                      if (extractErrorCode(err) !== 'aborted') {
                         recordFirestoreError(err, OperationType.UPDATE, `players/${curUid}/projects/${p.id}`);
                       }
                     })
@@ -1643,12 +1677,12 @@ export default function App() {
                 } else {
                   const lastSync = projLastSyncRef.current[p.id] || 0;
                   const hitStageCap = nextMs >= capMs && p.progressMs < capMs;
-                  if ((hitStageCap || now - lastSync >= 30_000) && !projBusyRef.current.has(p.id)) {
+                  if ((hitStageCap || now - lastSync >= 60_000) && !projBusyRef.current.has(p.id)) {
                     projLastSyncRef.current[p.id] = now;
                     projBusyRef.current.add(p.id);
                     void tickGovProject(curUid, p.id, nextMs)
                       .catch((err) => {
-                        if (/permission-denied/i.test(extractErrorCode(err))) {
+                        if (extractErrorCode(err) !== 'aborted') {
                           recordFirestoreError(err, OperationType.UPDATE, `players/${curUid}/projects/${p.id}`);
                         }
                       })
@@ -1660,7 +1694,7 @@ export default function App() {
                 projBusyRef.current.add(p.id);
                 void tickGovProject(curUid, p.id, capMs)
                   .catch((err) => {
-                    if (/permission-denied/i.test(extractErrorCode(err))) {
+                    if (extractErrorCode(err) !== 'aborted') {
                       recordFirestoreError(err, OperationType.UPDATE, `players/${curUid}/projects/${p.id}`);
                     }
                   })
@@ -1695,7 +1729,7 @@ export default function App() {
                       return next;
                     });
                     addToast(`${p.t.n} finished! +₨ ${formatNumber(cashReward)}`);
-                    scheduleCloudSync(500);
+                    scheduleCloudSync(2000);
                   } else if (resStatus === 'failed') {
                     const refund = Math.ceil((p.t.cost / PROJECT_STAGES) * p.paid * 0.75);
                     setState((s) => {
@@ -1711,7 +1745,12 @@ export default function App() {
                       return next;
                     });
                     addToast(`${p.t.n} missed deadline — ₨ ${formatNumber(refund)} refunded`);
-                    scheduleCloudSync(500);
+                    scheduleCloudSync(2000);
+                  }
+                })
+                .catch((err) => {
+                  if (extractErrorCode(err) !== 'aborted') {
+                    recordFirestoreError(err, OperationType.UPDATE, `players/${curUid}/projects/${p.id}`);
                   }
                 })
                 .finally(() => projBusyRef.current.delete(p.id));
@@ -1738,7 +1777,7 @@ export default function App() {
 
   // Helper to commit state + persist + sync
   const updateState = useCallback(
-    (updater: (prev: GameState) => GameState, syncDelay = 1500) => {
+    (updater: (prev: GameState) => GameState, syncDelay = 10_000) => {
       setState((prev) => {
         const next = updater(prev);
         stateRef.current = next;
@@ -1777,7 +1816,7 @@ export default function App() {
         saveLocal(recheck.state);
         return recheck.state;
       });
-      scheduleCloudSync(1000);
+      scheduleCloudSync(10_000);
 
       if (res.bonusApplied) {
         addToast(`Tax Surge added +₨ ${formatNumber(res.bonusAmount)}!`);
@@ -1803,7 +1842,7 @@ export default function App() {
       saveLocal(recheck.state);
       return recheck.state;
     });
-    scheduleCloudSync(1000);
+    scheduleCloudSync(10_000);
     addToast('×2 Boost active for 30s!');
   }, [addToast, saveLocal, scheduleCloudSync]);
 
@@ -1821,7 +1860,7 @@ export default function App() {
       const bonus = Math.max(5, Math.floor(Math.max(1, inc.net) * 2));
       playSfx('tap', !!cur.set.sfx);
       setBurstKey((k) => k + 1);
-      updateState((prev) => ({ ...prev, cash: Math.min(1e13, prev.cash + bonus) }), 3000);
+      updateState((prev) => ({ ...prev, cash: Math.min(1e13, prev.cash + bonus) }), 12_000);
       spawnFloat(
         `+₨ ${formatNumber(bonus)}`,
         clientX ?? window.innerWidth / 2,
@@ -1853,7 +1892,7 @@ export default function App() {
         saveLocal(recheck.state);
         return recheck.state;
       });
-      scheduleCloudSync(1200);
+      scheduleCloudSync(10_000);
     },
     [spawnFloat, saveLocal, scheduleCloudSync],
   );
@@ -1871,7 +1910,7 @@ export default function App() {
         saveLocal(recheck.state);
         return recheck.state;
       });
-      scheduleCloudSync(1200);
+      scheduleCloudSync(10_000);
       addToast('Infrastructure repaired!');
     },
     [addToast, saveLocal, scheduleCloudSync],
@@ -1890,7 +1929,7 @@ export default function App() {
         saveLocal(recheck.state);
         return recheck.state;
       });
-      scheduleCloudSync(1200);
+      scheduleCloudSync(10_000);
       addToast('Building upgraded!');
     },
     [addToast, saveLocal, scheduleCloudSync],
@@ -1916,7 +1955,7 @@ export default function App() {
         saveLocal(recheck.state);
         return recheck.state;
       });
-      scheduleCloudSync(700);
+      scheduleCloudSync(5_000);
       addToast(`Researched ${tDef.n}!`);
     },
     [addToast, spawnFloat, saveLocal, scheduleCloudSync],
@@ -1939,7 +1978,7 @@ export default function App() {
       }
       projCreatingRef.current = true;
       // Deduct optimistically so the same cash cannot be concurrently spent while awaiting Firestore
-      updateState((prev) => ({ ...prev, cash: Math.max(0, prev.cash - stageCost) }), 800);
+      updateState((prev) => ({ ...prev, cash: Math.max(0, prev.cash - stageCost) }), 3_000);
       try {
         await createGovProject(currentUid, type, (newId) => {
           justCreatedProjIdsRef.current.add(newId);
@@ -1948,7 +1987,7 @@ export default function App() {
         playSfx('buy', !!stateRef.current.set.sfx);
         addToast(`Started ${def.n}!`);
       } catch (err) {
-        updateState((prev) => ({ ...prev, cash: Math.min(1e13, prev.cash + stageCost) }), 500);
+        updateState((prev) => ({ ...prev, cash: Math.min(1e13, prev.cash + stageCost) }), 3_000);
         recordFirestoreError(err, OperationType.CREATE, `players/${currentUid}/projects`);
         addToast(formatFirebaseError(err));
       } finally {
@@ -1970,13 +2009,13 @@ export default function App() {
         return;
       }
       projPayBusyRef.current.add(projectId);
-      updateState((prev) => ({ ...prev, cash: Math.max(0, prev.cash - stageCost) }), 800);
+      updateState((prev) => ({ ...prev, cash: Math.max(0, prev.cash - stageCost) }), 3_000);
       try {
         await payGovProjectStage(currentUid, projectId, proj.paid);
         playSfx('buy', !!stateRef.current.set.sfx);
         addToast(`Paid stage ${proj.paid + 1}/${PROJECT_STAGES}`);
       } catch (err) {
-        updateState((prev) => ({ ...prev, cash: Math.min(1e13, prev.cash + stageCost) }), 500);
+        updateState((prev) => ({ ...prev, cash: Math.min(1e13, prev.cash + stageCost) }), 3_000);
         recordFirestoreError(err, OperationType.UPDATE, `players/${currentUid}/projects/${projectId}`);
         addToast(formatFirebaseError(err));
       } finally {
@@ -1998,7 +2037,7 @@ export default function App() {
         return next;
       });
       scheduleSaveLocal();
-      scheduleCloudSync(2200);
+      scheduleCloudSync(10_000);
     },
     [scheduleSaveLocal, scheduleCloudSync],
   );
@@ -2006,7 +2045,7 @@ export default function App() {
   const handleApplyPreset = useCallback(
     (presetId: 'balanced' | 'revenue' | 'welfare') => {
       playSfx('buy', !!stateRef.current.set.sfx);
-      updateState((prev) => applyPolicyPreset(prev, presetId), 1200);
+      updateState((prev) => applyPolicyPreset(prev, presetId), 8_000);
       const label = presetId === 'balanced' ? 'Balanced Growth' : presetId === 'revenue' ? 'High Revenue' : 'Citizen Bliss';
       addToast(`Policy preset applied: ${label}`);
     },
@@ -2026,7 +2065,7 @@ export default function App() {
         saveLocal(recheck.state);
         return recheck.state;
       });
-      scheduleCloudSync(1000);
+      scheduleCloudSync(8_000);
       addToast(`Switched government to ${res.govName}!`);
     },
     [addToast, saveLocal, scheduleCloudSync],
@@ -2049,7 +2088,7 @@ export default function App() {
         saveLocal(recheck.state);
         return recheck.state;
       });
-      scheduleCloudSync(1000);
+      scheduleCloudSync(8_000);
       setDialog({
         title: 'Sticker Fused!',
         body: (
@@ -2091,7 +2130,7 @@ export default function App() {
         saveLocal(recheck.state);
         return recheck.state;
       });
-      scheduleCloudSync(800);
+      scheduleCloudSync(8_000);
       setDialog({
         title: kind === 'gems' ? 'Royal Crate Opened!' : 'Standard Crate Opened!',
         body: (
@@ -2131,7 +2170,7 @@ export default function App() {
         saveLocal(recheck.state);
         return recheck.state;
       });
-      scheduleCloudSync(1000);
+      scheduleCloudSync(8_000);
     },
     [spawnFloat, saveLocal, scheduleCloudSync],
   );
@@ -2154,7 +2193,7 @@ export default function App() {
         saveLocal(recheck.state);
         return recheck.state;
       });
-      scheduleCloudSync(800);
+      scheduleCloudSync(6_000);
       addToast(`Milestone completed! +${res.gemsAdded} Gems`);
     },
     [addToast, spawnFloat, saveLocal, scheduleCloudSync],
@@ -2179,7 +2218,7 @@ export default function App() {
         saveLocal(recheck.state);
         return recheck.state;
       });
-      scheduleCloudSync(800);
+      scheduleCloudSync(2_000);
       addToast(`Promoted to ${rk.n}!`);
     },
     [addToast, spawnFloat, saveLocal, scheduleCloudSync],
@@ -2206,7 +2245,7 @@ export default function App() {
         saveLocal(recheck.state);
         return recheck.state;
       });
-      scheduleCloudSync(600);
+      scheduleCloudSync(2_000);
       if (res.paidCost && res.paidCost < subDef.cost) {
         addToast(`${subDef.n} activated for ₨ ${formatNumber(res.paidCost)} (Weekly Deal)!`);
       } else {
@@ -2241,7 +2280,7 @@ export default function App() {
         saveLocal(recheck.state);
         return recheck.state;
       });
-      scheduleCloudSync(600);
+      scheduleCloudSync(5_000);
       addToast(
         `Subscription stipend: +₨ ${formatNumber(res.cashAdded)}${res.gemsAdded > 0 ? ` + ${res.gemsAdded} Gems` : ''}`,
       );
@@ -2270,7 +2309,7 @@ export default function App() {
         saveLocal(recheck.state);
         return recheck.state;
       });
-      scheduleCloudSync(800);
+      scheduleCloudSync(8_000);
       addToast(`${b.n} activated!`);
     },
     [addToast, spawnFloat, saveLocal, scheduleCloudSync],
@@ -2467,7 +2506,10 @@ export default function App() {
     async (targetUid: string) => {
       let target = leaderboardRef.current.find((p) => p.id === targetUid) || null;
       if (!target) {
-        target = await fetchPlayerProfile(targetUid).catch(() => null);
+        target = await fetchPlayerProfile(targetUid).catch((err) => {
+          recordFirestoreError(err, OperationType.GET, `players/${targetUid}`);
+          return null;
+        });
       }
       if (!target) {
         addToast('Could not load recipient.');
@@ -2502,7 +2544,11 @@ export default function App() {
     const currentUid = uidRef.current;
     if (currentUid) {
       const unreadIds = notifications.filter((n) => !n.read).map((n) => n.id);
-      if (unreadIds.length) void markNotificationsRead(currentUid, unreadIds).catch(() => {});
+      if (unreadIds.length) {
+        void markNotificationsRead(currentUid, unreadIds).catch((err) => {
+          recordFirestoreError(err, OperationType.UPDATE, `players/${currentUid}/notifications`);
+        });
+      }
     }
   }, [notifications]);
   const handleSaveCloudNow = useCallback(() => void performCloudSync(true), [performCloudSync]);
@@ -2646,10 +2692,36 @@ export default function App() {
     if (!currentUid) return [];
     try {
       return await searchPlayersByUsername(q, currentUid);
-    } catch {
+    } catch (err) {
+      recordFirestoreError(err, OperationType.LIST, 'players');
       return [];
     }
   }, []);
+
+  const handleCopyBannerError = useCallback(async () => {
+    const header = [
+      `Project: ${FIREBASE_CONFIG.projectId || 'unset'}`,
+      `Database: ${FIREBASE_CONFIG.firestoreDatabaseId || '(default)'}`,
+      `Auth UID: ${uid || 'signed-out'}${user?.email ? ` (${user.email})` : ''}`,
+    ].join(' | ');
+    const report = `${header}\n\n${formatErrorLogReport(appErrors)}`;
+    try {
+      await navigator.clipboard.writeText(report);
+      addToast('Error details copied!');
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = report;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      addToast('Error details copied!');
+    }
+  }, [uid, user?.email, appErrors, addToast]);
+
+  const latestBannerError = appErrors.length > 0 && appErrors[0].id !== dismissedErrorId ? appErrors[0] : null;
 
   const currentTabMeta = TAB_META[tab];
   const srvMinute = Math.floor((state.t + serverOffsetMs) / 60_000);
@@ -2691,6 +2763,35 @@ export default function App() {
 
   return (
     <>
+      {latestBannerError && (
+        <div id="errBanner" role="alert" aria-live="assertive">
+          <div className="err-banner-top">
+            <span className={`err-badge err-badge--${latestBannerError.source}`}>
+              {latestBannerError.source.toUpperCase()}
+            </span>
+            {latestBannerError.code && <code className="err-code">{latestBannerError.code}</code>}
+            {latestBannerError.path && <span className="err-path">{latestBannerError.path}</span>}
+            {appErrors.length > 1 && (
+              <small className="dim" style={{ marginLeft: 'auto' }}>
+                +{appErrors.length - 1} more
+              </small>
+            )}
+          </div>
+          <div className="err-banner-msg">{latestBannerError.message}</div>
+          <div className="err-banner-acts">
+            <button type="button" className="primary" onClick={() => setErrorLogOpen(true)}>
+              Details / Fix
+            </button>
+            <button type="button" className="copy" onClick={() => void handleCopyBannerError()}>
+              Copy
+            </button>
+            <button type="button" onClick={() => setDismissedErrorId(latestBannerError.id)}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
       {gateOpen && (
         <LoginGate
           selectedCountry={state.country}
@@ -2957,12 +3058,14 @@ export default function App() {
         open={errorLogOpen}
         errors={appErrors}
         uid={uid}
+        email={user?.email || null}
         onRetrySync={() => {
           setErrorLogOpen(false);
           handleSaveCloudNow();
         }}
         onClear={() => {
           clearErrorLog();
+          setDismissedErrorId(null);
           addToast('Error log cleared');
         }}
         onCopied={() => addToast('Error details copied!')}

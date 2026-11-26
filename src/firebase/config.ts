@@ -245,10 +245,6 @@ export async function testConnection(): Promise<void> {
   }
 }
 
-if (typeof window !== 'undefined' && isFirebaseConfigured) {
-  void testConnection();
-}
-
 export async function testFirestoreConnection(): Promise<void> {
   if (!isFirebaseConfigured || !db || !auth?.currentUser) return;
   try {

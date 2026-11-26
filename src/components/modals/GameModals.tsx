@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Copy, Trash2 } from 'lucide-react';
+import { FIREBASE_CONFIG, isFirebaseConfigured } from '../../firebase/config';
 import { formatErrorLogReport, type AppErrorEntry } from '../../firebase/errorLog';
 import { COUNTRIES, RANKS, SUBSCRIPTIONS } from '../../game/constants';
 import { formatNumber, isProfileSubActive } from '../../game/rules';
@@ -469,6 +470,7 @@ interface ErrorLogModalProps {
   open: boolean;
   errors: AppErrorEntry[];
   uid: string | null;
+  email: string | null;
   onRetrySync: () => void;
   onClear: () => void;
   onCopied: () => void;
@@ -479,6 +481,7 @@ export const ErrorLogModal: React.FC<ErrorLogModalProps> = ({
   open,
   errors,
   uid,
+  email,
   onRetrySync,
   onClear,
   onCopied,
@@ -487,8 +490,19 @@ export const ErrorLogModal: React.FC<ErrorLogModalProps> = ({
   useEscapeClose(open, onClose);
   if (!open) return null;
 
+  const hasPermDenied = errors.some(
+    (e) =>
+      e.code === 'permission-denied' ||
+      /permission-denied|Missing or insufficient permissions/i.test(`${e.code || ''} ${e.message}`),
+  );
+
   const handleCopyAll = async () => {
-    const report = formatErrorLogReport(errors);
+    const header = [
+      `Project: ${FIREBASE_CONFIG.projectId || 'unset'}`,
+      `Database: ${FIREBASE_CONFIG.firestoreDatabaseId || '(default)'}`,
+      `Auth UID: ${uid || 'signed-out'}${email ? ` (${email})` : ''}`,
+    ].join(' | ');
+    const report = `${header}\n\n${formatErrorLogReport(errors)}`;
     try {
       await navigator.clipboard.writeText(report);
       onCopied();
@@ -506,17 +520,46 @@ export const ErrorLogModal: React.FC<ErrorLogModalProps> = ({
   };
 
   return (
-    <div className="modal" role="dialog" aria-modal="true" aria-label="Error Log" onClick={onClose}>
+    <div
+      className="modal err-modal-wrap"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Error Log"
+      onClick={onClose}
+    >
       <div className="card err-modal" onClick={(e) => e.stopPropagation()}>
         <h2>
           <AlertTriangle size={20} color="#ff6fa5" />
-          <span>Error Log</span>
+          <span>Live Error Log</span>
         </h2>
         <p style={{ margin: '6px 0 10px' }}>
           {errors.length
             ? `${errors.length} recorded ${errors.length === 1 ? 'issue' : 'issues'} with exact paths and codes.`
             : 'Everything is running cleanly — no errors recorded.'}
         </p>
+
+        <div className="err-diag">
+          <div>
+            <span>Project</span>
+            <code>{isFirebaseConfigured ? FIREBASE_CONFIG.projectId : 'Not configured'}</code>
+          </div>
+          <div>
+            <span>Firestore DB</span>
+            <code>{FIREBASE_CONFIG.firestoreDatabaseId || '(default)'}</code>
+          </div>
+          <div>
+            <span>Account</span>
+            <code>{uid ? `${email || uid}` : 'Offline / Signed out'}</code>
+          </div>
+        </div>
+
+        {hasPermDenied && (
+          <div className="err-perm-hint">
+            <b>Permission Denied Fix:</b> Publish <code>firestore.rules</code> to database{' '}
+            <code>{FIREBASE_CONFIG.firestoreDatabaseId || '(default)'}</code> in Firebase Console →
+            Firestore Database → Rules.
+          </div>
+        )}
 
         <div className="err-list">
           {errors.length ? (

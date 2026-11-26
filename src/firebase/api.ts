@@ -867,13 +867,21 @@ export async function settleExpiredTrades(
   const now = Date.now() + serverOffsetMs;
   for (const t of trades) {
     if (t.from === uid && t.status === 'pending' && t.expMs > 0 && t.expMs + 1500 <= now) {
-      await endSenderOffer(t.id, 'expired', sid, onKicked, serverOffsetMs).catch(() => {});
+      await endSenderOffer(t.id, 'expired', sid, onKicked, serverOffsetMs).catch((err) => {
+        if ((err as { code?: string })?.code !== 'aborted') {
+          recordFirestoreError(err, OperationType.UPDATE, `trades/${t.id}`);
+        }
+      });
     } else if (
       t.from === uid &&
       (t.status === 'rejected' || t.status === 'expired') &&
       !t.refunded
     ) {
-      await reclaimUnrefundedOffer(t.id, sid, onKicked).catch(() => {});
+      await reclaimUnrefundedOffer(t.id, sid, onKicked).catch((err) => {
+        if ((err as { code?: string })?.code !== 'aborted') {
+          recordFirestoreError(err, OperationType.UPDATE, `trades/${t.id}`);
+        }
+      });
     }
   }
 }
@@ -960,7 +968,9 @@ export async function sendDirectMessage(params: {
       fromName: cleanName,
       fromCc: sanitizeCountryCode(params.fromCc),
       createdAt: serverTimestamp(),
-    }).catch(() => {});
+    }).catch((err) => {
+      recordFirestoreError(err, OperationType.CREATE, `players/${params.toUid}/notifications`);
+    });
   }
 }
 
@@ -1109,17 +1119,17 @@ export function buildQueryHelpers() {
         collection(db, 'players'),
         where('lastSeen', '>=', Timestamp.fromMillis(Date.now() + serverOffsetMs - 360_000)),
         orderBy('lastSeen', 'desc'),
-        limit(50),
+        limit(25),
       ),
     tradesQuery: (uid: string) =>
-      query(collection(db, 'trades'), where('participants', 'array-contains', uid), limit(25)),
+      query(collection(db, 'trades'), where('participants', 'array-contains', uid), limit(20)),
     notifsQuery: (uid: string) =>
-      query(collection(db, 'players', uid, 'notifications'), orderBy('createdAt', 'desc'), limit(25)),
+      query(collection(db, 'players', uid, 'notifications'), orderBy('createdAt', 'desc'), limit(20)),
     projectsQuery: (uid: string) =>
       query(collection(db, 'players', uid, 'projects'), orderBy('startedAt', 'desc'), limit(15)),
     globalChatQuery: () =>
-      query(collection(db, 'globalChat'), orderBy('createdAt', 'desc'), limit(40)),
+      query(collection(db, 'globalChat'), orderBy('createdAt', 'desc'), limit(25)),
     dmQuery: (uidA: string, uidB: string) =>
-      query(collection(db, 'dms', pairIdFor(uidA, uidB), 'messages'), orderBy('createdAt', 'desc'), limit(40)),
+      query(collection(db, 'dms', pairIdFor(uidA, uidB), 'messages'), orderBy('createdAt', 'desc'), limit(25)),
   };
 }
