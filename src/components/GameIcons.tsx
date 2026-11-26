@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { memo, useId, useState } from 'react';
 import {
   Anchor,
   Atom,
@@ -81,59 +81,65 @@ import { RANKS, RARITY_META, STICKERS } from '../game/constants';
 import { flagLargeUrl, flagUrl, sanitizeCountryCode } from '../game/rules';
 import type { NotificationItem, SubscriptionTierId, TabId } from '../game/types';
 
-export const CashCoinIcon: React.FC<{ size?: number; className?: string }> = ({ size = 18, className }) => (
-  <svg
-    width={size}
-    height={size}
-    viewBox="0 0 24 24"
-    fill="none"
-    className={className}
-    aria-hidden="true"
-  >
-    <circle cx="12" cy="12" r="10" fill="url(#coinGrad)" stroke="#FFF3B0" strokeWidth="1.5" />
-    <circle cx="12" cy="12" r="7" stroke="#A66500" strokeOpacity="0.4" strokeWidth="1.2" />
-    <path
-      d="M12 7v10M9.5 9.5c0-1.1 1.1-1.8 2.5-1.8s2.5.7 2.5 1.8c0 1.2-1.2 1.7-2.5 2-1.3.3-2.5.8-2.5 2 0 1.1 1.1 1.8 2.5 1.8s2.5-.7 2.5-1.8"
-      stroke="#5C3600"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-    />
-    <defs>
-      <linearGradient id="coinGrad" x1="3" y1="3" x2="21" y2="21" gradientUnits="userSpaceOnUse">
-        <stop stopColor="#FFE98A" />
-        <stop offset="0.55" stopColor="#FFC23D" />
-        <stop offset="1" stopColor="#D9820B" />
-      </linearGradient>
-    </defs>
-  </svg>
-);
+export const CashCoinIcon: React.FC<{ size?: number; className?: string }> = memo(({ size = 18, className }) => {
+  const gradId = useId();
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      className={className}
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="10" fill={`url(#${gradId})`} stroke="#FFF3B0" strokeWidth="1.5" />
+      <circle cx="12" cy="12" r="7" stroke="#A66500" strokeOpacity="0.4" strokeWidth="1.2" />
+      <path
+        d="M12 7v10M9.5 9.5c0-1.1 1.1-1.8 2.5-1.8s2.5.7 2.5 1.8c0 1.2-1.2 1.7-2.5 2-1.3.3-2.5.8-2.5 2 0 1.1 1.1 1.8 2.5 1.8s2.5-.7 2.5-1.8"
+        stroke="#5C3600"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+      <defs>
+        <linearGradient id={gradId} x1="3" y1="3" x2="21" y2="21" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#FFE98A" />
+          <stop offset="0.55" stopColor="#FFC23D" />
+          <stop offset="1" stopColor="#D9820B" />
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+});
 
-export const GemDiamondIcon: React.FC<{ size?: number; className?: string }> = ({ size = 18, className }) => (
-  <svg
-    width={size}
-    height={size}
-    viewBox="0 0 24 24"
-    fill="none"
-    className={className}
-    aria-hidden="true"
-  >
-    <path
-      d="M6.5 4h11l4 5.5L12 20.5 2.5 9.5 6.5 4z"
-      fill="url(#gemGrad)"
-      stroke="#E0F7FF"
-      strokeWidth="1.3"
-      strokeLinejoin="round"
-    />
-    <path d="M2.5 9.5h19M6.5 4l2.5 5.5L12 20.5l3-11L17.5 4" stroke="#FFFFFF" strokeOpacity="0.45" strokeWidth="1.1" strokeLinejoin="round" />
-    <defs>
-      <linearGradient id="gemGrad" x1="4" y1="4" x2="20" y2="20" gradientUnits="userSpaceOnUse">
-        <stop stopColor="#B8EFFF" />
-        <stop offset="0.5" stopColor="#5CCBFF" />
-        <stop offset="1" stopColor="#8B5CF6" />
-      </linearGradient>
-    </defs>
-  </svg>
-);
+export const GemDiamondIcon: React.FC<{ size?: number; className?: string }> = memo(({ size = 18, className }) => {
+  const gradId = useId();
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      className={className}
+      aria-hidden="true"
+    >
+      <path
+        d="M6.5 4h11l4 5.5L12 20.5 2.5 9.5 6.5 4z"
+        fill={`url(#${gradId})`}
+        stroke="#E0F7FF"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+      <path d="M2.5 9.5h19M6.5 4l2.5 5.5L12 20.5l3-11L17.5 4" stroke="#FFFFFF" strokeOpacity="0.45" strokeWidth="1.1" strokeLinejoin="round" />
+      <defs>
+        <linearGradient id={gradId} x1="4" y1="4" x2="20" y2="20" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#B8EFFF" />
+          <stop offset="0.5" stopColor="#5CCBFF" />
+          <stop offset="1" stopColor="#8B5CF6" />
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+});
 
 export const TabIcon: React.FC<{ tab: TabId; size?: number }> = ({ tab, size = 18 }) => {
   switch (tab) {

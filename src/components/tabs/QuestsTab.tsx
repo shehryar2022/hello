@@ -137,4 +137,55 @@ export const QuestsTab: React.FC<QuestsTabProps> = memo(({
       })}
     </div>
   );
+}, (prev, next) => {
+  if (
+    prev.dayKey !== next.dayKey ||
+    prev.rankPosition !== next.rankPosition ||
+    prev.onClaimQuest !== next.onClaimQuest ||
+    prev.onClaimMilestone !== next.onClaimMilestone
+  ) {
+    return false;
+  }
+  const p = prev.state;
+  const n = next.state;
+  return (
+    p.questDay === n.questDay &&
+    p.questIds === n.questIds &&
+    p.claimed === n.claimed &&
+    p.milestones === n.milestones &&
+    p.cash === n.cash &&
+    p.gems === n.gems &&
+    p.streak === n.streak &&
+    p.fused === n.fused &&
+    p.rank === n.rank &&
+    p.gov === n.gov &&
+    Math.floor(p.hap) === Math.floor(n.hap) &&
+    Math.floor(p.appr) === Math.floor(n.appr) &&
+    Math.floor(p.pop) === Math.floor(n.pop) &&
+    (p.boost > 0) === (n.boost > 0) &&
+    p.tax === n.tax &&
+    p.wel === n.wel &&
+    p.edu === n.edu &&
+    p.fuel === n.fuel &&
+    p.carbon === n.carbon &&
+    p.luxury === n.luxury &&
+    p.corp === n.corp &&
+    p.gst === n.gst &&
+    p.prop === n.prop &&
+    p.duty === n.duty &&
+    p.tourism === n.tourism &&
+    p.digital === n.digital &&
+    p.wealth === n.wealth &&
+    p.rd === n.rd &&
+    p.green === n.green &&
+    p.transitSub === n.transitSub &&
+    p.b === n.b &&
+    p.stk === n.stk &&
+    p.tech === n.tech &&
+    p.gx?.lvl === n.gx?.lvl &&
+    p.gx?.blk === n.gx?.blk &&
+    p.gx?.pb === n.gx?.pb &&
+    p.activeFx === n.activeFx &&
+    p.sub === n.sub
+  );
 });

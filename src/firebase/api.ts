@@ -17,6 +17,7 @@ import {
   type Transaction,
 } from 'firebase/firestore';
 import {
+  ACTIVE_WINDOW_MS,
   COUNTRIES,
   DAILY_GIFT_MAX,
   GX_PROJECT_TYPES,
@@ -24,6 +25,7 @@ import {
   PROJECT_STAGES,
   TZ,
 } from '../game/constants';
+import { PRESENCE_QUERY_BUFFER_MS } from './presence';
 import {
   calculateGdp,
   cleanSavePayload,
@@ -315,9 +317,10 @@ export async function syncSaveToCloud(params: {
   wallet: { cash: number; gems: number; stk: Record<string, number>; rev: number };
 }> {
   const { state, pubStats, completedTradesCount, rev, sid, onKicked } = params;
-  const cash = capValue(state.cash, 1e13);
-  const gems = capValue(state.gems, 1e9);
-  const stk = cleanStickersMap(state.stk);
+  const cleanedSave = cleanSavePayload(state);
+  const cash = capValue(cleanedSave.cash, 1e13);
+  const gems = capValue(cleanedSave.gems, 1e9);
+  const stk = cleanStickersMap(cleanedSave.stk);
   const gdpVal = Math.max(1, Math.min(cash, capValue(calculateGdp(state), 1e13)));
 
   let result!: {
@@ -372,7 +375,7 @@ export async function syncSaveToCloud(params: {
             lastSeen: serverTimestamp(),
             stats: mergedStats,
           });
-          tx.set(doc(db, 'saves', uid), { save: cleanSavePayload(state) });
+          tx.set(doc(db, 'saves', uid), { save: cleanedSave });
           result = {
             accepted: true,
             wallet: { cash, gems, stk, rev: nextRev },
@@ -429,7 +432,7 @@ export async function syncSaveToCloud(params: {
 
     const sRef = doc(db, 'saves', uid);
     try {
-      await setDoc(sRef, { save: cleanSavePayload(state) });
+      await setDoc(sRef, { save: cleanedSave });
       savedDocOk = true;
     } catch (saveErr) {
       const info = recordFirestoreError(saveErr, OperationType.WRITE, `saves/${uid}`);
@@ -857,6 +860,8 @@ export async function reclaimUnrefundedOffer(
   return status;
 }
 
+const settleBackoffUntil = new Map<string, number>();
+
 export async function settleExpiredTrades(
   trades: TradeOffer[],
   uid: string,
@@ -865,23 +870,35 @@ export async function settleExpiredTrades(
   serverOffsetMs = 0,
 ): Promise<void> {
   const now = Date.now() + serverOffsetMs;
+  const localNow = Date.now();
   for (const t of trades) {
-    if (t.from === uid && t.status === 'pending' && t.expMs > 0 && t.expMs + 1500 <= now) {
-      await endSenderOffer(t.id, 'expired', sid, onKicked, serverOffsetMs).catch((err) => {
-        if ((err as { code?: string })?.code !== 'aborted') {
-          recordFirestoreError(err, OperationType.UPDATE, `trades/${t.id}`);
-        }
-      });
+    if ((settleBackoffUntil.get(t.id) || 0) > localNow) continue;
+    if (t.from === uid && t.status === 'pending' && t.expMs > 0 && t.expMs + 4500 <= now) {
+      await endSenderOffer(t.id, 'expired', sid, onKicked, serverOffsetMs)
+        .then(() => {
+          settleBackoffUntil.delete(t.id);
+        })
+        .catch((err) => {
+          settleBackoffUntil.set(t.id, Date.now() + 20_000);
+          if ((err as { code?: string })?.code !== 'aborted') {
+            recordFirestoreError(err, OperationType.UPDATE, `trades/${t.id}`);
+          }
+        });
     } else if (
       t.from === uid &&
       (t.status === 'rejected' || t.status === 'expired') &&
       !t.refunded
     ) {
-      await reclaimUnrefundedOffer(t.id, sid, onKicked).catch((err) => {
-        if ((err as { code?: string })?.code !== 'aborted') {
-          recordFirestoreError(err, OperationType.UPDATE, `trades/${t.id}`);
-        }
-      });
+      await reclaimUnrefundedOffer(t.id, sid, onKicked)
+        .then(() => {
+          settleBackoffUntil.delete(t.id);
+        })
+        .catch((err) => {
+          settleBackoffUntil.set(t.id, Date.now() + 20_000);
+          if ((err as { code?: string })?.code !== 'aborted') {
+            recordFirestoreError(err, OperationType.UPDATE, `trades/${t.id}`);
+          }
+        });
     }
   }
 }
@@ -984,7 +1001,24 @@ export async function markNotificationsRead(uid: string, ids: string[]): Promise
 }
 
 export async function sendHeartbeat(uid: string): Promise<void> {
-  await updateDoc(doc(db, 'players', uid), { lastSeen: serverTimestamp() });
+  const ref = doc(db, 'players', uid);
+  try {
+    await updateDoc(ref, { lastSeen: serverTimestamp() });
+  } catch (err) {
+    const code = (err as { code?: string })?.code || '';
+    const msg = err instanceof Error ? err.message : String(err || '');
+    const needsTokenRetry =
+      code === 'unauthenticated' ||
+      isPermissionDeniedError(err) ||
+      /unauthenticated|permission-denied/i.test(`${code} ${msg}`);
+    if (needsTokenRetry && auth?.currentUser) {
+      await auth.currentUser.getIdToken(true).catch(() => null);
+      await new Promise((r) => setTimeout(r, 350));
+      await updateDoc(ref, { lastSeen: serverTimestamp() });
+      return;
+    }
+    throw err;
+  }
 }
 
 export async function createGovProject(
@@ -1054,6 +1088,7 @@ export async function finishGovProject(
     const snap = await tx.get(ref);
     const data = snap.data();
     if (!data || data.status !== 'active') return;
+    if (status === 'done' && Number(data.paid || 0) < PROJECT_STAGES) return;
     if (status === 'done' && typeof finalProgressMs === 'number') {
       const prev = Math.floor(Number(data.progressMs) || 0);
       const clamped = Math.max(prev, Math.min(2_400_000, Math.floor(finalProgressMs)));
@@ -1117,7 +1152,11 @@ export function buildQueryHelpers() {
     playersActiveQuery: (serverOffsetMs = 0) =>
       query(
         collection(db, 'players'),
-        where('lastSeen', '>=', Timestamp.fromMillis(Date.now() + serverOffsetMs - 360_000)),
+        where(
+          'lastSeen',
+          '>=',
+          Timestamp.fromMillis(Date.now() + serverOffsetMs - (ACTIVE_WINDOW_MS + PRESENCE_QUERY_BUFFER_MS)),
+        ),
         orderBy('lastSeen', 'desc'),
         limit(25),
       ),

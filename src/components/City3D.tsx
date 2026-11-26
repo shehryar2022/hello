@@ -62,6 +62,7 @@ const City3DInner: React.FC<City3DProps> = ({ state, visible, burstKey, onBuildi
   const activeParticlesRef = useRef(0);
   const particleTimersRef = useRef<Set<number>>(new Set());
   const buildingRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const rotRafRef = useRef<number | null>(null);
 
   const animEnabled = !!state.set.anim;
 
@@ -78,6 +79,7 @@ const City3DInner: React.FC<City3DProps> = ({ state, visible, burstKey, onBuildi
   useEffect(() => {
     const timers = particleTimersRef.current;
     return () => {
+      if (rotRafRef.current !== null) cancelAnimationFrame(rotRafRef.current);
       if (tipTimerRef.current) window.clearTimeout(tipTimerRef.current);
       for (const id of timers) window.clearTimeout(id);
       timers.clear();
@@ -208,12 +210,22 @@ const City3DInner: React.FC<City3DProps> = ({ state, visible, burstKey, onBuildi
     if (!dragRef.current.active) return;
     dragRef.current.off = dragRef.current.o0 + (e.clientX - dragRef.current.sx) * 0.6;
     if (Math.abs(dragRef.current.off) > 4 && !rotated) setRotated(true);
-    applyRotation(-35 + dragRef.current.off);
+    if (rotRafRef.current === null) {
+      rotRafRef.current = requestAnimationFrame(() => {
+        rotRafRef.current = null;
+        applyRotation(-35 + dragRef.current.off);
+      });
+    }
   };
 
   const handlePointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!dragRef.current.active) return;
     dragRef.current.active = false;
+    if (rotRafRef.current !== null) {
+      cancelAnimationFrame(rotRafRef.current);
+      rotRafRef.current = null;
+      applyRotation(-35 + dragRef.current.off);
+    }
     setDragging(false);
     if (
       e.type !== 'pointerup' ||

@@ -584,4 +584,47 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
       )}
     </div>
   );
+}, (prev, next) => {
+  if (
+    prev.subTab !== next.subTab ||
+    prev.uid !== next.uid ||
+    prev.projects !== next.projects ||
+    prev.isUserActive !== next.isUserActive ||
+    prev.onChangeSubTab !== next.onChangeSubTab ||
+    prev.onFixInfra !== next.onFixInfra ||
+    prev.onUpgradeBuilding !== next.onUpgradeBuilding ||
+    prev.onStartProject !== next.onStartProject ||
+    prev.onPayProjectStage !== next.onPayProjectStage ||
+    prev.onUnlockTech !== next.onUnlockTech
+  ) {
+    return false;
+  }
+  const p = prev.state;
+  const n = next.state;
+  if (
+    p.cash !== n.cash ||
+    p.b !== n.b ||
+    p.tech !== n.tech ||
+    p.sub !== n.sub ||
+    p.gx.lvl !== n.gx.lvl ||
+    p.gx.cond !== n.gx.cond ||
+    p.gx.blk !== n.gx.blk ||
+    p.gx.pb !== n.gx.pb ||
+    p.gx.exp !== n.gx.exp ||
+    p.gx.log !== n.gx.log
+  ) {
+    return false;
+  }
+  const pNow = (p.t || 0) + prev.serverOffsetMs;
+  const nNow = (n.t || 0) + next.serverOffsetMs;
+  const pSubActive = !!(p.sub?.tier && (p.sub?.exp || 0) > pNow);
+  const nSubActive = !!(n.sub?.tier && (n.sub?.exp || 0) > nNow);
+  if (pSubActive !== nSubActive) return false;
+  if (prev.subTab === 'infra') {
+    return Math.floor(p.gx.acc || 0) === Math.floor(n.gx.acc || 0);
+  }
+  if (prev.subTab === 'projects') {
+    return prev.liveProjectProgress === next.liveProjectProgress;
+  }
+  return true;
 });

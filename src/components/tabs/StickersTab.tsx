@@ -145,4 +145,20 @@ export const StickersTab: React.FC<StickersTabProps> = memo(({
       </div>
     </div>
   );
+}, (prev, next) => {
+  if (
+    prev.onFuseSticker !== next.onFuseSticker ||
+    prev.onBuyCrate !== next.onBuyCrate ||
+    prev.state.cash !== next.state.cash ||
+    prev.state.gems !== next.state.gems ||
+    prev.state.crateCd !== next.state.crateCd ||
+    prev.state.stk !== next.state.stk
+  ) {
+    return false;
+  }
+  const pNow = (prev.state.t || 0) + (prev.serverOffsetMs || 0);
+  const nNow = (next.state.t || 0) + (next.serverOffsetMs || 0);
+  const pCdSec = Math.max(0, Math.ceil(((prev.state.crateCd || 0) - pNow) / 1000));
+  const nCdSec = Math.max(0, Math.ceil(((next.state.crateCd || 0) - nNow) / 1000));
+  return pCdSec === nCdSec;
 });

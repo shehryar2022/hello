@@ -499,7 +499,7 @@ export const ErrorLogModal: React.FC<ErrorLogModalProps> = ({
   const handleCopyAll = async () => {
     const header = [
       `Project: ${FIREBASE_CONFIG.projectId || 'unset'}`,
-      `Database: ${FIREBASE_CONFIG.firestoreDatabaseId || '(default)'}`,
+      'Database: (default)',
       `Auth UID: ${uid || 'signed-out'}${email ? ` (${email})` : ''}`,
     ].join(' | ');
     const report = `${header}\n\n${formatErrorLogReport(errors)}`;
@@ -545,7 +545,7 @@ export const ErrorLogModal: React.FC<ErrorLogModalProps> = ({
           </div>
           <div>
             <span>Firestore DB</span>
-            <code>{FIREBASE_CONFIG.firestoreDatabaseId || '(default)'}</code>
+            <code>(default)</code>
           </div>
           <div>
             <span>Account</span>
@@ -556,7 +556,7 @@ export const ErrorLogModal: React.FC<ErrorLogModalProps> = ({
         {hasPermDenied && (
           <div className="err-perm-hint">
             <b>Permission Denied Fix:</b> Publish <code>firestore.rules</code> to database{' '}
-            <code>{FIREBASE_CONFIG.firestoreDatabaseId || '(default)'}</code> in Firebase Console →
+            <code>(default)</code> in Firebase Console →
             Firestore Database → Rules.
           </div>
         )}

@@ -26,7 +26,6 @@ const rawAppletConfig = firebaseAppletConfig as {
   messagingSenderId?: string;
   appId?: string;
   measurementId?: string;
-  firestoreDatabaseId?: string;
 };
 
 export const FIREBASE_CONFIG = {
@@ -56,13 +55,9 @@ export const FIREBASE_CONFIG = {
     import.meta.env?.VITE_FIREBASE_MEASUREMENT_ID,
     rawAppletConfig.measurementId,
   ),
-  firestoreDatabaseId: readConfigValue(
-    import.meta.env?.VITE_FIREBASE_DATABASE_ID,
-    rawAppletConfig.firestoreDatabaseId,
-  ),
 };
 
-const databaseId = FIREBASE_CONFIG.firestoreDatabaseId;
+export const FIRESTORE_DATABASE_ID = '(default)' as const;
 
 const hasRequiredFirebaseConfig = Boolean(
   FIREBASE_CONFIG.apiKey &&
@@ -79,9 +74,7 @@ if (hasRequiredFirebaseConfig) {
   try {
     initializedApp = getApps().length > 0 ? getApp() : initializeApp(FIREBASE_CONFIG);
     initializedAuth = getAuth(initializedApp);
-    initializedDb = databaseId
-      ? getFirestore(initializedApp, databaseId)
-      : getFirestore(initializedApp);
+    initializedDb = getFirestore(initializedApp);
   } catch (err) {
     console.error('Firebase initialization failed:', err);
     initializedApp = null;

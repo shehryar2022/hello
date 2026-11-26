@@ -165,7 +165,7 @@ export function cleanStickersMap(raw: unknown): Record<string, number> {
   for (const [k, val] of Object.entries(raw as Record<string, unknown>)) {
     const n = Math.floor(Number(val));
     if (STICKERS.some((s) => s.id === k) && Number.isFinite(n) && n > 0) {
-      out[k] = n;
+      out[k] = Math.min(1_000_000_000, n) + 0;
     }
   }
   return out;
@@ -252,13 +252,13 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
   s.boost = Math.max(0, Math.min(30, s.boost));
   s.rank = Math.max(0, Math.min(MAX_RANK, Math.floor(s.rank)));
   s.streak = Math.max(0, Math.min(10_000, Math.floor(s.streak)));
-  s.hap = Math.max(0, Math.min(100, s.hap));
-  s.appr = Math.max(0, Math.min(100, s.appr));
-  s.pop = Math.max(1, Math.min(100_000, s.pop));
+  s.hap = Math.max(0, Math.min(100, s.hap)) + 0;
+  s.appr = Math.max(0, Math.min(100, s.appr)) + 0;
+  s.pop = Math.max(1, Math.min(100_000, s.pop)) + 0;
   // Allow up to +24h tolerance so legitimate server clock offsets never get wiped
   if ((s.lastDaily || 0) > now + 86_400_000 || (s.lastDaily || 0) < 0) s.lastDaily = 0;
   if ((s.govT || 0) > now + 86_400_000 || (s.govT || 0) < 0) s.govT = 0;
-  s.crateCd = Math.max(0, Math.min(now + CRATE_CD_MS + 86_400_000, Math.floor(s.crateCd || 0)));
+  s.crateCd = Math.max(0, Math.min(now + CRATE_CD_MS + 86_400_000, Math.floor(s.crateCd || 0))) + 0;
 
   for (const [k, [mn, mx]] of Object.entries(POLICY_BOUNDS)) {
     const val = Number((s as unknown as Record<string, number>)[k]) || 0;
@@ -298,8 +298,8 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
     const endVal = Number(s.activeFx.incomeBoostEnd);
     const multVal = Number(s.activeFx.incomeBoostMult);
     if (Number.isFinite(endVal) && endVal > now && Number.isFinite(multVal) && multVal > 1) {
-      nextFx.incomeBoostEnd = Math.min(endVal, now + 250_000);
-      nextFx.incomeBoostMult = Math.max(1, Math.min(1.75, multVal));
+      nextFx.incomeBoostEnd = Math.max(0, Math.min(1e13, Math.floor(Math.min(endVal, now + 250_000)))) + 0;
+      nextFx.incomeBoostMult = Math.max(1, Math.min(1.75, multVal)) + 0;
       if (typeof s.activeFx.incomeBoostId === 'string' && s.activeFx.incomeBoostId) {
         nextFx.incomeBoostId = s.activeFx.incomeBoostId.slice(0, 32);
       }
@@ -323,7 +323,10 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
     s.boosterCd = cleanCd;
   }
   if (!Array.isArray(s.hist)) s.hist = [];
-  s.hist = s.hist.filter((v) => typeof v === 'number' && Number.isFinite(v)).slice(-60);
+  s.hist = s.hist
+    .filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
+    .map((v) => Math.min(1e13, Math.max(0, v)) + 0)
+    .slice(-60);
   if (!Array.isArray(s.country) || !s.country[0]) s.country = D.country;
   if (!Array.isArray(s.questIds)) s.questIds = [];
   if (typeof s.questDay !== 'string') s.questDay = '';
@@ -337,7 +340,7 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
   const cond: Record<string, number> = {};
   for (const a of [...GX_GOV_BUILDINGS, ...GX_ROADS]) {
     const v = Number(gx.cond?.[a[0]]);
-    cond[a[0]] = Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 100;
+    cond[a[0]] = (Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 100) + 0;
   }
   const lvl: Record<string, number> = {};
   for (const d of BUILDINGS) {
@@ -347,22 +350,26 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
   const rawExp = gx.exp && typeof gx.exp === 'object' ? (gx.exp as unknown as Record<string, unknown>) : null;
   const cleanExp = rawExp
     ? {
-        sal: Math.max(0, Math.min(1e13, Math.floor(Number(rawExp.sal) || 0))),
-        el: Math.max(0, Math.min(1e13, Math.floor(Number(rawExp.el) || 0))),
-        inf: Math.max(0, Math.min(1e13, Math.floor(Number(rawExp.inf) || 0))),
-        total: Math.max(0, Math.min(1e13, Math.floor(Number(rawExp.total) || 0))),
-        paid: Math.max(0, Math.min(1e13, Math.floor(Number(rawExp.paid) || 0))),
-        n: Math.max(0, Math.min(1_000_000, Math.floor(Number(rawExp.n) || 0))),
-        t: Math.max(0, Math.min(1e13, Math.floor(Number(rawExp.t) || 0))),
+        sal: Math.max(0, Math.min(1e13, Math.floor(Number(rawExp.sal) || 0))) + 0,
+        el: Math.max(0, Math.min(1e13, Math.floor(Number(rawExp.el) || 0))) + 0,
+        inf: Math.max(0, Math.min(1e13, Math.floor(Number(rawExp.inf) || 0))) + 0,
+        total: Math.max(0, Math.min(1e13, Math.floor(Number(rawExp.total) || 0))) + 0,
+        paid: Math.max(0, Math.min(1e13, Math.floor(Number(rawExp.paid) || 0))) + 0,
+        n: Math.max(0, Math.min(1_000_000, Math.floor(Number(rawExp.n) || 0))) + 0,
+        t: Math.max(0, Math.min(1e13, Math.floor(Number(rawExp.t) || 0))) + 0,
       }
     : null;
+  const accVal = Number(gx.acc);
+  const blkVal = Math.floor(Number(gx.blk));
+  const pbVal = Number(gx.pb);
+  const phVal = Number(gx.ph);
   s.gx = {
     cond,
     lvl,
-    acc: Math.min(GOV_DAY_SEC, Math.max(0, Number(gx.acc) || 0)),
-    blk: Math.max(0, Math.floor(Number(gx.blk) || 0)),
-    pb: Math.min(0.25, Math.max(0, Number(gx.pb) || 0)),
-    ph: Math.min(10, Math.max(0, Number(gx.ph) || 0)),
+    acc: Math.min(GOV_DAY_SEC, Math.max(0, Number.isFinite(accVal) ? accVal : 0)) + 0,
+    blk: Math.min(1_000_000, Math.max(0, Number.isFinite(blkVal) ? blkVal : 0)) + 0,
+    pb: Math.min(0.25, Math.max(0, Number.isFinite(pbVal) ? pbVal : 0)) + 0,
+    ph: Math.min(10, Math.max(0, Number.isFinite(phVal) ? phVal : 0)) + 0,
     log: Array.isArray(gx.log)
       ? gx.log.filter((x): x is string => typeof x === 'string').map((x) => x.slice(0, 120)).slice(0, 8)
       : [],
@@ -374,7 +381,7 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
   const subDef = SUBSCRIPTIONS.find((x) => x.id === rawSub.tier);
   const subExp = Number(rawSub.exp);
   if (subDef && Number.isFinite(subExp) && subExp > 0) {
-    const clampedExp = Math.min(subExp, now + 31 * 86_400_000);
+    const clampedExp = Math.max(0, Math.min(1e13, Math.floor(Math.min(subExp, now + 31 * 86_400_000)))) + 0;
     s.sub = {
       tier: subDef.id,
       exp: clampedExp,
@@ -402,8 +409,8 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
     s.subPromo = {
       weekKey: promoWeek,
       tier: promoTier.id,
-      pct: Math.round(promoPct),
-      exp: Math.min(promoExp, now + 8 * 86_400_000),
+      pct: Math.round(promoPct) + 0,
+      exp: Math.max(0, Math.min(1e13, Math.floor(Math.min(promoExp, now + 8 * 86_400_000)))) + 0,
     };
   } else {
     s.subPromo = {};
@@ -440,7 +447,7 @@ function toSafeInt(value: unknown, min: number, max: number): number {
   return Math.min(max, Math.max(min, n)) + 0;
 }
 
-const ALLOWED_SAVE_KEYS = new Set(Object.keys(freshState()).filter((k) => k !== 'country'));
+export const ALLOWED_SAVE_KEYS = new Set(Object.keys(freshState()).filter((k) => k !== 'country'));
 
 export function cleanSavePayload(s: GameState): Record<string, unknown> {
   const normalized = migrateState({ ...(s as GameState & Record<string, unknown>) });
@@ -457,7 +464,10 @@ export function cleanSavePayload(s: GameState): Record<string, unknown> {
   normalized.lastDaily = Math.max(0, Math.min(1e13, Number.isFinite(Number(normalized.lastDaily)) ? Number(normalized.lastDaily) : 0)) + 0;
   normalized.govT = Math.max(0, Math.min(1e13, Number.isFinite(Number(normalized.govT)) ? Number(normalized.govT) : 0)) + 0;
   normalized.questIds = Array.isArray(normalized.questIds)
-    ? normalized.questIds.filter((x) => Number.isFinite(x)).map((x) => Math.trunc(x) + 0).slice(0, 10)
+    ? normalized.questIds
+        .filter((x) => typeof x === 'number' && Number.isFinite(x) && x >= 0)
+        .map((x) => Math.min(1000, Math.trunc(x)) + 0)
+        .slice(0, 10)
     : [];
   normalized.questDay = typeof normalized.questDay === 'string' ? normalized.questDay.slice(0, 32) : '';
 

@@ -39,8 +39,8 @@ service cloud.firestore {
         && pairId.size() <= 260
         && pairId != request.auth.uid + '_' + request.auth.uid
         && (
-          pairId.matches('^' + request.auth.uid + '_[A-Za-z0-9\\-]+$')
-          || pairId.matches('^[A-Za-z0-9\\-]+_' + request.auth.uid + '$')
+          pairId.matches('^' + request.auth.uid + '_[A-Za-z0-9_\\-]+$')
+          || pairId.matches('^[A-Za-z0-9_\\-]+_' + request.auth.uid + '$')
         );
     }
 
@@ -112,11 +112,46 @@ service cloud.firestore {
         && data.t is timestamp;
     }
 
+    function isValidGxExp(exp) {
+      return exp is map
+        && exp.size() <= 10
+        && exp.keys().hasOnly(['sal', 'el', 'inf', 'total', 'paid', 'n', 't'])
+        && (!('sal' in exp) || (exp.sal is number && exp.sal >= 0 && exp.sal <= 10000000000000))
+        && (!('el' in exp) || (exp.el is number && exp.el >= 0 && exp.el <= 10000000000000))
+        && (!('inf' in exp) || (exp.inf is number && exp.inf >= 0 && exp.inf <= 10000000000000))
+        && (!('total' in exp) || (exp.total is number && exp.total >= 0 && exp.total <= 10000000000000))
+        && (!('paid' in exp) || (exp.paid is number && exp.paid >= 0 && exp.paid <= 10000000000000))
+        && (!('n' in exp) || (exp.n is number && exp.n >= 0 && exp.n <= 1000000))
+        && (!('t' in exp) || (exp.t is number && exp.t >= 0 && exp.t <= 10000000000000));
+    }
+
+    function isValidSaveGx(gx) {
+      return gx is map
+        && gx.size() <= 16
+        && gx.keys().hasOnly(['cond', 'lvl', 'acc', 'blk', 'pb', 'ph', 'log', 'exp'])
+        && (!('cond' in gx) || (gx.cond is map && gx.cond.size() <= 12))
+        && (!('lvl' in gx) || (gx.lvl is map && gx.lvl.size() <= 35))
+        && (!('acc' in gx) || (gx.acc is number && gx.acc >= 0 && gx.acc <= 300))
+        && (!('blk' in gx) || (gx.blk is number && gx.blk >= 0 && gx.blk <= 1000000))
+        && (!('pb' in gx) || (gx.pb is number && gx.pb >= 0 && gx.pb <= 0.25))
+        && (!('ph' in gx) || (gx.ph is number && gx.ph >= 0 && gx.ph <= 10))
+        && (!('log' in gx) || (gx.log is list && gx.log.size() <= 16))
+        && (!('exp' in gx) || gx.exp == null || isValidGxExp(gx.exp));
+    }
+
     function isValidSave(data) {
       return data.keys().hasAll(['save'])
         && data.keys().hasOnly(['save'])
         && data.save is map
         && data.save.size() <= 72
+        && data.save.keys().hasOnly([
+          'cash', 'gems', 'taxPool', 'day', 'b', 'tax', 'wel', 'hap', 'appr', 'pop',
+          'boost', 'claimed', 'milestones', 'crateCd', 't', 'ev', 'edu', 'hist', 'stk',
+          'streak', 'lastDaily', 'set', 'fuel', 'carbon', 'luxury', 'corp', 'gst', 'prop',
+          'duty', 'tourism', 'digital', 'wealth', 'rd', 'green', 'transitSub', 'questDay',
+          'questIds', 'rank', 'activeFx', 'boosterCd', 'fused', 'gov', 'govT', 'gx',
+          'sub', 'subPromo', 'tech'
+        ])
         && (!('cash' in data.save) || (data.save.cash is number && data.save.cash >= 0 && data.save.cash <= 10000000000000))
         && (!('gems' in data.save) || (data.save.gems is number && data.save.gems >= 0 && data.save.gems <= 1000000000))
         && (!('taxPool' in data.save) || (data.save.taxPool is number && data.save.taxPool >= 0 && data.save.taxPool <= 10000000000000))
@@ -156,19 +191,31 @@ service cloud.firestore {
         && (!('claimed' in data.save) || (data.save.claimed is map && data.save.claimed.size() <= 20))
         && (!('boosterCd' in data.save) || (data.save.boosterCd is map && data.save.boosterCd.size() <= 20))
         && (!('tech' in data.save) || (data.save.tech is map && data.save.tech.size() <= 16))
-        && (!('gx' in data.save) || (data.save.gx is map && data.save.gx.size() <= 16))
+        && (!('gx' in data.save) || isValidSaveGx(data.save.gx))
         && (!('hist' in data.save) || (data.save.hist is list && data.save.hist.size() <= 60))
         && (!('questIds' in data.save) || (data.save.questIds is list && data.save.questIds.size() <= 10))
         && (!('questDay' in data.save) || (data.save.questDay is string && data.save.questDay.size() <= 32))
-        && (!('set' in data.save) || (data.save.set is map && data.save.set.size() <= 10))
+        && (!('set' in data.save) || (
+          data.save.set is map
+          && data.save.set.size() <= 10
+          && data.save.set.keys().hasOnly(['sfx', 'vib', 'anim'])
+          && (!('sfx' in data.save.set) || (data.save.set.sfx is number && data.save.set.sfx >= 0 && data.save.set.sfx <= 1))
+          && (!('vib' in data.save.set) || (data.save.set.vib is number && data.save.set.vib >= 0 && data.save.set.vib <= 1))
+          && (!('anim' in data.save.set) || (data.save.set.anim is number && data.save.set.anim >= 0 && data.save.set.anim <= 1))
+        ))
         && (!('activeFx' in data.save) || (
           data.save.activeFx is map
           && data.save.activeFx.size() <= 16
+          && data.save.activeFx.keys().hasOnly(['incomeBoostEnd', 'incomeBoostMult', 'incomeBoostId', 'taxSurge'])
+          && (!('incomeBoostEnd' in data.save.activeFx) || (data.save.activeFx.incomeBoostEnd is number && data.save.activeFx.incomeBoostEnd >= 0 && data.save.activeFx.incomeBoostEnd <= 10000000000000))
           && (!('incomeBoostMult' in data.save.activeFx) || (data.save.activeFx.incomeBoostMult is number && data.save.activeFx.incomeBoostMult >= 1 && data.save.activeFx.incomeBoostMult <= 1.75))
+          && (!('incomeBoostId' in data.save.activeFx) || (data.save.activeFx.incomeBoostId is string && data.save.activeFx.incomeBoostId.size() <= 32))
+          && (!('taxSurge' in data.save.activeFx) || (data.save.activeFx.taxSurge is number && data.save.activeFx.taxSurge >= 0 && data.save.activeFx.taxSurge <= 1))
         ))
         && (!('sub' in data.save) || (
           data.save.sub is map
           && data.save.sub.size() <= 8
+          && data.save.sub.keys().hasOnly(['tier', 'exp', 'lastClaimDay'])
           && (!('tier' in data.save.sub) || data.save.sub.tier in ['daily', 'weekly', 'monthly'])
           && (!('exp' in data.save.sub) || (data.save.sub.exp is number && data.save.sub.exp >= 0 && data.save.sub.exp <= 10000000000000))
           && (!('lastClaimDay' in data.save.sub) || (data.save.sub.lastClaimDay is string && data.save.sub.lastClaimDay.size() <= 16))
@@ -176,6 +223,7 @@ service cloud.firestore {
         && (!('subPromo' in data.save) || (
           data.save.subPromo is map
           && data.save.subPromo.size() <= 8
+          && data.save.subPromo.keys().hasOnly(['weekKey', 'tier', 'pct', 'exp'])
           && (!('weekKey' in data.save.subPromo) || (data.save.subPromo.weekKey is string && data.save.subPromo.weekKey.size() <= 16))
           && (!('tier' in data.save.subPromo) || data.save.subPromo.tier in ['daily', 'weekly', 'monthly'])
           && (!('pct' in data.save.subPromo) || (data.save.subPromo.pct is number && data.save.subPromo.pct >= 5 && data.save.subPromo.pct <= 40))
@@ -307,6 +355,7 @@ service cloud.firestore {
           affectedOnly(['lastSeen']) ||
           (
             affectedOnly(['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp'])
+            && isValidPlayerProfile(incoming())
             && incoming().gdp is number && incoming().gdp >= 0 && incoming().gdp <= 10000000000000
             && incoming().cash is number && incoming().cash >= 0 && incoming().cash <= 10000000000000
             && incoming().gems is number && incoming().gems >= 0 && incoming().gems <= 1000000000
@@ -376,7 +425,7 @@ service cloud.firestore {
           && isValidId(notificationId)
           && isValidNotification(incoming())
           && affectedOnly(['read'])
-          && existing().read == false
+          && existing().read is bool
           && incoming().read == true;
         allow delete: if isOwner(uid) && isValidId(uid) && isValidId(notificationId);
       }

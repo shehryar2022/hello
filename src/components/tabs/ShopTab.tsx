@@ -373,4 +373,54 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
       )}
     </div>
   );
+}, (prev, next) => {
+  if (
+    prev.subTab !== next.subTab ||
+    prev.dayKey !== next.dayKey ||
+    prev.onChangeSubTab !== next.onChangeSubTab ||
+    prev.onBuyRank !== next.onBuyRank ||
+    prev.onBuySubscription !== next.onBuySubscription ||
+    prev.onClaimSubDaily !== next.onClaimSubDaily ||
+    prev.onBuyBooster !== next.onBuyBooster
+  ) {
+    return false;
+  }
+  const p = prev.state;
+  const n = next.state;
+  if (
+    p.cash !== n.cash ||
+    p.gems !== n.gems ||
+    p.rank !== n.rank ||
+    p.b !== n.b ||
+    p.tech !== n.tech ||
+    p.gx?.lvl !== n.gx?.lvl ||
+    p.sub !== n.sub ||
+    p.subPromo !== n.subPromo ||
+    p.activeFx !== n.activeFx ||
+    p.boosterCd !== n.boosterCd
+  ) {
+    return false;
+  }
+  const pNow = (p.t || 0) + (prev.serverOffsetMs || 0);
+  const nNow = (n.t || 0) + (next.serverOffsetMs || 0);
+  const pSubActive = !!getActiveSubscription(p, pNow);
+  const nSubActive = !!getActiveSubscription(n, nNow);
+  if (pSubActive !== nSubActive) return false;
+  const pPromoActive = (p.subPromo?.exp || 0) > pNow;
+  const nPromoActive = (n.subPromo?.exp || 0) > nNow;
+  if (pPromoActive !== nPromoActive) return false;
+  if (prev.subTab === 'rank') return true;
+  if (prev.subTab === 'sub') {
+    return Math.floor(pNow / 60_000) === Math.floor(nNow / 60_000);
+  }
+  // subTab === 'boost': only re-render per second when a booster or cooldown is counting down
+  const pBoostActive = getActiveShopIncomeBooster(p, pNow).active;
+  const nBoostActive = getActiveShopIncomeBooster(n, nNow).active;
+  if (pBoostActive || nBoostActive) return false;
+  const cds = n.boosterCd || {};
+  const minNow = Math.min(pNow, nNow);
+  for (const exp of Object.values(cds)) {
+    if ((exp || 0) > minNow) return false;
+  }
+  return true;
 });

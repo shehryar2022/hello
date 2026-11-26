@@ -1,4 +1,4 @@
-import React, { memo, useMemo } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GOV_CHANGE_CD_MS, GOVS, POLICY_PRESETS } from '../../game/constants';
 import {
   calculateIncome,
@@ -79,17 +79,84 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
   onResetGame,
   onSaveCloudNow,
 }) => {
+  const [draft, setDraft] = useState<Partial<Record<keyof GameState, number>>>({});
+  const timersRef = useRef<Partial<Record<string, number>>>({});
+  const draftRef = useRef<Partial<Record<keyof GameState, number>>>({});
+  draftRef.current = draft;
+
+  const clearAllDraftTimers = useCallback(() => {
+    for (const key of Object.keys(timersRef.current)) {
+      const tid = timersRef.current[key];
+      if (tid) window.clearTimeout(tid);
+      delete timersRef.current[key];
+    }
+  }, []);
+
+  useEffect(() => clearAllDraftTimers, [clearAllDraftTimers]);
+
+  // Clear local draft entries once committed props match or remote reset happens
+  useEffect(() => {
+    setDraft((prev) => {
+      const keys = Object.keys(prev) as Array<keyof GameState>;
+      if (!keys.length) return prev;
+      let changed = false;
+      const next = { ...prev };
+      for (const k of keys) {
+        if (Number(state[k] || 0) === next[k] && !timersRef.current[k as string]) {
+          delete next[k];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [state]);
+
+  const effectiveState = useMemo(
+    () => (Object.keys(draft).length ? ({ ...state, ...draft } as GameState) : state),
+    [state, draft],
+  );
+
   const nowSrv = (state.t || Date.now()) + serverOffsetMs;
-  const ti = useMemo(() => taxInfo(state), [state]);
-  const inc = useMemo(() => calculateIncome(state, { nowMs: nowSrv }), [state, nowSrv]);
-  const gov = useMemo(() => getGovDefinition(state), [state]);
+  const ti = useMemo(() => taxInfo(effectiveState), [effectiveState]);
+  const inc = useMemo(() => calculateIncome(effectiveState, { nowMs: nowSrv }), [effectiveState, nowSrv]);
+  const gov = useMemo(() => getGovDefinition(effectiveState), [effectiveState]);
   const govCd = Math.max(0, (state.govT || 0) + GOV_CHANGE_CD_MS - nowSrv);
   const worldEv = currentWorldEvent(nowSrv);
-  const targHap = useMemo(() => Math.round(targetHappiness(state)), [state]);
-  const recPreset = useMemo(() => getRecommendedPolicyHint(state), [state]);
+  const targHap = useMemo(() => Math.round(targetHappiness(effectiveState)), [effectiveState]);
+  const recPreset = useMemo(() => getRecommendedPolicyHint(effectiveState), [effectiveState]);
+
+  const flushSlider = useCallback(
+    (key: keyof GameState, value?: number) => {
+      const kStr = key as string;
+      const tid = timersRef.current[kStr];
+      if (tid) {
+        window.clearTimeout(tid);
+        delete timersRef.current[kStr];
+      }
+      const nextVal = value ?? draftRef.current[key];
+      if (typeof nextVal === 'number' && Number(state[key] || 0) !== nextVal) {
+        onPolicyChange(key, nextVal);
+      }
+    },
+    [onPolicyChange, state],
+  );
+
+  const handleSliderInput = useCallback(
+    (key: keyof GameState, val: number) => {
+      setDraft((prev) => ({ ...prev, [key]: val }));
+      const kStr = key as string;
+      const prevTimer = timersRef.current[kStr];
+      if (prevTimer) window.clearTimeout(prevTimer);
+      timersRef.current[kStr] = window.setTimeout(() => {
+        delete timersRef.current[kStr];
+        onPolicyChange(key, val);
+      }, 75);
+    },
+    [onPolicyChange],
+  );
 
   const renderSlider = (s: (typeof TAX_SLIDERS)[number]) => {
-    const val = Number(state[s.key] || 0);
+    const val = draft[s.key] ?? Number(state[s.key] || 0);
     const pct = Math.max(0, Math.min(100, ((val - s.min) / (s.max - s.min)) * 100));
     return (
       <div key={s.key} className="sl" style={{ '--ac': s.color } as React.CSSProperties}>
@@ -107,7 +174,10 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
           value={val}
           aria-label={s.label}
           style={{ '--p': `${pct}%` } as React.CSSProperties}
-          onChange={(e) => onPolicyChange(s.key, Number(e.target.value))}
+          onChange={(e) => handleSliderInput(s.key, Number(e.target.value))}
+          onPointerUp={(e) => flushSlider(s.key, Number(e.currentTarget.value))}
+          onBlur={(e) => flushSlider(s.key, Number(e.currentTarget.value))}
+          onKeyUp={(e) => flushSlider(s.key, Number(e.currentTarget.value))}
         />
         <p className="dim">{s.desc}</p>
       </div>
@@ -128,7 +198,11 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
               key={preset.id}
               type="button"
               className={`preset-btn${isRec ? ' rec-card' : ''}`}
-              onClick={() => onApplyPreset(preset.id)}
+              onClick={() => {
+                clearAllDraftTimers();
+                setDraft({});
+                onApplyPreset(preset.id);
+              }}
             >
               <b>
                 {preset.label}
@@ -268,4 +342,45 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
       )}
     </div>
   );
+}, (prev, next) => {
+  if (
+    prev.uid !== next.uid ||
+    prev.onPolicyChange !== next.onPolicyChange ||
+    prev.onApplyPreset !== next.onApplyPreset ||
+    prev.onChangeGov !== next.onChangeGov ||
+    prev.onResetGame !== next.onResetGame ||
+    prev.onSaveCloudNow !== next.onSaveCloudNow
+  ) {
+    return false;
+  }
+  const p = prev.state;
+  const n = next.state;
+  if (
+    p.cash !== n.cash ||
+    p.gov !== n.gov ||
+    p.govT !== n.govT ||
+    p.rank !== n.rank ||
+    p.boost !== n.boost ||
+    Math.round(p.pop) !== Math.round(n.pop) ||
+    p.b !== n.b ||
+    p.stk !== n.stk ||
+    p.tech !== n.tech ||
+    p.gx !== n.gx ||
+    p.activeFx !== n.activeFx ||
+    p.sub !== n.sub
+  ) {
+    return false;
+  }
+  for (const s of TAX_SLIDERS) {
+    if (p[s.key] !== n[s.key]) return false;
+  }
+  for (const s of SPENDING_SLIDERS) {
+    if (p[s.key] !== n[s.key]) return false;
+  }
+  const pNow = (p.t || 0) + prev.serverOffsetMs;
+  const nNow = (n.t || 0) + next.serverOffsetMs;
+  if (currentWorldEvent(pNow) !== null || currentWorldEvent(nNow) !== null) return false;
+  const pCdHours = Math.max(0, Math.ceil(((p.govT || 0) + GOV_CHANGE_CD_MS - pNow) / 3_600_000));
+  const nCdHours = Math.max(0, Math.ceil(((n.govT || 0) + GOV_CHANGE_CD_MS - nNow) / 3_600_000));
+  return pCdHours === nCdHours;
 });

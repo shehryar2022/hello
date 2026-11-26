@@ -87,7 +87,11 @@ import {
   subscribeErrorLog,
 } from './firebase/errorLog';
 import {
-  ACTIVE_WINDOW_MS,
+  filterAndSortLeaderboard,
+  isHeartbeatDue,
+  shouldRefreshPresenceQuery,
+} from './firebase/presence';
+import {
   BOOSTERS,
   BUILDINGS,
   COUNTRIES,
@@ -263,6 +267,11 @@ export default function App() {
   const [serverOffsetMs, setServerOffsetMs] = useState(0);
   const serverOffsetMsRef = useRef<number>(0);
   const serverTimeVerifiedRef = useRef<boolean>(false);
+  const [presenceEpoch, setPresenceEpoch] = useState(0);
+  const leaderboardRawRef = useRef<PlayerProfile[]>([]);
+  const lastHeartbeatSuccessAtRef = useRef<number>(0);
+  const lastHeartbeatAttemptAtRef = useRef<number>(0);
+  const ownLastSeenMsRef = useRef<number>(0);
   const lastActivityRef = useRef<number>(Date.now());
   const cloudSyncTimerRef = useRef<number | null>(null);
   const syncRetryTimerRef = useRef<number | null>(null);
@@ -297,6 +306,7 @@ export default function App() {
   const projPrevTickMsRef = useRef<Record<string, number>>({});
   const lastCityTapRef = useRef<number>(0);
   const settlingTradesRef = useRef<boolean>(false);
+  const markingNotifIdsRef = useRef<Set<string>>(new Set());
   const tradesRef = useRef<TradeOffer[]>([]);
   tradesRef.current = trades;
   const lastSettledTradeCheckRef = useRef<number>(0);
@@ -309,10 +319,44 @@ export default function App() {
 
   const updateServerOffset = useCallback((srvMs: number) => {
     if (srvMs > 0 && Number.isFinite(srvMs)) {
+      const prevOffset = serverOffsetMsRef.current;
+      const wasVerified = serverTimeVerifiedRef.current;
       const next = srvMs - Date.now();
       serverOffsetMsRef.current = next;
       serverTimeVerifiedRef.current = true;
       setServerOffsetMs((prev) => (Math.abs(prev - next) >= 1000 ? next : prev));
+      if (shouldRefreshPresenceQuery(prevOffset, next, wasVerified)) {
+        const curUid = uidRef.current;
+        if (curUid && leaderboardRawRef.current.length > 0) {
+          setLeaderboard(filterAndSortLeaderboard(leaderboardRawRef.current, curUid, Date.now() + next));
+        }
+        setPresenceEpoch((n) => n + 1);
+      }
+    }
+  }, []);
+
+  const triggerHeartbeat = useCallback(async () => {
+    const currentUid = uidRef.current;
+    if (
+      !currentUid ||
+      !cloudReadyRef.current ||
+      kickedRef.current ||
+      needsOnboardingRef.current ||
+      cloudSyncBusyRef.current ||
+      cloudSyncPermDeniedRef.current ||
+      cloudSyncQuotaPausedRef.current
+    ) {
+      return;
+    }
+    lastHeartbeatAttemptAtRef.current = Date.now();
+    try {
+      await sendHeartbeat(currentUid);
+      lastHeartbeatSuccessAtRef.current = Date.now();
+    } catch (err) {
+      const code = extractErrorCode(err);
+      if (code !== 'aborted' && code !== 'unavailable') {
+        recordFirestoreError(err, OperationType.UPDATE, `players/${currentUid}`);
+      }
     }
   }, []);
 
@@ -524,8 +568,14 @@ export default function App() {
             return next;
           });
           cloudDirtyRef.current = true;
+          void sendHeartbeat(currentUid)
+            .then(() => {
+              lastHeartbeatSuccessAtRef.current = Date.now();
+            })
+            .catch(() => null);
         } else {
           pendingDirtyRef.current = false;
+          lastHeartbeatSuccessAtRef.current = Date.now();
         }
         setCloudStatus({ cls: 'ok', text: 'Saved' });
       } catch (err) {
@@ -654,8 +704,13 @@ export default function App() {
     [performCloudSync],
   );
 
-  // Automatically recover cloud sync when browser regains connectivity, and flush dirty saves on tab hide
+  // Automatically recover cloud sync, heartbeat, and presence listeners on connectivity or tab resume
   useEffect(() => {
+    const onOffline = () => {
+      if (uidRef.current && cloudReadyRef.current) {
+        setCloudStatus({ cls: 'warn', text: 'Offline (local)' });
+      }
+    };
     const onOnline = () => {
       if (
         uidRef.current &&
@@ -666,12 +721,18 @@ export default function App() {
       ) {
         syncRetryCountRef.current = 0;
         cloudSyncQuotaPausedRef.current = false;
+        setPresenceEpoch((n) => n + 1);
         if (pendingDirtyRef.current) {
           void performCloudSync(false);
+        } else {
+          setCloudStatus({ cls: 'ok', text: 'Saved' });
+          void triggerHeartbeat();
         }
       }
     };
+    document.body.classList.toggle('doc-hidden', document.visibilityState === 'hidden');
     const onVisChange = () => {
+      document.body.classList.toggle('doc-hidden', document.visibilityState === 'hidden');
       if (document.visibilityState === 'hidden') {
         saveLocal(stateRef.current);
         if (
@@ -686,15 +747,28 @@ export default function App() {
         ) {
           void performCloudSync(false);
         }
+      } else if (
+        document.visibilityState === 'visible' &&
+        uidRef.current &&
+        cloudReadyRef.current &&
+        !kickedRef.current &&
+        !needsOnboardingRef.current
+      ) {
+        if (isHeartbeatDue(lastHeartbeatSuccessAtRef.current, lastHeartbeatAttemptAtRef.current, Date.now(), 60_000, 15_000)) {
+          void triggerHeartbeat();
+        }
       }
     };
+    window.addEventListener('offline', onOffline);
     window.addEventListener('online', onOnline);
     document.addEventListener('visibilitychange', onVisChange);
     return () => {
+      document.body.classList.remove('doc-hidden');
+      window.removeEventListener('offline', onOffline);
       window.removeEventListener('online', onOnline);
       document.removeEventListener('visibilitychange', onVisChange);
     };
-  }, [performCloudSync, saveLocal]);
+  }, [performCloudSync, saveLocal, triggerHeartbeat]);
 
   // Daily check & offline earnings calculation (pure computation; caller displays dialog/toast)
   const runDailyAndOfflineChecks = useCallback(
@@ -835,6 +909,10 @@ export default function App() {
         settlingTradesRef.current = false;
         serverTimeVerifiedRef.current = false;
         serverOffsetMsRef.current = 0;
+        lastHeartbeatSuccessAtRef.current = 0;
+        lastHeartbeatAttemptAtRef.current = 0;
+        ownLastSeenMsRef.current = 0;
+        leaderboardRawRef.current = [];
         projBusyRef.current.clear();
         projPayBusyRef.current.clear();
         projCreatingRef.current = false;
@@ -1065,34 +1143,18 @@ export default function App() {
         doc(db, 'players', uid),
         (snap) => {
           if (!snap.exists()) return;
-          const d = snap.data() as Omit<PlayerProfile, 'id'>;
+          const d = snap.data({ serverTimestamps: 'estimate' }) as Omit<PlayerProfile, 'id'>;
+          const seenMs = timestampToMs(d.lastSeen);
+          if (!snap.metadata.hasPendingWrites && seenMs > ownLastSeenMsRef.current) {
+            ownLastSeenMsRef.current = seenMs;
+            if (!serverTimeVerifiedRef.current) {
+              updateServerOffset(seenMs);
+            }
+          }
           completedTradesRef.current = d.stats?.completedTrades || 0;
-          setPubProfile({ ...d, id: snap.id, seen: timestampToMs(d.lastSeen) });
+          setPubProfile({ ...d, id: snap.id, seen: seenMs });
         },
         (err) => handleSnapshotError(`players/${uid}`, err),
-      ),
-    );
-
-    // 4. Active leaderboard listener
-    unsubs.push(
-      onSnapshot(
-        queries.playersActiveQuery(serverOffsetMsRef.current),
-        (snap) => {
-          const nowEst = Date.now() + serverOffsetMsRef.current;
-          const rows = snap.docs
-            .map((d) => {
-              const data = d.data({ serverTimestamps: 'estimate' }) as Omit<PlayerProfile, 'id'>;
-              return { ...data, id: d.id, seen: timestampToMs(data.lastSeen) };
-            })
-            .filter((p) => p.id === uid || (p.seen && nowEst - p.seen <= ACTIVE_WINDOW_MS))
-            .sort((a, b) => (b.gdp || 0) - (a.gdp || 0));
-          setLeaderboard(rows);
-          setLbLoaded(true);
-        },
-        (err) => {
-          setLbLoaded(true);
-          handleSnapshotError('players', err);
-        },
       ),
     );
 
@@ -1250,36 +1312,74 @@ export default function App() {
       ),
     );
 
-    // Heartbeat interval (skip initial heartbeat if an initial sync is queued to avoid transaction contention)
-    if (!pendingDirtyRef.current && !cloudSyncPermDeniedRef.current && !cloudSyncQuotaPausedRef.current) {
-      void sendHeartbeat(uid).catch((err) => {
-        if (extractErrorCode(err) !== 'aborted') {
-          recordFirestoreError(err, OperationType.UPDATE, `players/${uid}`);
+    // Initial heartbeat + resilience loop (retries transient failures within 30s, normal cadence 3m)
+    if (!pendingDirtyRef.current) {
+      void triggerHeartbeat();
+    } else {
+      const initHbTimer = window.setTimeout(() => {
+        if (isHeartbeatDue(lastHeartbeatSuccessAtRef.current, lastHeartbeatAttemptAtRef.current, Date.now(), HEARTBEAT_MS, 5000)) {
+          void triggerHeartbeat();
         }
-      });
+      }, 2500);
+      unsubs.push(() => window.clearTimeout(initHbTimer));
     }
+
     const hb = window.setInterval(() => {
       if (
         !document.hidden &&
-        !kickedRef.current &&
-        !cloudSyncBusyRef.current &&
-        !cloudSyncPermDeniedRef.current &&
-        !cloudSyncQuotaPausedRef.current &&
-        Date.now() - lastSyncedAtRef.current >= HEARTBEAT_MS - 5000
+        isHeartbeatDue(lastHeartbeatSuccessAtRef.current, lastHeartbeatAttemptAtRef.current, Date.now())
       ) {
-        void sendHeartbeat(uid).catch((err) => {
-          if (extractErrorCode(err) !== 'aborted') {
-            recordFirestoreError(err, OperationType.UPDATE, `players/${uid}`);
-          }
-        });
+        void triggerHeartbeat();
       }
-    }, HEARTBEAT_MS);
+    }, 30_000);
 
     return () => {
       window.clearInterval(hb);
       unsubs.forEach((u) => u());
     };
-  }, [uid, cloudReady, needsOnboarding, kicked, handleKicked, handleSnapshotError, saveLocal, updateServerOffset]);
+  }, [uid, cloudReady, needsOnboarding, kicked, handleKicked, handleSnapshotError, saveLocal, triggerHeartbeat, updateServerOffset]);
+
+  // Dedicated realtime active-players listener + periodic presence pruning & window sliding
+  useEffect(() => {
+    if (!uid || !cloudReady || needsOnboarding || kicked) return;
+    const queries = buildQueryHelpers();
+    const unsub = onSnapshot(
+      queries.playersActiveQuery(serverOffsetMsRef.current),
+      (snap) => {
+        const nowEst = Date.now() + serverOffsetMsRef.current;
+        const rawRows = snap.docs.map((d) => {
+          const data = d.data({ serverTimestamps: 'estimate' }) as Omit<PlayerProfile, 'id'>;
+          return { ...data, id: d.id, seen: timestampToMs(data.lastSeen) };
+        });
+        leaderboardRawRef.current = rawRows;
+        setLeaderboard(filterAndSortLeaderboard(rawRows, uid, nowEst));
+        setLbLoaded(true);
+      },
+      (err) => {
+        setLbLoaded(true);
+        handleSnapshotError('players', err);
+      },
+    );
+
+    const pruneTimer = window.setInterval(() => {
+      if (leaderboardRawRef.current.length > 0) {
+        const nowEst = Date.now() + serverOffsetMsRef.current;
+        setLeaderboard(filterAndSortLeaderboard(leaderboardRawRef.current, uid, nowEst));
+      }
+    }, 15_000);
+
+    const slideTimer = window.setInterval(() => {
+      if (!document.hidden) {
+        setPresenceEpoch((n) => n + 1);
+      }
+    }, HEARTBEAT_MS);
+
+    return () => {
+      window.clearInterval(pruneTimer);
+      window.clearInterval(slideTimer);
+      unsub();
+    };
+  }, [uid, cloudReady, needsOnboarding, kicked, presenceEpoch, handleSnapshotError]);
 
   // Direct messages listener for active DM recipient
   useEffect(() => {
@@ -1602,7 +1702,7 @@ export default function App() {
         now - lastSettledTradeCheckRef.current >= 5000 &&
         tradesRef.current.some(
           (t) =>
-            (t.from === curUid && t.status === 'pending' && t.expMs > 0 && t.expMs + 1500 <= nowSrv) ||
+            (t.from === curUid && t.status === 'pending' && t.expMs > 0 && t.expMs + 4500 <= nowSrv) ||
             (t.from === curUid && (t.status === 'rejected' || t.status === 'expired') && !t.refunded),
         )
       ) {
@@ -2543,11 +2643,18 @@ export default function App() {
     setNotifsOpen(true);
     const currentUid = uidRef.current;
     if (currentUid) {
-      const unreadIds = notifications.filter((n) => !n.read).map((n) => n.id);
+      const unreadIds = notifications
+        .filter((n) => !n.read && !markingNotifIdsRef.current.has(n.id))
+        .map((n) => n.id);
       if (unreadIds.length) {
-        void markNotificationsRead(currentUid, unreadIds).catch((err) => {
-          recordFirestoreError(err, OperationType.UPDATE, `players/${currentUid}/notifications`);
-        });
+        for (const id of unreadIds) markingNotifIdsRef.current.add(id);
+        void markNotificationsRead(currentUid, unreadIds)
+          .catch((err) => {
+            recordFirestoreError(err, OperationType.UPDATE, `players/${currentUid}/notifications`);
+          })
+          .finally(() => {
+            for (const id of unreadIds) markingNotifIdsRef.current.delete(id);
+          });
       }
     }
   }, [notifications]);
@@ -2701,7 +2808,7 @@ export default function App() {
   const handleCopyBannerError = useCallback(async () => {
     const header = [
       `Project: ${FIREBASE_CONFIG.projectId || 'unset'}`,
-      `Database: ${FIREBASE_CONFIG.firestoreDatabaseId || '(default)'}`,
+      'Database: (default)',
       `Auth UID: ${uid || 'signed-out'}${user?.email ? ` (${user.email})` : ''}`,
     ].join(' | ');
     const report = `${header}\n\n${formatErrorLogReport(appErrors)}`;

@@ -268,6 +268,7 @@ h2, .tabs b {
   perspective: 780px;
   perspective-origin: 50% 26%;
   overflow: hidden;
+  contain: layout paint;
   touch-action: pan-y;
   cursor: grab;
   user-select: none;
@@ -360,7 +361,7 @@ h2, .tabs b {
     repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.06) 0 1px, transparent 1px 42px),
     repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.06) 0 1px, transparent 1px 42px),
     linear-gradient(135deg, #6b58cf, #3e318b);
-  box-shadow: 0 0 48px rgba(124, 92, 255, 0.45), 0 18px 0 #0a0624, 0 22px 28px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 16px 0 #0a0624, 0 18px 14px rgba(0, 0, 0, 0.48), 0 0 18px rgba(124, 92, 255, 0.32);
   transform: translateZ(-1px);
 }
 
@@ -1704,7 +1705,13 @@ body.gate-open .city.sway .em3,
 body.gate-open .car,
 body.gate-open .sub-card::after,
 body.gate-open .sub-crest,
-body.gate-open .sub-crest-ic {
+body.gate-open .sub-crest-ic,
+body.doc-hidden .city.sway,
+body.doc-hidden .city.sway .em3,
+body.doc-hidden .car,
+body.doc-hidden .sub-card::after,
+body.doc-hidden .sub-crest,
+body.doc-hidden .sub-crest-ic {
   animation-play-state: paused !important;
 }
 

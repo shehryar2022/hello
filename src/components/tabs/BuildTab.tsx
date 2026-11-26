@@ -128,4 +128,34 @@ export const BuildTab: React.FC<BuildTabProps> = memo(({ state, serverOffsetMs =
       </div>
     </div>
   );
+}, (prev, next) => {
+  if (prev.onBuyBuilding !== next.onBuyBuilding || prev.state.cash !== next.state.cash) return false;
+  const pNow = (prev.state.t || 0) + (prev.serverOffsetMs || 0);
+  const nNow = (next.state.t || 0) + (next.serverOffsetMs || 0);
+  const pSubActive = !!(prev.state.sub?.tier && (prev.state.sub?.exp || 0) > pNow);
+  const nSubActive = !!(next.state.sub?.tier && (next.state.sub?.exp || 0) > nNow);
+  if (pSubActive !== nSubActive || prev.state.sub?.tier !== next.state.sub?.tier) return false;
+  const pB = prev.state.b;
+  const nB = next.state.b;
+  if (pB !== nB) {
+    for (const d of BUILDINGS) {
+      if ((pB[d.id] || 0) !== (nB[d.id] || 0)) return false;
+    }
+  }
+  const pL = prev.state.gx?.lvl;
+  const nL = next.state.gx?.lvl;
+  if (pL !== nL) {
+    for (const d of BUILDINGS) {
+      if ((pL?.[d.id] || 1) !== (nL?.[d.id] || 1)) return false;
+    }
+  }
+  if (prev.state.tech !== next.state.tech) {
+    const pk = Object.keys(prev.state.tech || {});
+    const nk = Object.keys(next.state.tech || {});
+    if (pk.length !== nk.length) return false;
+    for (const k of pk) {
+      if (!!prev.state.tech?.[k] !== !!next.state.tech?.[k]) return false;
+    }
+  }
+  return true;
 });

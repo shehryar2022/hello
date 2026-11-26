@@ -13,6 +13,7 @@ import {
   TECH_TREE,
 } from './constants';
 import {
+  ALLOWED_SAVE_KEYS,
   applyActivateGemBoost,
   applyBuyBooster,
   applyBuyBuilding,
@@ -817,6 +818,126 @@ test('atomic gameplay updaters prevent double-click double-spend, double-collect
   assert.equal(sanitized.gx.exp?.el, 1e13);
 });
 
+test('cleanSavePayload clamps policy sliders and activeFx to Firestore rule bounds', () => {
+  const dirty = freshState();
+  dirty.tax = 99;
+  dirty.wel = -10;
+  dirty.prop = 40;
+  dirty.transitSub = 99;
+  dirty.boost = 100;
+  dirty.activeFx = { incomeBoostMult: 5, incomeBoostEnd: Date.now() + 60_000 };
+  const cleaned = cleanSavePayload(dirty);
+  assert.equal(cleaned.tax, 45);
+  assert.equal(cleaned.wel, 0);
+  assert.equal(cleaned.prop, 15);
+  assert.equal(cleaned.transitSub, 25);
+  assert.equal(cleaned.boost, 30);
+  assert.equal((cleaned.activeFx as { incomeBoostMult?: number } | undefined)?.incomeBoostMult, 1.75);
+});
 
+test('cleanSavePayload matches 47 ALLOWED_SAVE_KEYS and sanitizes nested edge cases (NaN, Infinity, -0, expired FX, oversized maps)', () => {
+  const freshCleaned = cleanSavePayload(freshState());
+  assert.equal(ALLOWED_SAVE_KEYS.size, 47);
+  assert.deepEqual(Object.keys(freshCleaned).sort(), [...ALLOWED_SAVE_KEYS].sort());
 
+  const now = Date.now();
+  const nasty = {
+    ...freshState(),
+    taxPool: -0,
+    day: 202.33333333333337,
+    hap: Number.POSITIVE_INFINITY,
+    appr: -12,
+    pop: 0.4,
+    crateCd: Number.NaN,
+    ev: -5,
+    hist: [-50, Number.NaN, 120.5, 9e15, ...Array.from({ length: 70 }, (_, i) => i + 1)],
+    questIds: [-1, Number.NaN, 5.9, 53, 30, 8, 9999, 1, 2, 3, 4, 5, 6],
+    questDay: '2026-11-26-' + 'x'.repeat(50),
+    stk: {
+      ...Object.fromEntries(STICKERS.map((s) => [s.id, 9e12])),
+      unknown_sticker: 99,
+    },
+    set: { sfx: 9 as unknown as number, vib: 0, anim: -0, extraSet: 1 } as never,
+    activeFx: {
+      incomeBoostEnd: now + 60_000,
+      incomeBoostMult: 1.75,
+      incomeBoostId: 'boom_surge_extra_long_identifier_string_that_gets_sliced',
+      taxSurge: 1,
+      shadowFx: 99,
+    } as never,
+    gx: {
+      cond: { parl: 99.85, gov: Number.NaN, hosp: -4, sch: 120, road: -0, hway: 50, extraCond: 10 },
+      lvl: { farm: 99, fact: -2, extraBld: 3 },
+      acc: 9999,
+      blk: 9e9,
+      pb: 5,
+      ph: -3,
+      log: ['Entry 1', 'y'.repeat(160)],
+      exp: {
+        sal: Number.NaN,
+        el: -0,
+        inf: 9e15,
+        total: 1234.9,
+        paid: 500,
+        n: 2_000_000,
+        t: now,
+        shadowExp: 42,
+      },
+      shadowGx: true,
+    } as never,
+    sub: { tier: 'monthly', exp: now + 7 * 86_400_000, lastClaimDay: '2026-11-26', shadowSub: 1 } as never,
+    subPromo: { weekKey: '2026-W48', tier: 'daily', pct: 25, exp: now + 86_400_000, shadowPromo: 1 } as never,
+    avHist: [1.27, 2.65],
+    avs: { n: 0, b: 0, w: 0, r: 0 },
+  };
+
+  const out = cleanSavePayload(nasty as never);
+  assert.deepEqual(Object.keys(out).sort(), [...ALLOWED_SAVE_KEYS].sort());
+  assert.equal(Object.is(out.taxPool, 0), true);
+  assert.equal(out.day, 202.33333333333337);
+  assert.equal(out.hap, 60);
+  assert.equal(out.appr, 0);
+  assert.equal(out.pop, 1);
+  assert.equal(Object.is(out.crateCd, 0), true);
+  assert.equal(out.ev, 0);
+
+  const hist = out.hist as number[];
+  assert.equal(hist.length, 60);
+  assert.ok(hist.every((v) => Number.isFinite(v) && v >= 0 && v <= 1e13));
+
+  const qIds = out.questIds as number[];
+  assert.equal(qIds.length, 10);
+  assert.ok(qIds.every((v) => Number.isInteger(v) && v >= 0 && v <= 1000));
+  assert.equal((out.questDay as string).length, 32);
+
+  const stk = out.stk as Record<string, number>;
+  assert.equal('unknown_sticker' in stk, false);
+  assert.equal(stk[STICKERS[0].id], 1e9);
+
+  const setObj = out.set as Record<string, unknown>;
+  assert.deepEqual(Object.keys(setObj).sort(), ['anim', 'sfx', 'vib']);
+  assert.equal(Object.is(setObj.anim, 0), true);
+
+  const fxObj = out.activeFx as Record<string, unknown>;
+  assert.equal('shadowFx' in fxObj, false);
+  assert.equal((fxObj.incomeBoostId as string).length, 32);
+
+  const gxObj = out.gx as Record<string, unknown>;
+  assert.equal('shadowGx' in gxObj, false);
+  assert.equal(gxObj.acc, 300);
+  assert.equal(gxObj.blk, 1_000_000);
+  assert.equal(gxObj.pb, 0.25);
+  assert.equal(Object.is(gxObj.ph, 0), true);
+  const expObj = gxObj.exp as Record<string, unknown>;
+  assert.equal('shadowExp' in expObj, false);
+  assert.equal(Object.is(expObj.sal, 0), true);
+  assert.equal(Object.is(expObj.el, 0), true);
+  assert.equal(expObj.inf, 1e13);
+  assert.equal(expObj.n, 1_000_000);
+
+  const subObj = out.sub as Record<string, unknown>;
+  assert.equal('shadowSub' in subObj, false);
+  const promoObj = out.subPromo as Record<string, unknown>;
+  assert.equal('shadowPromo' in promoObj, false);
+});
 

@@ -1,5 +1,6 @@
 import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { ACTIVE_WINDOW_MS, RANKS, SUBSCRIPTIONS } from '../../game/constants';
+import { RANKS, SUBSCRIPTIONS } from '../../game/constants';
+import { isPlayerOnline } from '../../firebase/presence';
 import { calculateGdp, formatNumber, isProfileSubActive } from '../../game/rules';
 import type { ChatMessage, DmRecipient, GameState, PlayerProfile, PlayersSubTab } from '../../game/types';
 import {
@@ -155,7 +156,7 @@ export const PlayersTab: React.FC<PlayersTabProps> = memo(({
                 {leaderboard.map((p, idx) => {
                   const me = p.id === uid;
                   const rk = RANKS[p.rank || 0] || RANKS[0];
-                  const isOnline = !me && p.seen && nowSrv - p.seen <= ACTIVE_WINDOW_MS;
+                  const isOnline = !me && isPlayerOnline(p.seen, nowSrv);
                   const subTier = isProfileSubActive(p, nowSrv);
                   const subLabel = subTier
                     ? SUBSCRIPTIONS.find((x) => x.id === subTier)?.periodLabel || subTier
@@ -234,7 +235,7 @@ export const PlayersTab: React.FC<PlayersTabProps> = memo(({
               </div>
               <p className="cnote" style={{ marginTop: 8 }}>
                 {leaderboard.length < 2 ? 'Nobody else is online right now. ' : ''}
-                Only players active in the last 4 minutes are listed. Ranks update live.
+                Only players active in the last 5 minutes are listed. Ranks update live.
               </p>
             </>
           )}
@@ -391,4 +392,42 @@ export const PlayersTab: React.FC<PlayersTabProps> = memo(({
       )}
     </div>
   );
+}, (prev, next) => {
+  if (
+    prev.uid !== next.uid ||
+    prev.ready !== next.ready ||
+    prev.subTab !== next.subTab ||
+    prev.leaderboard !== next.leaderboard ||
+    prev.lbLoaded !== next.lbLoaded ||
+    prev.globalChat !== next.globalChat ||
+    prev.dmMessages !== next.dmMessages ||
+    prev.dmRecipient !== next.dmRecipient ||
+    prev.recentDms !== next.recentDms ||
+    prev.onChangeSubTab !== next.onChangeSubTab ||
+    prev.onOpenLogin !== next.onOpenLogin ||
+    prev.onOpenProfile !== next.onOpenProfile ||
+    prev.onStartGift !== next.onStartGift ||
+    prev.onOpenDm !== next.onOpenDm ||
+    prev.onBackDm !== next.onBackDm ||
+    prev.onSendGlobalChat !== next.onSendGlobalChat ||
+    prev.onSendDm !== next.onSendDm
+  ) {
+    return false;
+  }
+  const p = prev.state;
+  const n = next.state;
+  if (
+    p.hist !== n.hist ||
+    p.cash !== n.cash ||
+    p.rank !== n.rank ||
+    p.b !== n.b ||
+    p.tech !== n.tech ||
+    p.gx?.lvl !== n.gx?.lvl ||
+    p.sub !== n.sub
+  ) {
+    return false;
+  }
+  const pBucket = Math.floor(((p.t || 0) + (prev.serverOffsetMs || 0)) / 30_000);
+  const nBucket = Math.floor(((n.t || 0) + (next.serverOffsetMs || 0)) / 30_000);
+  return pBucket === nBucket;
 });
