@@ -324,27 +324,52 @@ test('normalizeProject never sets a 1970 deadline when startedAt is null/pending
   assert.ok(pendingProj.dl > fallbackNow);
 });
 
-test('subscriptions cost 5M-500M, grant modest perks, and prevent same-day double-claim on upgrade', () => {
+test('subscriptions use Coins (100K/1M/10M for 2h/3d/7d), never touch Diamonds, track start & expiry, prevent duplicates & expire cleanly', () => {
   const now = 1_750_000_000_000;
-  const daily = SUBSCRIPTIONS.find((s) => s.id === 'daily')!;
-  const weekly = SUBSCRIPTIONS.find((s) => s.id === 'weekly')!;
-  const monthly = SUBSCRIPTIONS.find((s) => s.id === 'monthly')!;
+  const sub2h = SUBSCRIPTIONS.find((s) => s.id === 'daily')!;
+  const sub3d = SUBSCRIPTIONS.find((s) => s.id === 'weekly')!;
+  const sub7d = SUBSCRIPTIONS.find((s) => s.id === 'monthly')!;
 
-  assert.equal(daily.cost, 5_000_000);
-  assert.equal(daily.incomeMult, 1.04);
-  assert.equal(daily.discountRate, 0.03);
-  assert.equal(daily.dailyCash, 200_000);
-  assert.equal(weekly.cost, 65_000_000);
-  assert.equal(weekly.incomeMult, 1.08);
-  assert.equal(weekly.discountRate, 0.06);
-  assert.equal(weekly.dailyCash, 900_000);
-  assert.equal(monthly.cost, 500_000_000);
-  assert.equal(monthly.incomeMult, 1.12);
-  assert.equal(monthly.discountRate, 0.1);
-  assert.equal(monthly.dailyCash, 3_500_000);
+  assert.equal(sub2h.currency, 'coins');
+  assert.equal(sub2h.cost, 100_000);
+  assert.equal(sub2h.durMs, 2 * 3_600_000);
+  assert.equal(sub2h.incomeMult, 1.04);
+  assert.equal(sub2h.discountRate, 0.03);
+  assert.equal(sub2h.dailyCash, 200_000);
 
+  assert.equal(sub3d.currency, 'coins');
+  assert.equal(sub3d.cost, 1_000_000);
+  assert.equal(sub3d.durMs, 3 * 86_400_000);
+  assert.equal(sub3d.incomeMult, 1.08);
+  assert.equal(sub3d.discountRate, 0.06);
+  assert.equal(sub3d.dailyCash, 900_000);
+
+  assert.equal(sub7d.currency, 'coins');
+  assert.equal(sub7d.cost, 10_000_000);
+  assert.equal(sub7d.durMs, 7 * 86_400_000);
+  assert.equal(sub7d.incomeMult, 1.12);
+  assert.equal(sub7d.discountRate, 0.1);
+  assert.equal(sub7d.dailyCash, 3_500_000);
+
+  // Even with huge Diamonds, insufficient Coins MUST reject without deducting cash or gems
+  const poorCashRichGems = freshState();
+  poorCashRichGems.cash = 99_999;
+  poorCashRichGems.gems = 9999;
+  const denied2h = applyBuySubscription(poorCashRichGems, sub2h, now);
+  assert.equal(denied2h.ok, false);
+  assert.match(denied2h.reason || '', /Not enough Coins/i);
+  assert.equal(denied2h.state.cash, 99_999);
+  assert.equal(denied2h.state.gems, 9999);
+
+  // Negative / NaN Coins cannot buy and never become negative
+  const nanCash = { ...freshState(), cash: Number.NaN, gems: 500 };
+  assert.equal(applyBuySubscription(nanCash, sub2h, now).ok, false);
+  assert.equal(applyBuySubscription({ ...freshState(), cash: -100, gems: 500 }, sub2h, now).ok, false);
+
+  // Enough Coins + zero Diamonds succeeds and leaves Diamonds completely untouched
   let state = freshState();
-  state.cash = 600_000_000;
+  state.cash = 15_000_000;
+  state.gems = 7;
   state.b.farm = 10;
   state.gx.cond.parl = 50;
 
@@ -354,10 +379,17 @@ test('subscriptions cost 5M-500M, grant modest perks, and prevent same-day doubl
   const baseRepair = gxRepairCost(state, 'parl', false, now);
   const baseUpgrade = gxUpgradeCost(state, 'farm', now);
 
-  const sub1 = applyBuySubscription(state, daily, now);
+  const sub1 = applyBuySubscription(state, sub2h, now);
   assert.equal(sub1.ok, true);
+  assert.equal(sub1.paidCost, 100_000);
+  assert.equal(sub1.startAt, now);
+  assert.equal(sub1.exp, now + 2 * 3_600_000);
   state = sub1.state;
-  assert.equal(state.cash, 595_000_000);
+  assert.equal(state.cash, 14_900_000);
+  assert.equal(state.gems, 7, 'Diamonds must never be deducted when buying subscription');
+  assert.equal(state.sub?.exp, now + 2 * 3_600_000);
+  assert.equal(getActiveSubscription(state, now)?.startedAt, now);
+  assert.ok(state.gx.log[0].includes('2 Hours Pass') && state.gx.log[0].includes('100.0K'));
   assert.equal(getDevelopmentDiscount(state, now), 0.03);
   assert.equal(getProjectSpeedMult(state, now), 1.05);
   assert.ok(Math.abs(calculateIncome(state, { nowMs: now }).net / baseInc - 1.04) < 0.001);
@@ -365,7 +397,11 @@ test('subscriptions cost 5M-500M, grant modest perks, and prevent same-day doubl
   assert.ok(gxRepairCost(state, 'parl', false, now) < baseRepair);
   assert.ok(gxUpgradeCost(state, 'farm', now) < baseUpgrade);
 
-  assert.equal(canBuySubscription(state, daily, now + 1000).ok, false);
+  // Duplicate purchase of same tier blocked
+  assert.equal(canBuySubscription(state, sub2h, now + 1000).ok, false);
+  const dup2h = applyBuySubscription(state, sub2h, now + 1000);
+  assert.equal(dup2h.ok, false);
+  assert.equal(dup2h.state.cash, 14_900_000);
 
   const c1 = claimSubscriptionDaily(state, '2026-11-25', now + 2000);
   assert.equal(c1.ok, true);
@@ -374,22 +410,52 @@ test('subscriptions cost 5M-500M, grant modest perks, and prevent same-day doubl
 
   assert.equal(claimSubscriptionDaily(state, '2026-11-25', now + 3000).ok, false);
 
-  const sub2 = applyBuySubscription(state, weekly, now + 4000);
+  // Upgrade from 2 Hours -> 3 Days deducts 1M Coins, leaves Diamonds untouched, sets exact 3d expiry
+  const gemsBeforeUpgrade = state.gems;
+  const cashBeforeUpgrade = state.cash;
+  const sub2 = applyBuySubscription(state, sub3d, now + 4000);
   assert.equal(sub2.ok, true);
   state = sub2.state;
+  assert.equal(state.gems, gemsBeforeUpgrade);
+  assert.equal(state.cash, cashBeforeUpgrade - 1_000_000);
+  assert.equal(state.sub?.exp, now + 4000 + 3 * 86_400_000);
   assert.equal(getActiveSubscription(state, now + 5000)?.def.id, 'weekly');
+  assert.equal(getActiveSubscription(state, now + 5000)?.startedAt, now + 4000);
+  // Downgrade blocked while 3 Days is active
+  assert.equal(canBuySubscription(state, sub2h, now + 5000).ok, false);
+  // Same-day double-claim blocked after upgrade
   assert.equal(claimSubscriptionDaily(state, '2026-11-25', now + 5000).ok, false);
 
   const c2 = claimSubscriptionDaily(state, '2026-11-26', now + 86_400_000);
   assert.equal(c2.ok, true);
   assert.equal(c2.cashAdded, 900_000);
   assert.equal(c2.gemsAdded, 1);
+  state = c2.state;
 
-  const migrated = migrateState({
-    ...c2.state,
-    sub: { tier: 'monthly', exp: Date.now() + 999 * 86_400_000, lastClaimDay: '2026-11-26' },
-  });
-  assert.ok((migrated.sub?.exp || 0) <= Date.now() + 31 * 86_400_000 + 1000);
+  // Expiry handling: once 3d expires, active becomes null, zero benefits retained, player can re-subscribe
+  const afterExpiry = now + 4000 + 3 * 86_400_000 + 1000;
+  assert.equal(getActiveSubscription(state, afterExpiry), null);
+  assert.equal(getDevelopmentDiscount(state, afterExpiry), 0);
+  assert.equal(getProjectSpeedMult(state, afterExpiry), 1);
+  assert.equal(calculateIncome(state, { nowMs: afterExpiry }).net, calculateIncome({ ...state, sub: {} }, { nowMs: afterExpiry }).net);
+  const resub2h = applyBuySubscription(state, sub2h, afterExpiry);
+  assert.equal(resub2h.ok, true);
+  assert.equal(resub2h.state.cash, state.cash - 100_000);
+
+  // Weekly subscription (7 days) deducts 10M Coins and applies 7d duration
+  const weeklyBuy = applyBuySubscription({ ...freshState(), cash: 10_000_000, gems: 3 }, sub7d, now);
+  assert.equal(weeklyBuy.ok, true);
+  assert.equal(weeklyBuy.state.cash, 0);
+  assert.equal(weeklyBuy.state.gems, 3);
+  assert.equal(weeklyBuy.state.sub?.exp, now + 7 * 86_400_000);
+  assert.equal(getActiveSubscription(weeklyBuy.state, now + 1000)?.startedAt, now);
+
+  // Existing subscription data survives cleanSavePayload + migrateState safely
+  const payload = cleanSavePayload(weeklyBuy.state);
+  const restored = migrateState(payload as never);
+  assert.equal(restored.sub?.tier, 'monthly');
+  assert.equal(restored.sub?.exp, now + 7 * 86_400_000);
+  assert.equal(restored.cash, 0);
 });
 
 test('government renovation depends strictly on 20% of building development (unaffected by temp boosters)', () => {
@@ -585,19 +651,21 @@ test('weekly random subscription discount locks per weekKey, expires after 72h, 
   const pActive = getSubscriptionPrice(state, monthly, week1Now + 1000);
   assert.equal(pActive.promoActive, true);
   assert.equal(pActive.discountPct, 35);
-  assert.equal(pActive.finalCost, 325_000_000);
+  assert.equal(pActive.finalCost, 6_500_000);
 
-  state.cash = 350_000_000;
+  state.cash = 7_000_000;
+  state.gems = 42;
   assert.equal(canBuySubscription(state, monthly, week1Now + 1000).ok, true);
   const bought = applyBuySubscription(state, monthly, week1Now + 1000);
   assert.equal(bought.ok, true);
-  assert.equal(bought.paidCost, 325_000_000);
-  assert.equal(bought.state.cash, 25_000_000);
+  assert.equal(bought.paidCost, 6_500_000);
+  assert.equal(bought.state.cash, 500_000);
+  assert.equal(bought.state.gems, 42);
 
-  // After 72h, promo expires and price reverts to 500M
+  // After 72h, promo expires and price reverts to 10M Coins
   const pExpired = getSubscriptionPrice(state, monthly, week1Now + 73 * 3_600_000);
   assert.equal(pExpired.promoActive, false);
-  assert.equal(pExpired.finalCost, 500_000_000);
+  assert.equal(pExpired.finalCost, 10_000_000);
 
   // Next ISO week allows rolling a fresh discount
   const nextWeekNow = week1Now + 7 * 86_400_000;
@@ -656,7 +724,7 @@ test('36 stickers, monotonic endgame building ROI, and smart recommendation high
   assert.equal(getRecommendedPolicyHint(highEv).id, 'balanced');
 
   const shopRec = getRecommendedShopItems(
-    { ...s, cash: 500_000_000, subPromo: { weekKey: weekKeyFor(now), tier: 'weekly', pct: 25, exp: now + 3_600_000 } },
+    { ...s, cash: 500_000_000, gems: 500, subPromo: { weekKey: weekKeyFor(now), tier: 'weekly', pct: 25, exp: now + 3_600_000 } },
     now,
   );
   assert.equal(shopRec.nextRankId, 1);

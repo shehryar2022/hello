@@ -19,7 +19,7 @@ import {
   setDoc,
   type Unsubscribe,
 } from 'firebase/firestore';
-import { Landmark, StickerArt, TabIcon } from './components/GameIcons';
+import { CashCoinIcon, Landmark, StickerArt, TabIcon } from './components/GameIcons';
 import { HeroPanel } from './components/HeroPanel';
 import { LoginGate } from './components/LoginGate';
 import {
@@ -143,6 +143,7 @@ import {
   calculateIncome,
   calculateOfflineRank,
   calculateOnlineRank,
+  canBuySubscription,
   claimMilestone,
   claimSubscriptionDaily,
   cleanStickersMap,
@@ -154,6 +155,7 @@ import {
   getExecDecisionQuote,
   getInfraDecayMult,
   getProjectSpeedMult,
+  getSubscriptionPrice,
   getTaxPoolCapSeconds,
   migrateState,
   playerLevel,
@@ -381,6 +383,8 @@ export default function App() {
   const lastSettledTradeCheckRef = useRef<number>(0);
   const provUnlockBusyRef = useRef<boolean>(false);
   const provAllocBusyRef = useRef<boolean>(false);
+  const subBuyBusyRef = useRef<boolean>(false);
+  const lastExpiredSubKeyRef = useRef<string>('');
   const lastProvLbSyncAtRef = useRef<number>(0);
   const rankPositionRef = useRef<number>(1);
   const modalOpenRef = useRef<boolean>(false);
@@ -939,6 +943,8 @@ export default function App() {
     markingNotifIdsRef.current.clear();
     provUnlockBusyRef.current = false;
     provAllocBusyRef.current = false;
+    subBuyBusyRef.current = false;
+    lastExpiredSubKeyRef.current = '';
     lastProvLbSyncAtRef.current = 0;
     cloudReadyRef.current = false;
     needsOnboardingRef.current = false;
@@ -1693,6 +1699,13 @@ export default function App() {
       let triggerDecisionId: string | null = null;
       let passiveEvent: { kind: 'bonus' | 'fine'; amt: number } | null = null;
       const curSnap = stateRef.current;
+      const expiredSubTier =
+        curSnap.sub?.tier && curSnap.sub?.exp && curSnap.sub.exp <= nowSrv ? curSnap.sub : null;
+      const expiredSubKey = expiredSubTier ? `${expiredSubTier.tier}_${expiredSubTier.exp}` : '';
+      const shouldNotifyExpiredSub = Boolean(expiredSubKey && lastExpiredSubKeyRef.current !== expiredSubKey);
+      if (shouldNotifyExpiredSub) {
+        lastExpiredSubKeyRef.current = expiredSubKey;
+      }
       if (curSnap.ev - 1 <= 0) {
         const curInc = calculateIncome(curSnap, { tradeTier, nowMs: nowSrv });
         if (curInc.gross > 8 && isUserActive && !modalOpenRef.current && Math.random() < 0.55) {
@@ -1807,6 +1820,9 @@ export default function App() {
           nextHist = [...prev.hist, calculateGdp({ ...prev, cash: nextCash })].slice(-60);
         }
 
+        const clearedSub =
+          prev.sub?.tier && prev.sub?.exp && prev.sub.exp <= nowSrv ? {} : prev.sub;
+
         const preProv: GameState = rotateDailyQuestsIfNeeded(
           {
             ...prev,
@@ -1821,6 +1837,7 @@ export default function App() {
             hist: nextHist,
             activeFx: nextActiveFx,
             gx: nextGx,
+            sub: clearedSub,
             subPromo: nextSubPromo,
             t: now,
           },
@@ -1829,6 +1846,12 @@ export default function App() {
 
         return stepProvincesTick(preProv, 1, nowSrv);
       });
+
+      if (shouldNotifyExpiredSub && expiredSubTier) {
+        const expDef = SUBSCRIPTIONS.find((x) => x.id === expiredSubTier.tier);
+        addToast(`${expDef ? expDef.n : 'Subscription'} expired — you can renew anytime in Shop.`);
+        scheduleCloudSync(2_000);
+      }
 
       if (tickCountRef.current % 8 === 0) {
         scheduleSaveLocal();
@@ -2594,32 +2617,98 @@ export default function App() {
 
   const handleBuySubscription = useCallback(
     (tierId: SubscriptionTierId, e: React.MouseEvent<HTMLButtonElement>) => {
+      if (subBuyBusyRef.current) return;
       const subDef = SUBSCRIPTIONS.find((x) => x.id === tierId);
       if (!subDef) return;
       const nowSrv = Date.now() + serverOffsetMsRef.current;
-      const res = applyBuySubscription(stateRef.current, subDef, nowSrv);
-      if (!res.ok) {
-        if (res.reason) addToast(res.reason);
+      const preCheck = canBuySubscription(stateRef.current, subDef, nowSrv);
+      if (!preCheck.ok) {
+        addToast(preCheck.reason || 'Unable to purchase subscription');
         return;
       }
-      stateRef.current = res.state;
-      saveLocal(res.state);
-      playSfx('win', !!res.state.set.sfx);
-      triggerBuzz(20, !!res.state.set.vib);
-      const rect = e.currentTarget.getBoundingClientRect();
-      spawnFloat(subDef.n, rect.left + rect.width / 2, rect.top, '#ffc23d');
-      setState((prev) => {
-        const recheck = applyBuySubscription(prev, subDef, nowSrv);
-        return recheck.ok ? recheck.state : prev;
+      const price = getSubscriptionPrice(stateRef.current, subDef, nowSrv);
+      const currentCash = Number.isFinite(stateRef.current.cash)
+        ? Math.max(0, Math.floor(stateRef.current.cash))
+        : 0;
+      const afterCash = Math.max(0, currentCash - price.finalCost);
+      const anchorRect = e.currentTarget.getBoundingClientRect();
+      const isUpgrade = Boolean(getActiveSubscription(stateRef.current, nowSrv));
+
+      let confirmed = false;
+      setDialog({
+        title: `${isUpgrade ? 'Upgrade to' : 'Confirm'} ${subDef.n}`,
+        body: (
+          <div>
+            <p>
+              Duration: <b>{subDef.durationLabel}</b>
+            </p>
+            <p style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: 16, color: '#ffe082' }}>
+              <span>Price:</span>
+              <CashCoinIcon size={16} />
+              <b>₨ {formatNumber(price.finalCost)} Coins</b>
+              {price.promoActive && (
+                <span className="dim" style={{ fontSize: 12 }}>
+                  (−{price.discountPct}% Weekly Deal)
+                </span>
+              )}
+            </p>
+            <p className="dim" style={{ fontSize: 13 }}>
+              Balance: ₨ {formatNumber(currentCash)} → ₨ {formatNumber(afterCash)} Coins
+            </p>
+          </div>
+        ),
+        actions: [
+          {
+            label: `Confirm (₨ ${formatNumber(price.finalCost)})`,
+            variant: 'gold',
+            onClick: () => {
+              if (confirmed || subBuyBusyRef.current) return;
+              confirmed = true;
+              subBuyBusyRef.current = true;
+              try {
+                setDialog(null);
+                const execNow = Date.now() + serverOffsetMsRef.current;
+                const res = applyBuySubscription(stateRef.current, subDef, execNow);
+                if (!res.ok) {
+                  if (res.reason) addToast(res.reason);
+                  return;
+                }
+                stateRef.current = res.state;
+                saveLocal(res.state);
+                playSfx('win', !!res.state.set.sfx);
+                triggerBuzz(20, !!res.state.set.vib);
+                const paidCost = res.paidCost ?? price.finalCost;
+                spawnFloat(
+                  `−₨ ${formatNumber(paidCost)}`,
+                  anchorRect.left + anchorRect.width / 2,
+                  anchorRect.top,
+                  '#ffc23d',
+                );
+                setState((prev) => {
+                  const recheck = applyBuySubscription(prev, subDef, execNow);
+                  return recheck.ok ? recheck.state : prev;
+                });
+                if (uidRef.current && cloudReadyRef.current) {
+                  void performCloudSync(true);
+                } else {
+                  scheduleCloudSync(1_000);
+                }
+                addToast(
+                  `${subDef.n} (${subDef.durationLabel}) activated for ₨ ${formatNumber(paidCost)} Coins!`,
+                );
+              } finally {
+                subBuyBusyRef.current = false;
+              }
+            },
+          },
+          {
+            label: 'Cancel',
+            onClick: () => setDialog(null),
+          },
+        ],
       });
-      scheduleCloudSync(2_000);
-      if (res.paidCost && res.paidCost < subDef.cost) {
-        addToast(`${subDef.n} activated for ₨ ${formatNumber(res.paidCost)} (Weekly Deal)!`);
-      } else {
-        addToast(`${subDef.n} activated!`);
-      }
     },
-    [addToast, spawnFloat, saveLocal, scheduleCloudSync],
+    [addToast, spawnFloat, saveLocal, performCloudSync, scheduleCloudSync],
   );
 
   const handleClaimSubDaily = useCallback(

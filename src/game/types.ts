@@ -129,7 +129,9 @@ export interface SubscriptionDef {
   id: SubscriptionTierId;
   n: string;
   e: string;
-  periodLabel: 'Daily' | 'Weekly' | 'Monthly';
+  periodLabel: '2 Hours' | '3 Days' | 'Weekly';
+  durationLabel: string;
+  currency: 'coins';
   cost: number;
   durMs: number;
   incomeMult: number;

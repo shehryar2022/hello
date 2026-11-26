@@ -27,13 +27,25 @@ import {
 
 function formatSubRemaining(ms: number): string {
   if (ms <= 0) return 'Expired';
-  const totalMin = Math.floor(ms / 60_000);
-  const d = Math.floor(totalMin / 1440);
-  const h = Math.floor((totalMin % 1440) / 60);
-  const m = totalMin % 60;
-  if (d > 0) return `${d}d ${h}h`;
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
+  const totalSec = Math.floor(ms / 1000);
+  const d = Math.floor(totalSec / 86_400);
+  const h = Math.floor((totalSec % 86_400) / 3_600);
+  const m = Math.floor((totalSec % 3_600) / 60);
+  const s = totalSec % 60;
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function formatSubTimestamp(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return '—';
+  return new Date(ms).toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 interface ShopTabProps {
@@ -171,58 +183,75 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
                   Ends in <b style={{ color: 'var(--gold)' }}>{formatSubRemaining(activePromoPrice.msLeft)}</b>
                 </span>
               </div>
-              <p style={{ margin: '6px 0 0', fontSize: 13 }}>
-                Random weekly offer unlocked on <b>{activePromoSub.n}</b>:{' '}
-                <span className="price-strike">₨ {formatNumber(activePromoPrice.baseCost)}</span>
-                <b className="ok">₨ {formatNumber(activePromoPrice.finalCost)}</b>
+              <p style={{ margin: '6px 0 0', fontSize: 13, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 5 }}>
+                <span>Random weekly offer unlocked on <b>{activePromoSub.n}</b>:</span>
+                <span className="price-strike" style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                  <CashCoinIcon size={12} />
+                  ₨ {formatNumber(activePromoPrice.baseCost)}
+                </span>
+                <b className="ok" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <CashCoinIcon size={13} />
+                  ₨ {formatNumber(activePromoPrice.finalCost)} Coins
+                </b>
               </p>
             </div>
           )}
 
           <div className={`gxc ${activeSub ? `sub-card sub-card--${activeSub.def.id}` : ''}`} style={{ marginBottom: 10 }}>
-            <p style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Calendar size={15} color="#5ccbff" />
-              <b>Balanced National Subscriptions</b>
-            </p>
-            <p className="dim">
-              Prestige charters (₨ 5M – ₨ 500M) with modest perks (+4% to +12% income, 3%–10% build discount, +5%–15% project speed) and random weekly flash discounts.
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
+              <p style={{ display: 'flex', alignItems: 'center', gap: 6, margin: 0 }}>
+                <Calendar size={15} color="#5ccbff" />
+                <b>National Coin Subscriptions</b>
+              </p>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12.5, fontWeight: 700, color: '#ffe082' }}>
+                <CashCoinIcon size={14} />
+                <span>₨ {formatNumber(Math.max(0, Math.floor(Number.isFinite(state.cash) ? state.cash : 0)))} Coins</span>
+              </span>
+            </div>
+            <p className="dim" style={{ marginTop: 4 }}>
+              Premium national charters purchased with Coins (100K / 1M / 10M Coins) for +4% to +12% income, 3%–10% build discount, +5%–15% project speed, and daily stipends.
             </p>
             {activeSub ? (
-              <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
-                <span className={`sub-crest sub-crest--${activeSub.def.id}`}>
-                  <span className="sub-crest-ic">
-                    <SubIcon tier={activeSub.def.id} size={13} />
+              <div style={{ marginTop: 8 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span className={`sub-crest sub-crest--${activeSub.def.id}`}>
+                    <span className="sub-crest-ic">
+                      <SubIcon tier={activeSub.def.id} size={13} />
+                    </span>
+                    <span>
+                      {activeSub.def.n} · {formatSubRemaining(activeSub.leftMs)} left
+                    </span>
                   </span>
-                  <span>
-                    {activeSub.def.n} · {formatSubRemaining(activeSub.leftMs)} left
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  className={`btn sm ${canClaimDaily ? 'gold' : 'no'}`}
-                  disabled={!canClaimDaily}
-                  onClick={onClaimSubDaily}
-                >
-                  {canClaimDaily ? (
-                    <>
-                      <CashCoinIcon size={14} />
-                      <span>Claim Daily (₨ {formatNumber(activeSub.def.dailyCash)}</span>
-                      {activeSub.def.dailyGems > 0 && (
-                        <>
-                          <span>+ {activeSub.def.dailyGems}</span>
-                          <GemDiamondIcon size={13} />
-                        </>
-                      )}
-                      <span>)</span>
-                    </>
-                  ) : (
-                    'Claimed today'
-                  )}
-                </button>
+                  <button
+                    type="button"
+                    className={`btn sm ${canClaimDaily ? 'gold' : 'no'}`}
+                    disabled={!canClaimDaily}
+                    onClick={onClaimSubDaily}
+                  >
+                    {canClaimDaily ? (
+                      <>
+                        <CashCoinIcon size={14} />
+                        <span>Claim Daily (₨ {formatNumber(activeSub.def.dailyCash)}</span>
+                        {activeSub.def.dailyGems > 0 && (
+                          <>
+                            <span>+ {activeSub.def.dailyGems}</span>
+                            <GemDiamondIcon size={13} />
+                          </>
+                        )}
+                        <span>)</span>
+                      </>
+                    ) : (
+                      'Claimed today'
+                    )}
+                  </button>
+                </div>
+                <p className="dim" style={{ marginTop: 6, fontSize: 11.5 }}>
+                  Started: {formatSubTimestamp(activeSub.startedAt)} · Expires: {formatSubTimestamp(activeSub.exp)}
+                </p>
               </div>
             ) : (
               <p className="dim" style={{ marginTop: 6 }}>
-                No active subscription yet — choose Daily, Weekly, or Monthly below.
+                No active subscription yet — choose 2 Hours (100K), 3 Days (1M), or Weekly (10M) below.
               </p>
             )}
           </div>
@@ -236,7 +265,9 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
                 ? SUBSCRIPTIONS.findIndex((x) => x.id === sub.id) >
                   SUBSCRIPTIONS.findIndex((x) => x.id === activeSub.def.id)
                 : false;
+              const isLowerTierBlocked = Boolean(activeSub && !isHigherTier && !isCurrent);
               const isRec = !isCurrent && shopRec.subTier === sub.id;
+              const shortfall = !isCurrent && !isLowerTierBlocked && check.shortfall ? check.shortfall : 0;
 
               return (
                 <div
@@ -252,7 +283,7 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
                   <div>
                     <h2>
                       <span>{sub.n}</span>
-                      <span className={`sub-crest sub-crest--${sub.id}`}>{sub.periodLabel}</span>
+                      <span className={`sub-crest sub-crest--${sub.id}`}>{sub.durationLabel}</span>
                       {price.promoActive && (
                         <span className="rec-badge">
                           <Sparkles size={10} />
@@ -270,6 +301,11 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
                       {sub.d} · Animated Leaderboard Crest
                       {price.promoActive && ` · Deal ends in ${formatSubRemaining(price.msLeft)}`}
                     </p>
+                    {shortfall > 0 && (
+                      <p style={{ marginTop: 3, fontSize: 11.5, color: '#ff8da8' }}>
+                        Need ₨ {formatNumber(shortfall)} more Coins
+                      </p>
+                    )}
                   </div>
                   {isCurrent ? (
                     <span className="lv" style={{ background: 'var(--mint)', color: '#04332a' }}>
@@ -279,17 +315,24 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
                     <button
                       type="button"
                       className={`btn sm ${check.ok ? (sub.id === 'monthly' || price.promoActive ? 'gold' : 'mint') : 'no'}`}
-                      disabled={!check.ok}
+                      disabled={isLowerTierBlocked}
+                      aria-disabled={!check.ok}
                       title={check.reason}
                       onClick={(e) => onBuySubscription(sub.id, e)}
                     >
-                      {activeSub && !isHigherTier ? (
+                      {isLowerTierBlocked ? (
                         'Lower tier'
                       ) : (
-                        <span>
-                          {isHigherTier ? 'Upgrade' : 'Subscribe'} ·{' '}
-                          {price.promoActive && <span className="price-strike">₨ {formatNumber(price.baseCost)}</span>}
-                          ₨ {formatNumber(price.finalCost)}
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <span>{isHigherTier ? 'Upgrade' : 'Subscribe'} ·</span>
+                          {price.promoActive && (
+                            <span className="price-strike" style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                              <CashCoinIcon size={11} />
+                              ₨ {formatNumber(price.baseCost)}
+                            </span>
+                          )}
+                          <CashCoinIcon size={13} />
+                          <span>₨ {formatNumber(price.finalCost)}</span>
                         </span>
                       )}
                     </button>
@@ -298,6 +341,23 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
               );
             })}
           </div>
+
+          {(() => {
+            const subLogs = (state.gx?.log || []).filter((entry) => entry.startsWith('Subscription:'));
+            if (!subLogs.length) return null;
+            return (
+              <div className="gxc" style={{ marginTop: 10 }}>
+                <p style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 4 }}>
+                  Recent Subscription Transactions
+                </p>
+                {subLogs.map((entry, idx) => (
+                  <p key={`${idx}-${entry}`} className="dim" style={{ fontSize: 12 }}>
+                    {entry}
+                  </p>
+                ))}
+              </div>
+            );
+          })()}
         </div>
       ) : (
         <div>
@@ -394,6 +454,7 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
     p.b !== n.b ||
     p.tech !== n.tech ||
     p.gx?.lvl !== n.gx?.lvl ||
+    p.gx?.log !== n.gx?.log ||
     p.sub !== n.sub ||
     p.subPromo !== n.subPromo ||
     p.activeFx !== n.activeFx ||
@@ -411,7 +472,10 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
   if (pPromoActive !== nPromoActive) return false;
   if (prev.subTab === 'rank') return true;
   if (prev.subTab === 'sub') {
-    return Math.floor(pNow / 60_000) === Math.floor(nNow / 60_000);
+    if (pSubActive || nSubActive || pPromoActive || nPromoActive) {
+      return Math.floor(pNow / 1000) === Math.floor(nNow / 1000);
+    }
+    return true;
   }
   // subTab === 'boost': only re-render per second when a booster or cooldown is counting down
   const pBoostActive = getActiveShopIncomeBooster(p, pNow).active;

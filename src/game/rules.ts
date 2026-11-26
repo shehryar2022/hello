@@ -670,6 +670,7 @@ export function getActiveSubscription(s: GameState, nowMs = Date.now()) {
   if (!def) return null;
   return {
     def,
+    startedAt: Math.max(0, sub.exp - def.durMs),
     exp: sub.exp,
     leftMs: Math.max(0, sub.exp - nowMs),
     lastClaimDay: sub.lastClaimDay || '',
@@ -1121,11 +1122,16 @@ export function getSubscriptionPrice(
   };
 }
 
+function fmtSubStamp(ms: number): string {
+  const safe = Number.isFinite(ms) ? ms : Date.now();
+  return new Date(safe).toISOString().slice(5, 16).replace('T', ' ');
+}
+
 export function canBuySubscription(
   s: GameState,
   subDef: SubscriptionDef,
   nowMs = Date.now(),
-): { ok: boolean; reason?: string } {
+): { ok: boolean; reason?: string; shortfall?: number; required?: number; available?: number } {
   const active = getActiveSubscription(s, nowMs);
   if (active) {
     const curIdx = SUBSCRIPTIONS.findIndex((x) => x.id === active.def.id);
@@ -1138,29 +1144,57 @@ export function canBuySubscription(
     }
   }
   const { finalCost } = getSubscriptionPrice(s, subDef, nowMs);
-  if (!Number.isFinite(s.cash) || s.cash < finalCost) {
-    return { ok: false, reason: 'Not enough cash' };
+  const safeCash = Number.isFinite(s.cash) ? Math.max(0, Math.floor(s.cash)) : 0;
+  if (!Number.isFinite(s.cash) || finalCost <= 0 || safeCash < finalCost) {
+    const shortfall = Math.max(0, finalCost - safeCash);
+    return {
+      ok: false,
+      reason: `Not enough Coins (need ₨ ${formatNumber(finalCost)}, have ₨ ${formatNumber(safeCash)})`,
+      shortfall,
+      required: finalCost,
+      available: safeCash,
+    };
   }
-  return { ok: true };
+  return { ok: true, required: finalCost, available: safeCash };
 }
 
 export function applyBuySubscription(
   s: GameState,
   subDef: SubscriptionDef,
   nowMs = Date.now(),
-): { ok: boolean; state: GameState; paidCost?: number; reason?: string } {
+): { ok: boolean; state: GameState; paidCost?: number; startAt?: number; exp?: number; reason?: string } {
   const check = canBuySubscription(s, subDef, nowMs);
   if (!check.ok) return { ok: false, state: s, reason: check.reason };
   const { finalCost } = getSubscriptionPrice(s, subDef, nowMs);
+  const safeCash = Number.isFinite(s.cash) ? Math.max(0, s.cash) : 0;
+  if (finalCost <= 0 || Math.floor(safeCash) < finalCost) {
+    return {
+      ok: false,
+      state: s,
+      reason: `Not enough Coins (need ₨ ${formatNumber(finalCost)}, have ₨ ${formatNumber(Math.floor(safeCash))})`,
+    };
+  }
+  const remainingCash = Math.max(0, safeCash - finalCost);
+  const startAt = Math.max(0, Math.floor(nowMs));
+  const exp = startAt + subDef.durMs;
+  const existingLog = Array.isArray(s.gx?.log) ? s.gx.log : [];
+  const txEntry = `Subscription: ${subDef.n} (${subDef.durationLabel}) · −₨ ${formatNumber(finalCost)} · ${fmtSubStamp(startAt)}→${fmtSubStamp(exp)}`.slice(0, 120);
+
   return {
     ok: true,
     paidCost: finalCost,
+    startAt,
+    exp,
     state: {
       ...s,
-      cash: s.cash - finalCost,
+      cash: remainingCash,
+      gx: {
+        ...s.gx,
+        log: [txEntry, ...existingLog].slice(0, 8),
+      },
       sub: {
         tier: subDef.id,
-        exp: nowMs + subDef.durMs,
+        exp,
         // Preserve lastClaimDay so upgrading tiers cannot double-claim on the same day
         lastClaimDay: s.sub?.lastClaimDay || '',
       },
