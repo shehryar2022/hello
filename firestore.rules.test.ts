@@ -28,6 +28,8 @@ test('firestore.rules covers every collection declared in firebase-blueprint.jso
     'match /dailyLimits/{limitId}',
     'match /globalChat/{messageId}',
     'match /dms/{pairId}/messages/{messageId}',
+    'match /provinceTxs/{txId}',
+    'match /provinceLeaderboard/{entryId}',
   ];
   assert.equal(Object.keys(blueprint.firestore).length, expectedMatchers.length);
   for (const m of expectedMatchers) {
@@ -49,6 +51,8 @@ test('Dirty Dozen security invariants are enforced in firestore.rules', () => {
     'isValidDailyLimit',
     'isValidGlobalChat',
     'isValidDmMessage',
+    'isValidProvinceTx',
+    'isValidProvinceLeaderboardEntry',
   ]) {
     assert.ok(rules.includes(`function ${helper}(`), `Missing helper ${helper}`);
     assert.ok(rules.includes(`${helper}(incoming())`), `Helper ${helper} must validate incoming()`);
@@ -215,8 +219,38 @@ const RULE_SAVE_KEYS = [
   'streak', 'lastDaily', 'set', 'fuel', 'carbon', 'luxury', 'corp', 'gst', 'prop',
   'duty', 'tourism', 'digital', 'wealth', 'rd', 'green', 'transitSub', 'questDay',
   'questIds', 'rank', 'activeFx', 'boosterCd', 'fused', 'gov', 'govT', 'gx',
-  'sub', 'subPromo', 'tech',
+  'sub', 'subPromo', 'tech', 'provinces', 'provBudgetLog', 'provTxs',
 ];
+
+function isValidProvinceItem(p: unknown): boolean {
+  if (!isObjMap(p)) return false;
+  const req = ['id', 'slot', 'name', 'flagId', 'color', 'gdp', 'pop', 'hap', 'dev', 'emp', 'budget', 'lvls'];
+  const allowed = [
+    ...req, 'desc', 'unlockedAt', 'paidPrice', 'prod', 'allocTotal', 'lastMaint', 'fundingRatio',
+  ];
+  if (!hasAll(p, req) || !hasOnly(p, allowed)) return false;
+  if (typeof p.id !== 'string' || !/^prov_([1-9]|10)$/.test(p.id)) return false;
+  if (!(isNum(p.slot) && p.slot >= 1 && p.slot <= 10)) return false;
+  if (typeof p.name !== 'string' || p.name.length < 2 || p.name.length > 24) return false;
+  if ('desc' in p && (typeof p.desc !== 'string' || p.desc.length > 120)) return false;
+  if (typeof p.flagId !== 'string' || p.flagId.length < 2 || p.flagId.length > 32) return false;
+  if (typeof p.color !== 'string' || !/^#[0-9A-Fa-f]{6}$/.test(p.color)) return false;
+  if (!(isNum(p.gdp) && p.gdp >= 0 && p.gdp <= 1e13)) return false;
+  if (!(isNum(p.pop) && p.pop >= 0.5 && p.pop <= 10000)) return false;
+  if (!(isNum(p.hap) && p.hap >= 0 && p.hap <= 100)) return false;
+  if (!(isNum(p.dev) && p.dev >= 1 && p.dev <= 100)) return false;
+  if (!(isNum(p.emp) && p.emp >= 0 && p.emp <= 100)) return false;
+  if (!isObjMap(p.budget) || Object.keys(p.budget).length !== 6) return false;
+  const bKeys = ['infrastructure', 'education', 'healthcare', 'security', 'welfare', 'industry'];
+  if (!hasOnly(p.budget, bKeys) || !bKeys.every((k) => isNum((p.budget as Record<string, unknown>)[k]) && ((p.budget as Record<string, unknown>)[k] as number) >= 0 && ((p.budget as Record<string, unknown>)[k] as number) <= 1e12)) {
+    return false;
+  }
+  if (!isObjMap(p.lvls) || Object.keys(p.lvls).length !== 6) return false;
+  if (!hasOnly(p.lvls, ['infrastructure', 'education', 'healthcare', 'security', 'welfare', 'businessActivity'])) {
+    return false;
+  }
+  return true;
+}
 
 function isValidSave(data: unknown): boolean {
   if (!isObjMap(data)) return false;
@@ -277,6 +311,12 @@ function isValidSave(data: unknown): boolean {
   if ('hist' in s && !(Array.isArray(s.hist) && s.hist.length <= 60)) return false;
   if ('questIds' in s && !(Array.isArray(s.questIds) && s.questIds.length <= 10)) return false;
   if ('questDay' in s && !(typeof s.questDay === 'string' && s.questDay.length <= 32)) return false;
+  if ('provBudgetLog' in s && !(Array.isArray(s.provBudgetLog) && s.provBudgetLog.length <= 20)) return false;
+  if ('provTxs' in s && !(Array.isArray(s.provTxs) && s.provTxs.length <= 30)) return false;
+  if ('provinces' in s) {
+    if (!Array.isArray(s.provinces) || s.provinces.length < 1 || s.provinces.length > 10) return false;
+    if (!s.provinces.every((item) => isValidProvinceItem(item))) return false;
+  }
 
   if ('set' in s) {
     if (!isObjMap(s.set) || Object.keys(s.set).length > 10 || !hasOnly(s.set, ['sfx', 'vib', 'anim'])) return false;
@@ -608,6 +648,49 @@ test('players/{uid} heartbeat & leaderboard rules match client payloads and bloc
   assert.equal(25 <= 100 && 10 <= 100, true);
 });
 
+test('Province saves, immutable provinceTxs, and provinceLeaderboard rules block tampering', () => {
+  const uid = 'NJZoJG5EUKdTtMpEQTl5bbRvrgA2';
+  const reqOwner: ReqContext = { auth: { uid, emailVerified: false }, time: 1_795_642_450_000 };
+
+  // Valid 10 Provinces pass save rules
+  const maxSave = freshState();
+  const baseProv = maxSave.provinces![0];
+  maxSave.provinces = Array.from({ length: 10 }, (_, idx) => ({
+    ...baseProv,
+    id: `prov_${idx + 1}`,
+    slot: idx + 1,
+    name: `Province ${idx + 1}`,
+  }));
+  const cleaned10 = { save: cleanSavePayload(maxSave) };
+  assert.equal(evalSavesAccess('update', reqOwner, uid, cleaned10), true);
+
+  // 11 Provinces rejected
+  const eleven = {
+    save: {
+      ...(cleaned10.save as Record<string, unknown>),
+      provinces: [...(cleaned10.save.provinces as unknown[]), { ...baseProv, id: 'prov_10', slot: 10 }],
+    },
+  };
+  assert.equal(evalSavesAccess('update', reqOwner, uid, eleven), false);
+
+  // Negative budget or bad color rejected
+  const negBudgetProv = { ...baseProv, budget: { ...baseProv.budget, infrastructure: -50 } };
+  assert.equal(
+    evalSavesAccess('update', reqOwner, uid, { save: { ...(cleaned10.save as object), provinces: [negBudgetProv] } }),
+    false,
+  );
+  const badColorProv = { ...baseProv, color: 'javascript:alert(1)' };
+  assert.equal(
+    evalSavesAccess('update', reqOwner, uid, { save: { ...(cleaned10.save as object), provinces: [badColorProv] } }),
+    false,
+  );
+
+  // Rules enforce immutable owner-only create on provinceTxs and ownerUid check on provinceLeaderboard
+  assert.match(rules, /match \/provinceTxs\/\{txId\}[\s\S]*allow update, delete: if false/);
+  assert.match(rules, /match \/provinceLeaderboard\/\{entryId\}[\s\S]*incoming\(\)\.ownerUid == request\.auth\.uid/);
+});
+
 void SERVER_TIME;
+
 
 

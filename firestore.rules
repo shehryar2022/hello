@@ -139,6 +139,42 @@ service cloud.firestore {
         && (!('exp' in gx) || gx.exp == null || isValidGxExp(gx.exp));
     }
 
+    function isValidProvinceItem(p) {
+      return p is map
+        && p.keys().hasAll(['id', 'slot', 'name', 'flagId', 'color', 'gdp', 'pop', 'hap', 'dev', 'emp', 'budget', 'lvls'])
+        && p.keys().hasOnly([
+          'id', 'slot', 'name', 'desc', 'flagId', 'color', 'unlockedAt', 'paidPrice',
+          'gdp', 'pop', 'hap', 'dev', 'emp', 'prod', 'budget', 'allocTotal', 'lvls', 'lastMaint', 'fundingRatio'
+        ])
+        && p.id is string && p.id.matches('^prov_([1-9]|10)$')
+        && p.slot is number && p.slot >= 1 && p.slot <= 10
+        && p.name is string && p.name.size() >= 2 && p.name.size() <= 24
+        && (!('desc' in p) || (p.desc is string && p.desc.size() <= 120))
+        && p.flagId is string && p.flagId.size() >= 2 && p.flagId.size() <= 32
+        && p.color is string && p.color.matches('^#[0-9A-Fa-f]{6}$')
+        && (!('unlockedAt' in p) || (p.unlockedAt is number && p.unlockedAt >= 0 && p.unlockedAt <= 10000000000000))
+        && (!('paidPrice' in p) || (p.paidPrice is number && p.paidPrice >= 0 && p.paidPrice <= 10000000000000))
+        && p.gdp is number && p.gdp >= 0 && p.gdp <= 10000000000000
+        && p.pop is number && p.pop >= 0.5 && p.pop <= 10000
+        && p.hap is number && p.hap >= 0 && p.hap <= 100
+        && p.dev is number && p.dev >= 1 && p.dev <= 100
+        && p.emp is number && p.emp >= 0 && p.emp <= 100
+        && (!('prod' in p) || (p.prod is number && p.prod >= 0 && p.prod <= 100))
+        && p.budget is map && p.budget.size() == 6
+        && p.budget.keys().hasOnly(['infrastructure', 'education', 'healthcare', 'security', 'welfare', 'industry'])
+        && p.budget.infrastructure is number && p.budget.infrastructure >= 0 && p.budget.infrastructure <= 1000000000000
+        && p.budget.education is number && p.budget.education >= 0 && p.budget.education <= 1000000000000
+        && p.budget.healthcare is number && p.budget.healthcare >= 0 && p.budget.healthcare <= 1000000000000
+        && p.budget.security is number && p.budget.security >= 0 && p.budget.security <= 1000000000000
+        && p.budget.welfare is number && p.budget.welfare >= 0 && p.budget.welfare <= 1000000000000
+        && p.budget.industry is number && p.budget.industry >= 0 && p.budget.industry <= 1000000000000
+        && (!('allocTotal' in p) || (p.allocTotal is number && p.allocTotal >= 0 && p.allocTotal <= 10000000000000))
+        && p.lvls is map && p.lvls.size() == 6
+        && p.lvls.keys().hasOnly(['infrastructure', 'education', 'healthcare', 'security', 'welfare', 'businessActivity'])
+        && (!('lastMaint' in p) || (p.lastMaint is number && p.lastMaint >= 0 && p.lastMaint <= 100000000000))
+        && (!('fundingRatio' in p) || (p.fundingRatio is number && p.fundingRatio >= 0 && p.fundingRatio <= 100));
+    }
+
     function isValidSave(data) {
       return data.keys().hasAll(['save'])
         && data.keys().hasOnly(['save'])
@@ -150,7 +186,7 @@ service cloud.firestore {
           'streak', 'lastDaily', 'set', 'fuel', 'carbon', 'luxury', 'corp', 'gst', 'prop',
           'duty', 'tourism', 'digital', 'wealth', 'rd', 'green', 'transitSub', 'questDay',
           'questIds', 'rank', 'activeFx', 'boosterCd', 'fused', 'gov', 'govT', 'gx',
-          'sub', 'subPromo', 'tech'
+          'sub', 'subPromo', 'tech', 'provinces', 'provBudgetLog', 'provTxs'
         ])
         && (!('cash' in data.save) || (data.save.cash is number && data.save.cash >= 0 && data.save.cash <= 10000000000000))
         && (!('gems' in data.save) || (data.save.gems is number && data.save.gems >= 0 && data.save.gems <= 1000000000))
@@ -195,6 +231,23 @@ service cloud.firestore {
         && (!('hist' in data.save) || (data.save.hist is list && data.save.hist.size() <= 60))
         && (!('questIds' in data.save) || (data.save.questIds is list && data.save.questIds.size() <= 10))
         && (!('questDay' in data.save) || (data.save.questDay is string && data.save.questDay.size() <= 32))
+        && (!('provBudgetLog' in data.save) || (data.save.provBudgetLog is list && data.save.provBudgetLog.size() <= 20))
+        && (!('provTxs' in data.save) || (data.save.provTxs is list && data.save.provTxs.size() <= 30))
+        && (!('provinces' in data.save) || (
+          data.save.provinces is list
+          && data.save.provinces.size() >= 1
+          && data.save.provinces.size() <= 10
+          && isValidProvinceItem(data.save.provinces[0])
+          && (data.save.provinces.size() < 2 || isValidProvinceItem(data.save.provinces[1]))
+          && (data.save.provinces.size() < 3 || isValidProvinceItem(data.save.provinces[2]))
+          && (data.save.provinces.size() < 4 || isValidProvinceItem(data.save.provinces[3]))
+          && (data.save.provinces.size() < 5 || isValidProvinceItem(data.save.provinces[4]))
+          && (data.save.provinces.size() < 6 || isValidProvinceItem(data.save.provinces[5]))
+          && (data.save.provinces.size() < 7 || isValidProvinceItem(data.save.provinces[6]))
+          && (data.save.provinces.size() < 8 || isValidProvinceItem(data.save.provinces[7]))
+          && (data.save.provinces.size() < 9 || isValidProvinceItem(data.save.provinces[8]))
+          && (data.save.provinces.size() < 10 || isValidProvinceItem(data.save.provinces[9]))
+        ))
         && (!('set' in data.save) || (
           data.save.set is map
           && data.save.set.size() <= 10
@@ -319,6 +372,45 @@ service cloud.firestore {
         && data.text is string && data.text.size() >= 1 && data.text.size() <= 300
         && data.text.matches('(?s).*\\S.*')
         && data.createdAt is timestamp;
+    }
+
+    function isValidProvinceTx(data) {
+      return data.keys().hasAll(['uid', 'txId', 'kind', 'provId', 'slot', 'finalPrice', 'discountPct', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'txId', 'kind', 'provId', 'slot', 'finalPrice', 'discountPct', 'createdAt'])
+        && isValidId(data.uid)
+        && isValidId(data.txId)
+        && data.kind in ['unlock', 'alloc']
+        && data.provId is string && data.provId.matches('^prov_([1-9]|10)$')
+        && data.slot is number && data.slot >= 1 && data.slot <= 10
+        && data.finalPrice is number && data.finalPrice >= 0 && data.finalPrice <= 10000000000000
+        && data.discountPct is number && data.discountPct >= 0 && data.discountPct <= 40
+        && data.createdAt is timestamp;
+    }
+
+    function isValidProvinceLeaderboardEntry(data) {
+      return data.keys().hasAll([
+          'ownerUid', 'ownerName', 'countryCode', 'provId', 'slot', 'name',
+          'flagId', 'color', 'gdp', 'pop', 'hap', 'dev', 'emp', 'overallScore', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerUid', 'ownerName', 'countryCode', 'provId', 'slot', 'name',
+          'flagId', 'color', 'gdp', 'pop', 'hap', 'dev', 'emp', 'overallScore', 'updatedAt'
+        ])
+        && isValidId(data.ownerUid)
+        && data.ownerName is string && data.ownerName.size() >= 1 && data.ownerName.size() <= 16
+        && data.countryCode is string && data.countryCode.size() <= 3
+        && data.provId is string && data.provId.matches('^prov_([1-9]|10)$')
+        && data.slot is number && data.slot >= 1 && data.slot <= 10
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 24
+        && data.flagId is string && data.flagId.size() >= 2 && data.flagId.size() <= 32
+        && data.color is string && data.color.matches('^#[0-9A-Fa-f]{6}$')
+        && data.gdp is number && data.gdp >= 0 && data.gdp <= 10000000000000
+        && data.pop is number && data.pop >= 0.5 && data.pop <= 10000
+        && data.hap is number && data.hap >= 0 && data.hap <= 100
+        && data.dev is number && data.dev >= 1 && data.dev <= 100
+        && data.emp is number && data.emp >= 0 && data.emp <= 100
+        && data.overallScore is number && data.overallScore >= 0 && data.overallScore <= 1000
+        && data.updatedAt is timestamp;
     }
 
     // ==================== COLLECTION RULES ====================
@@ -460,6 +552,19 @@ service cloud.firestore {
           );
         allow delete: if false;
       }
+
+      match /provinceTxs/{txId} {
+        allow get: if isOwner(uid) && isValidId(uid) && isValidId(txId);
+        allow list: if isOwner(uid) && request.query.limit <= 50;
+        allow create: if isOwner(uid)
+          && isValidId(uid)
+          && isValidId(txId)
+          && isValidProvinceTx(incoming())
+          && incoming().uid == uid
+          && incoming().txId == txId
+          && incoming().createdAt == request.time;
+        allow update, delete: if false;
+      }
     }
 
     match /saves/{uid} {
@@ -550,6 +655,27 @@ service cloud.firestore {
         && incoming().from == request.auth.uid
         && incoming().createdAt == request.time;
       allow update, delete: if false;
+    }
+
+    match /provinceLeaderboard/{entryId} {
+      allow get: if isSignedIn() && isValidId(entryId);
+      allow list: if isSignedIn() && request.query.limit <= 100;
+      allow create: if isSignedIn()
+        && isValidId(entryId)
+        && isValidProvinceLeaderboardEntry(incoming())
+        && incoming().ownerUid == request.auth.uid
+        && entryId == request.auth.uid + '_' + incoming().provId
+        && incoming().updatedAt == request.time;
+      allow update: if isSignedIn()
+        && isValidId(entryId)
+        && isValidProvinceLeaderboardEntry(incoming())
+        && incoming().ownerUid == request.auth.uid
+        && existing().ownerUid == request.auth.uid
+        && entryId == request.auth.uid + '_' + incoming().provId
+        && incoming().updatedAt == request.time;
+      allow delete: if isSignedIn()
+        && isValidId(entryId)
+        && existing().ownerUid == request.auth.uid;
     }
   }
 }

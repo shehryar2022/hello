@@ -42,6 +42,8 @@ import type {
   PlayerProfile,
   PlayerStats,
   ProjectType,
+  ProvinceLeaderboardCategory,
+  ProvinceLeaderboardEntry,
   TradeOffer,
 } from '../game/types';
 import {
@@ -1190,3 +1192,172 @@ export function buildQueryHelpers() {
       query(collection(db, 'dms', pairIdFor(uidA, uidB), 'messages'), orderBy('createdAt', 'desc'), limit(25)),
   };
 }
+
+export async function recordProvinceTxAndSyncOnline(params: {
+  txId: string;
+  kind: 'unlock' | 'alloc';
+  provId: string;
+  slot: number;
+  finalPrice: number;
+  discountPct: number;
+  nextState: GameState;
+  pubStats: PlayerStats | undefined;
+  completedTradesCount: number;
+  rev: number;
+  sid: string;
+  onKicked: () => void;
+}): Promise<{ walletRev: number }> {
+  const { txId, kind, provId, slot, finalPrice, discountPct, nextState, pubStats, completedTradesCount, rev, sid, onKicked } = params;
+  const cleanedSave = cleanSavePayload(nextState);
+  const cash = capValue(cleanedSave.cash, 1e13);
+  const gems = capValue(cleanedSave.gems, 1e9);
+  const stk = cleanStickersMap(cleanedSave.stk);
+  const gdpVal = Math.max(1, Math.min(cash, capValue(calculateGdp(nextState), 1e13)));
+  let nextRevOut = Math.max(1, rev + 1);
+
+  await runSessionTx(
+    sid,
+    onKicked,
+    async (tx, uid) => {
+      const txRef = doc(db, 'players', uid, 'provinceTxs', txId);
+      const wRef = doc(db, 'players', uid, 'private', 'wallet');
+      const pRef = doc(db, 'players', uid);
+      const [txSnap, wSnap, pSnap] = await Promise.all([tx.get(txRef), tx.get(wRef), tx.get(pRef)]);
+
+      if (txSnap.exists()) {
+        throw makeError('already-exists', 'Transaction already processed');
+      }
+      if (!pSnap.exists()) {
+        throw makeError('failed-precondition', 'Player profile not initialized');
+      }
+
+      const wData = wSnap.exists() ? wSnap.data() : null;
+      const curRev = wData && Number.isFinite(Number(wData.rev)) ? Math.max(0, Math.floor(Number(wData.rev))) : 0;
+      const nextRev = Math.min(1e9, curRev + 1);
+      nextRevOut = nextRev;
+
+      tx.set(txRef, {
+        uid,
+        txId,
+        kind,
+        provId,
+        slot: Math.max(1, Math.min(10, Math.floor(slot))),
+        finalPrice: Math.max(0, Math.floor(finalPrice)),
+        discountPct: Math.max(0, Math.min(40, Math.floor(discountPct))),
+        createdAt: serverTimestamp(),
+      });
+
+      tx.set(wRef, {
+        cash,
+        gems,
+        stk,
+        rev: nextRev,
+        sid,
+        t: serverTimestamp(),
+      });
+
+      const existingStats = (pSnap.data()?.stats as Partial<PlayerStats> | undefined) ?? pubStats;
+      const mergedStats = sanitizeStats(existingStats, {
+        buildings: totalBuildings(nextState),
+        completedTrades: Math.max(
+          existingStats?.completedTrades || 0,
+          pubStats?.completedTrades || 0,
+          completedTradesCount,
+        ),
+      });
+      const activeSub = getActiveSubscription(nextState, Date.now());
+      tx.update(pRef, {
+        gdp: gdpVal,
+        cash,
+        gems,
+        level: capValue(playerLevel(nextState), 10_000_000) || 1,
+        rank: capValue(nextState.rank, MAX_RANK),
+        subTier: activeSub ? activeSub.def.id : '',
+        subExp: activeSub ? capValue(activeSub.exp, 1e13) : 0,
+        lastSeen: serverTimestamp(),
+        stats: mergedStats,
+      });
+
+      tx.set(doc(db, 'saves', uid), { save: cleanedSave });
+    },
+    true,
+    `players/provinceTxs/${txId}`,
+  );
+
+  return { walletRev: nextRevOut };
+}
+
+export async function syncProvinceLeaderboardEntries(
+  entries: ProvinceLeaderboardEntry[],
+): Promise<void> {
+  if (!entries.length || !auth?.currentUser?.uid) return;
+  const uid = auth.currentUser.uid;
+  const batch = writeBatch(db);
+  for (const e of entries.slice(0, 10)) {
+    const entryId = `${uid}_${e.provId}`;
+    batch.set(doc(db, 'provinceLeaderboard', entryId), {
+      ownerUid: uid,
+      ownerName: e.ownerName.slice(0, 16) || 'Player',
+      countryCode: sanitizeCountryCode(e.countryCode),
+      provId: e.provId,
+      slot: Math.max(1, Math.min(10, Math.floor(e.slot))),
+      name: e.name.slice(0, 24),
+      flagId: e.flagId.slice(0, 32),
+      color: e.color,
+      gdp: Math.max(0, Math.min(1e13, Math.round(e.gdp))),
+      pop: Number(Math.max(0.5, Math.min(10_000, e.pop)).toFixed(2)),
+      hap: Number(Math.max(0, Math.min(100, e.hap)).toFixed(1)),
+      dev: Number(Math.max(1, Math.min(100, e.dev)).toFixed(1)),
+      emp: Number(Math.max(0, Math.min(100, e.emp)).toFixed(1)),
+      overallScore: Math.max(0, Math.min(1000, Math.round(e.overallScore))),
+      updatedAt: serverTimestamp(),
+    });
+  }
+  await batch.commit();
+}
+
+const LEADERBOARD_ORDER_FIELD: Record<ProvinceLeaderboardCategory, string> = {
+  overall: 'overallScore',
+  gdp: 'gdp',
+  hap: 'hap',
+  dev: 'dev',
+  pop: 'pop',
+  emp: 'emp',
+};
+
+export async function fetchProvinceLeaderboard(
+  category: ProvinceLeaderboardCategory,
+  limitCount = 50,
+): Promise<ProvinceLeaderboardEntry[]> {
+  if (!auth?.currentUser?.uid) return [];
+  const field = LEADERBOARD_ORDER_FIELD[category] || 'overallScore';
+  const snap = await getDocs(
+    query(
+      collection(db, 'provinceLeaderboard'),
+      orderBy(field, 'desc'),
+      limit(Math.max(1, Math.min(100, limitCount))),
+    ),
+  );
+  return snap.docs.map((d) => {
+    const raw = d.data() as Record<string, unknown>;
+    return {
+      entryId: d.id,
+      ownerUid: String(raw.ownerUid || ''),
+      ownerName: String(raw.ownerName || 'Player'),
+      countryCode: String(raw.countryCode || 'PK'),
+      provId: String(raw.provId || 'prov_1'),
+      slot: Number(raw.slot || 1),
+      name: String(raw.name || 'Province'),
+      flagId: String(raw.flagId || 'crest_star'),
+      color: String(raw.color || '#3fd2ff'),
+      gdp: Number(raw.gdp || 0),
+      pop: Number(raw.pop || 1),
+      hap: Number(raw.hap || 60),
+      dev: Number(raw.dev || 1),
+      emp: Number(raw.emp || 68),
+      overallScore: Number(raw.overallScore || 0),
+      updatedMs: timestampToMs(raw.updatedAt),
+    };
+  });
+}
+

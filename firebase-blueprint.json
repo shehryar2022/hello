@@ -58,7 +58,7 @@
     },
     "PlayerSave": {
       "title": "PlayerSave",
-      "description": "Owner-only full game state snapshot including 24 buildings, all 16 bounded policy sliders, 36 sticker slots, government, milestones, crateCd, tech doctrines, activeFx, subscription state, and weekly subPromo state.",
+      "description": "Owner-only full game state snapshot including 24 buildings, all 16 bounded policy sliders, 36 sticker slots, government, milestones, crateCd, tech doctrines, activeFx, subscription state, weekly subPromo state, and 1..10 Provinces with budgets and tx ledger.",
       "type": "object",
       "properties": {
         "save": { "type": "object" }
@@ -159,6 +159,45 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["from", "text", "createdAt"]
+    },
+    "ProvinceTx": {
+      "title": "ProvinceTx",
+      "description": "Immutable idempotent ledger entry for Province unlocks and budget allocations.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "txId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "kind": { "type": "string", "enum": ["unlock", "alloc"] },
+        "provId": { "type": "string", "pattern": "^prov_([1-9]|10)$" },
+        "slot": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "finalPrice": { "type": "number", "minimum": 0 },
+        "discountPct": { "type": "number", "minimum": 0, "maximum": 40 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "txId", "kind", "provId", "slot", "finalPrice", "discountPct", "createdAt"]
+    },
+    "ProvinceLeaderboardEntry": {
+      "title": "ProvinceLeaderboardEntry",
+      "description": "Public Province projection entry for global 6-category Province leaderboards.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "ownerName": { "type": "string", "minLength": 1, "maxLength": 16 },
+        "countryCode": { "type": "string", "maxLength": 3 },
+        "provId": { "type": "string", "pattern": "^prov_([1-9]|10)$" },
+        "slot": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "name": { "type": "string", "minLength": 2, "maxLength": 24 },
+        "flagId": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "gdp": { "type": "number", "minimum": 0 },
+        "pop": { "type": "number", "minimum": 0.5 },
+        "hap": { "type": "number", "minimum": 0, "maximum": 100 },
+        "dev": { "type": "number", "minimum": 1, "maximum": 100 },
+        "emp": { "type": "number", "minimum": 0, "maximum": 100 },
+        "overallScore": { "type": "number", "minimum": 0, "maximum": 1000 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "ownerName", "countryCode", "provId", "slot", "name", "flagId", "color", "gdp", "pop", "hap", "dev", "emp", "overallScore", "updatedAt"]
     }
   },
   "firestore": {
@@ -186,6 +225,10 @@
       "schema": { "$ref": "#/entities/GovProject" },
       "description": "Player government construction projects."
     },
+    "/players/{uid}/provinceTxs/{txId}": {
+      "schema": { "$ref": "#/entities/ProvinceTx" },
+      "description": "Immutable idempotent ledger for Province unlocks and budget allocations."
+    },
     "/saves/{uid}": {
       "schema": { "$ref": "#/entities/PlayerSave" },
       "description": "Owner-only full game state save."
@@ -205,6 +248,10 @@
     "/dms/{pairId}/messages/{messageId}": {
       "schema": { "$ref": "#/entities/DirectMessage" },
       "description": "Direct messages between two players."
+    },
+    "/provinceLeaderboard/{entryId}": {
+      "schema": { "$ref": "#/entities/ProvinceLeaderboardEntry" },
+      "description": "Public Province projection entries for global multi-category Province leaderboards."
     }
   }
 }

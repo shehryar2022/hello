@@ -42,6 +42,7 @@ import {
   Leaf,
   Lock,
   Mail,
+  MapPinned,
   MessageSquare,
   Microchip,
   Orbit,
@@ -159,6 +160,8 @@ export const TabIcon: React.FC<{ tab: TabId; size?: number }> = ({ tab, size = 1
       return <Trophy size={size} strokeWidth={2.1} />;
     case 'shop':
       return <ShoppingBag size={size} strokeWidth={2.1} />;
+    case 'provinces':
+      return <MapPinned size={size} strokeWidth={2.1} />;
   }
 };
 

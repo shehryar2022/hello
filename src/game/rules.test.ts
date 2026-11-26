@@ -838,9 +838,9 @@ test('cleanSavePayload clamps policy sliders and activeFx to Firestore rule boun
   assert.equal((cleaned.activeFx as { incomeBoostMult?: number } | undefined)?.incomeBoostMult, 1.75);
 });
 
-test('cleanSavePayload matches 47 ALLOWED_SAVE_KEYS and sanitizes nested edge cases (NaN, Infinity, -0, expired FX, oversized maps)', () => {
+test('cleanSavePayload matches 50 ALLOWED_SAVE_KEYS and sanitizes nested edge cases (NaN, Infinity, -0, expired FX, oversized maps)', () => {
   const freshCleaned = cleanSavePayload(freshState());
-  assert.equal(ALLOWED_SAVE_KEYS.size, 47);
+  assert.equal(ALLOWED_SAVE_KEYS.size, 50);
   assert.deepEqual(Object.keys(freshCleaned).sort(), [...ALLOWED_SAVE_KEYS].sort());
 
   const now = Date.now();

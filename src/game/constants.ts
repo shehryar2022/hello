@@ -471,6 +471,7 @@ export const TAB_META: Record<
 > = {
   build: { emoji: '🏗️', label: 'Build', subtitle: 'Grow your economy' },
   gov: { emoji: '🏛️', label: 'Govt', subtitle: 'Infrastructure, projects & research' },
+  provinces: { emoji: '🗺️', label: 'Provinces', subtitle: 'Regions, budgets, discounts & rankings' },
   policy: { emoji: '📌', label: 'Policy', subtitle: 'Taxes, welfare and government' },
   rivals: { emoji: '📢', label: 'Players', subtitle: 'Live GDP rankings & chat' },
   stickers: { emoji: '🪪', label: 'Stickers', subtitle: 'Collect, fuse, crates & gift' },
@@ -478,3 +479,102 @@ export const TAB_META: Record<
   quest: { emoji: '📅', label: 'Quests', subtitle: "Daily goals & milestones" },
   shop: { emoji: '💳', label: 'Shop', subtitle: 'Ranks, subscriptions & boosters' },
 };
+
+export const MAX_PROVINCES = 10;
+
+export const PROVINCE_UNLOCK_PRICES = [
+  0,
+  250_000_000,
+  400_000_000,
+  650_000_000,
+  1_000_000_000,
+  1_500_000_000,
+  2_200_000_000,
+  3_200_000_000,
+  4_500_000_000,
+  6_000_000_000,
+] as const;
+
+// Fixed UTC Monday anchor for deterministic, non-resettable global weekly discount schedule
+export const PROVINCE_DISCOUNT_EPOCH_MS = Date.UTC(2026, 0, 5, 0, 0, 0);
+export const PROVINCE_WEEK_MS = 7 * 86_400_000;
+
+export const PROVINCE_WEEKLY_SCHEDULE: ReadonlyArray<{
+  cycleWeek: 1 | 2 | 3 | 4;
+  targetSlot: 2 | 3 | 4 | 5;
+  discountPct: number;
+}> = [
+  { cycleWeek: 1, targetSlot: 2, discountPct: 20 },
+  { cycleWeek: 2, targetSlot: 3, discountPct: 20 },
+  { cycleWeek: 3, targetSlot: 4, discountPct: 20 },
+  { cycleWeek: 4, targetSlot: 5, discountPct: 25 },
+];
+
+export const PROVINCE_BUDGET_CATEGORIES: ReadonlyArray<{
+  id: import('./types').ProvinceBudgetCategory;
+  label: string;
+  levelKey: keyof import('./types').ProvinceLevels;
+  color: string;
+  desc: string;
+}> = [
+  { id: 'infrastructure', label: 'Infrastructure', levelKey: 'infrastructure', color: '#38bdf8', desc: 'Roads, power grid & transit logistics' },
+  { id: 'education', label: 'Education', levelKey: 'education', color: '#a78bfa', desc: 'Schools, workforce skills & innovation' },
+  { id: 'healthcare', label: 'Healthcare', levelKey: 'healthcare', color: '#4ade80', desc: 'Clinics, public health & longevity' },
+  { id: 'security', label: 'Security', levelKey: 'security', color: '#fbbf24', desc: 'Civil safety, law & trade stability' },
+  { id: 'welfare', label: 'Public Welfare', levelKey: 'welfare', color: '#f472b6', desc: 'Social support, housing & citizen morale' },
+  { id: 'industry', label: 'Business & Industry', levelKey: 'businessActivity', color: '#fb923c', desc: 'Commerce, jobs & regional GDP yield' },
+];
+
+export const PROVINCE_EXPENSE_AREAS: ReadonlyArray<{
+  id: import('./types').ProvinceExpenseArea;
+  label: string;
+  share: number;
+  color: string;
+}> = [
+  { id: 'infrastructure', label: 'Infrastructure', share: 0.28, color: '#38bdf8' },
+  { id: 'healthcare', label: 'Healthcare', share: 0.2, color: '#4ade80' },
+  { id: 'education', label: 'Education', share: 0.18, color: '#a78bfa' },
+  { id: 'security', label: 'Security', share: 0.17, color: '#fbbf24' },
+  { id: 'publicServices', label: 'Public Services', share: 0.17, color: '#f472b6' },
+];
+
+export const PROVINCE_FLAGS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: 'crest_star', label: 'Sovereign Star' },
+  { id: 'nordic_cross', label: 'Nordic Cross' },
+  { id: 'rising_sun', label: 'Solar Horizon' },
+  { id: 'twin_peaks', label: 'Alpine Peaks' },
+  { id: 'royal_chevron', label: 'Royal Chevron' },
+  { id: 'emerald_tri', label: 'Tri-Banner' },
+  { id: 'harbor_stripes', label: 'Harbor Waves' },
+  { id: 'imperial_diamond', label: 'Diamond Emblem' },
+  { id: 'civic_wheel', label: 'Civic Gear' },
+  { id: 'aurora_arc', label: 'Aurora Arc' },
+  { id: 'shield_quarter', label: 'Quartered Shield' },
+  { id: 'citadel_gate', label: 'Citadel Arch' },
+];
+
+export const PROVINCE_COLORS: ReadonlyArray<{ hex: string; name: string }> = [
+  { hex: '#3fd2ff', name: 'Sky Cyan' },
+  { hex: '#37e6a0', name: 'Mint Emerald' },
+  { hex: '#ffc93c', name: 'Royal Gold' },
+  { hex: '#ff6ba8', name: 'Rose Coral' },
+  { hex: '#a56bff', name: 'Imperial Violet' },
+  { hex: '#3b82f6', name: 'Cobalt Blue' },
+  { hex: '#fb923c', name: 'Solar Amber' },
+  { hex: '#2dd4bf', name: 'Ocean Teal' },
+  { hex: '#f43f5e', name: 'Crimson' },
+  { hex: '#e879f9', name: 'Nebula Magenta' },
+];
+
+export const PROVINCE_LEADERBOARD_CATS: ReadonlyArray<{
+  id: import('./types').ProvinceLeaderboardCategory;
+  label: string;
+}> = [
+  { id: 'overall', label: 'Best Overall' },
+  { id: 'gdp', label: 'GDP' },
+  { id: 'hap', label: 'Happiness' },
+  { id: 'dev', label: 'Development' },
+  { id: 'pop', label: 'Population' },
+  { id: 'emp', label: 'Employment' },
+];
+

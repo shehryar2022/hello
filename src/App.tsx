@@ -38,6 +38,7 @@ import { GiftsTab } from './components/tabs/GiftsTab';
 import { GovtTab } from './components/tabs/GovtTab';
 import { PlayersTab } from './components/tabs/PlayersTab';
 import { PolicyTab } from './components/tabs/PolicyTab';
+import { ProvincesTab } from './components/tabs/ProvincesTab';
 import { QuestsTab } from './components/tabs/QuestsTab';
 import { ShopTab } from './components/tabs/ShopTab';
 import { StickersTab } from './components/tabs/StickersTab';
@@ -53,16 +54,19 @@ import {
   dayKeyFor,
   endSenderOffer,
   fetchPlayerProfile,
+  fetchProvinceLeaderboard,
   finishGovProject,
   markNotificationsRead,
   normalizeProject,
   payGovProjectStage,
+  recordProvinceTxAndSyncOnline,
   rejectGiftOffer,
   searchPlayersByUsername,
   sendDirectMessage,
   sendGlobalChatMessage,
   sendHeartbeat,
   settleExpiredTrades,
+  syncProvinceLeaderboardEntries,
   syncSaveToCloud,
   tickGovProject,
   timestampToMs,
@@ -154,6 +158,14 @@ import {
   tierOfCompletedTrades,
   type DailyOfflineCheckResult,
 } from './game/rules';
+import {
+  applyAllocateProvinceBudget,
+  applyCustomizeProvince,
+  applyRebalanceProvinceBudget,
+  applyUnlockProvince,
+  buildProvinceLeaderboardEntries,
+  stepProvincesTick,
+} from './game/province';
 import { playSfx, triggerBuzz } from './game/sound';
 import type {
   ChatMessage,
@@ -167,6 +179,11 @@ import type {
   PlayerProfile,
   PlayersSubTab,
   ProjectType,
+  ProvinceBudgetCategory,
+  ProvinceCustomizationInput,
+  ProvinceLeaderboardCategory,
+  ProvinceLeaderboardEntry,
+  ProvincesSubTab,
   ShopSubTab,
   SubscriptionTierId,
   TabId,
@@ -207,6 +224,12 @@ export default function App() {
 
   const [tab, setTab] = useState<TabId>('build');
   const [govtSubTab, setGovtSubTab] = useState<GovtSubTab>('infra');
+  const [provincesSubTab, setProvincesSubTab] = useState<ProvincesSubTab>('overview');
+  const [selectedProvinceId, setSelectedProvinceId] = useState<string>('prov_1');
+  const [provUnlockBusy, setProvUnlockBusy] = useState(false);
+  const [provLbCat, setProvLbCat] = useState<ProvinceLeaderboardCategory>('overall');
+  const [provLbEntries, setProvLbEntries] = useState<ProvinceLeaderboardEntry[]>([]);
+  const [provLbLoading, setProvLbLoading] = useState(false);
   const [playersSubTab, setPlayersSubTab] = useState<PlayersSubTab>('lb');
   const [giftsSubTab, setGiftsSubTab] = useState<GiftsSubTab>('in');
   const [shopSubTab, setShopSubTab] = useState<ShopSubTab>('rank');
@@ -323,6 +346,9 @@ export default function App() {
   const tradesRef = useRef<TradeOffer[]>([]);
   tradesRef.current = trades;
   const lastSettledTradeCheckRef = useRef<number>(0);
+  const provUnlockBusyRef = useRef<boolean>(false);
+  const provAllocBusyRef = useRef<boolean>(false);
+  const lastProvLbSyncAtRef = useRef<number>(0);
   const rankPositionRef = useRef<number>(1);
   const modalOpenRef = useRef<boolean>(false);
   const anyModalOpen = Boolean(
@@ -881,6 +907,17 @@ export default function App() {
         setNeedsOnboarding(false);
         setCloudReady(true);
         setAuthResolved(true);
+        if ((finalState.provinces?.length || 0) > 0) {
+          lastProvLbSyncAtRef.current = Date.now();
+          const lbEntries = buildProvinceLeaderboardEntries(
+            finalState,
+            u.uid,
+            pData.username || 'Player',
+            finalState.country?.[0] || 'PK',
+            Date.now() + serverOffsetMsRef.current,
+          );
+          void syncProvinceLeaderboardEntries(lbEntries).catch(() => null);
+        }
       } catch (err) {
         if (authSeqRef.current === seq) {
           setAuthResolved(true);
@@ -1609,7 +1646,7 @@ export default function App() {
           nextHist = [...prev.hist, calculateGdp({ ...prev, cash: nextCash })].slice(-60);
         }
 
-        const updated: GameState = {
+        const preProv: GameState = {
           ...prev,
           cash: nextCash,
           taxPool: nextTaxPool,
@@ -1626,7 +1663,7 @@ export default function App() {
           t: now,
         };
 
-        return updated;
+        return stepProvincesTick(preProv, 1, nowSrv);
       });
 
       if (tickCountRef.current % 8 === 0) {
@@ -1729,6 +1766,17 @@ export default function App() {
       ) {
         syncRetryCountRef.current = 0;
         void performCloudSync(false);
+        if (now - lastProvLbSyncAtRef.current >= 120_000 && (stateRef.current.provinces?.length || 0) > 0) {
+          lastProvLbSyncAtRef.current = now;
+          const entries = buildProvinceLeaderboardEntries(
+            stateRef.current,
+            uidRef.current,
+            pubProfileRef.current?.username || 'Player',
+            stateRef.current.country?.[0] || 'PK',
+            nowSrv,
+          );
+          void syncProvinceLeaderboardEntries(entries).catch(() => null);
+        }
       }
 
       // Settle expired outgoing gifts periodically (every 5s) even without a new Firestore trade snapshot
@@ -2445,6 +2493,222 @@ export default function App() {
     [addToast, spawnFloat, saveLocal, scheduleCloudSync],
   );
 
+  // Province Management Handlers & Leaderboard Fetcher
+  const refreshProvLeaderboard = useCallback(
+    async (category: ProvinceLeaderboardCategory) => {
+      if (!uidRef.current || !cloudReadyRef.current) {
+        setProvLbEntries([]);
+        return;
+      }
+      setProvLbLoading(true);
+      try {
+        const list = await fetchProvinceLeaderboard(category, 50);
+        setProvLbEntries(list);
+      } catch (err) {
+        recordFirestoreError(err, OperationType.LIST, 'provinceLeaderboard');
+      } finally {
+        setProvLbLoading(false);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (tab === 'provinces' && provincesSubTab === 'leaderboard' && uid && cloudReady) {
+      void refreshProvLeaderboard(provLbCat);
+    }
+  }, [tab, provincesSubTab, provLbCat, uid, cloudReady, refreshProvLeaderboard]);
+
+  const handleUnlockProvince = useCallback(
+    async (input: ProvinceCustomizationInput): Promise<boolean> => {
+      if (provUnlockBusyRef.current) return false;
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const res = applyUnlockProvince(stateRef.current, input, nowSrv);
+      if (!res.ok || !res.unlocked) {
+        addToast(res.reason || 'Could not charter Province.');
+        return false;
+      }
+
+      provUnlockBusyRef.current = true;
+      setProvUnlockBusy(true);
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(20, !!res.state.set.vib);
+      setSelectedProvinceId(res.unlocked.id);
+      setState((prev) => {
+        const recheck = applyUnlockProvince(prev, input, nowSrv, res.txId);
+        return recheck.ok ? recheck.state : prev;
+      });
+      addToast(
+        res.discountPct > 0
+          ? `Chartered ${res.unlocked.name} (${res.discountPct}% Weekly Deal)!`
+          : `Chartered ${res.unlocked.name}!`,
+      );
+
+      const currentUid = uidRef.current;
+      try {
+        if (currentUid && cloudReadyRef.current && !needsOnboardingRef.current && !kickedRef.current) {
+          if (!cloudSyncPermDeniedRef.current && !cloudSyncQuotaPausedRef.current) {
+            try {
+              const txRes = await recordProvinceTxAndSyncOnline({
+                txId: res.txId,
+                kind: 'unlock',
+                provId: res.unlocked.id,
+                slot: res.unlocked.slot,
+                finalPrice: res.paidPrice,
+                discountPct: res.discountPct,
+                nextState: stateRef.current,
+                pubStats: pubProfileRef.current?.stats,
+                completedTradesCount: completedTradesRef.current,
+                rev: walletRevRef.current,
+                sid: sidRef.current,
+                onKicked: handleKicked,
+              });
+              walletRevRef.current = txRes.walletRev;
+              pendingDirtyRef.current = false;
+              lastSyncedAtRef.current = Date.now();
+              setCloudStatus({ cls: 'ok', text: 'Saved' });
+            } catch {
+              scheduleCloudSync(800);
+            }
+            const lbEntries = buildProvinceLeaderboardEntries(
+              stateRef.current,
+              currentUid,
+              pubProfileRef.current?.username || 'Player',
+              stateRef.current.country?.[0] || 'PK',
+              nowSrv,
+            );
+            void syncProvinceLeaderboardEntries(lbEntries).catch(() => null);
+          }
+        }
+      } finally {
+        provUnlockBusyRef.current = false;
+        setProvUnlockBusy(false);
+      }
+      return true;
+    },
+    [addToast, handleKicked, saveLocal, scheduleCloudSync],
+  );
+
+  const handleCustomizeProvince = useCallback(
+    async (provId: string, input: ProvinceCustomizationInput): Promise<boolean> => {
+      const res = applyCustomizeProvince(stateRef.current, provId, input);
+      if (!res.ok || !res.province) {
+        addToast(res.reason || 'Invalid Province details.');
+        return false;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('buy', !!res.state.set.sfx);
+      setState((prev) => {
+        const recheck = applyCustomizeProvince(prev, provId, input);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(2500);
+      addToast(`Updated ${res.province.name}!`);
+
+      const currentUid = uidRef.current;
+      if (currentUid && cloudReadyRef.current && !needsOnboardingRef.current && !kickedRef.current) {
+        const lbEntries = buildProvinceLeaderboardEntries(
+          stateRef.current,
+          currentUid,
+          pubProfileRef.current?.username || 'Player',
+          stateRef.current.country?.[0] || 'PK',
+          Date.now() + serverOffsetMsRef.current,
+        );
+        void syncProvinceLeaderboardEntries(lbEntries).catch(() => null);
+      }
+      return true;
+    },
+    [addToast, saveLocal, scheduleCloudSync],
+  );
+
+  const handleAllocateProvinceBudget = useCallback(
+    async (provId: string, category: ProvinceBudgetCategory, amount: number): Promise<boolean> => {
+      if (provAllocBusyRef.current) return false;
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const res = applyAllocateProvinceBudget(stateRef.current, provId, category, amount, nowSrv);
+      if (!res.ok) {
+        addToast(res.reason || 'Allocation failed.');
+        return false;
+      }
+
+      provAllocBusyRef.current = true;
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('coin', !!res.state.set.sfx);
+      triggerBuzz(12, !!res.state.set.vib);
+      setState((prev) => {
+        const recheck = applyAllocateProvinceBudget(prev, provId, category, amount, nowSrv, res.txId);
+        return recheck.ok ? recheck.state : prev;
+      });
+      addToast(`Allocated ₨ ${formatNumber(res.amount)} to ${category}`);
+
+      const currentUid = uidRef.current;
+      try {
+        if (
+          currentUid &&
+          cloudReadyRef.current &&
+          !needsOnboardingRef.current &&
+          !kickedRef.current &&
+          !cloudSyncPermDeniedRef.current &&
+          !cloudSyncQuotaPausedRef.current
+        ) {
+          try {
+            const targetProv = stateRef.current.provinces?.find((p) => p.id === provId);
+            const txRes = await recordProvinceTxAndSyncOnline({
+              txId: res.txId,
+              kind: 'alloc',
+              provId,
+              slot: targetProv?.slot || 1,
+              finalPrice: res.amount,
+              discountPct: 0,
+              nextState: stateRef.current,
+              pubStats: pubProfileRef.current?.stats,
+              completedTradesCount: completedTradesRef.current,
+              rev: walletRevRef.current,
+              sid: sidRef.current,
+              onKicked: handleKicked,
+            });
+            walletRevRef.current = txRes.walletRev;
+            pendingDirtyRef.current = false;
+            lastSyncedAtRef.current = Date.now();
+            setCloudStatus({ cls: 'ok', text: 'Saved' });
+          } catch {
+            scheduleCloudSync(1200);
+          }
+        }
+      } finally {
+        provAllocBusyRef.current = false;
+      }
+      return true;
+    },
+    [addToast, handleKicked, saveLocal, scheduleCloudSync],
+  );
+
+  const handleRebalanceProvinceBudget = useCallback(
+    (provId: string, fromCat: ProvinceBudgetCategory, toCat: ProvinceBudgetCategory, amount: number): boolean => {
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const res = applyRebalanceProvinceBudget(stateRef.current, provId, fromCat, toCat, amount, nowSrv);
+      if (!res.ok) {
+        addToast(res.reason || 'Rebalance failed.');
+        return false;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('buy', !!res.state.set.sfx);
+      setState((prev) => {
+        const recheck = applyRebalanceProvinceBudget(prev, provId, fromCat, toCat, amount, nowSrv);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(4_000);
+      addToast(`Rebalanced ₨ ${formatNumber(res.amount)} (${fromCat} → ${toCat})`);
+      return true;
+    },
+    [addToast, saveLocal, scheduleCloudSync],
+  );
+
   // Auth handlers (guarded against double submission)
   const handleGoogleLogin = useCallback(async () => {
     if (!isFirebaseConfigured || !auth) {
@@ -3124,6 +3388,30 @@ export default function App() {
                 onStartProject={handleStartProjectCb}
                 onPayProjectStage={handlePayProjectStageCb}
                 onUnlockTech={handleUnlockTech}
+              />
+            )}
+            {tab === 'provinces' && (
+              <ProvincesTab
+                state={state}
+                uid={uid}
+                cloudReady={cloudReady}
+                ownerName={pubProfile?.username || 'Player'}
+                subTab={provincesSubTab}
+                selectedProvinceId={selectedProvinceId}
+                serverOffsetMs={serverOffsetMs}
+                unlockBusy={provUnlockBusy}
+                lbCategory={provLbCat}
+                lbEntries={provLbEntries}
+                lbLoading={provLbLoading}
+                onChangeSubTab={setProvincesSubTab}
+                onSelectProvince={setSelectedProvinceId}
+                onUnlockProvince={handleUnlockProvince}
+                onCustomizeProvince={handleCustomizeProvince}
+                onAllocateBudget={handleAllocateProvinceBudget}
+                onRebalanceBudget={handleRebalanceProvinceBudget}
+                onChangeLbCategory={setProvLbCat}
+                onRefreshLb={() => void refreshProvLeaderboard(provLbCat)}
+                onOpenLogin={handleOpenLoginGate}
               />
             )}
             {tab === 'policy' && (

@@ -40,6 +40,16 @@ import type {
   SubscriptionDef,
   SubscriptionTierId,
 } from './types';
+import {
+  calculateProvinceNationalContribution,
+  cleanProvBudgetLog,
+  cleanProvTxs,
+  createStarterProvince,
+  normalizeProvinces,
+  stepProvincesTick,
+} from './province';
+
+export * from './province';
 
 export function formatNumber(n: number): string {
   const v = Math.floor(Number.isFinite(n) ? n : 0);
@@ -157,6 +167,9 @@ export function freshState(): GameState {
     sub: {},
     subPromo: {},
     tech: {},
+    provinces: [createStarterProvince(COUNTRIES[0][1])],
+    provBudgetLog: [],
+    provTxs: [],
   };
 }
 
@@ -416,6 +429,12 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
   } else {
     s.subPromo = {};
   }
+
+  // Province management migration (grants 1 free Starter Province without affecting cash/gems)
+  const countryName = Array.isArray(s.country) && s.country[1] ? String(s.country[1]) : undefined;
+  s.provinces = normalizeProvinces(raw?.provinces, countryName, now);
+  s.provBudgetLog = cleanProvBudgetLog(s.provBudgetLog);
+  s.provTxs = cleanProvTxs(s.provTxs);
 
   return s;
 }
@@ -743,24 +762,31 @@ export function calculateIncome(
     (1 + (s.rank || 0) * 0.01) *
     permMult;
 
-  gross *= mult;
+  const buildingGross = gross * mult;
   // Cap upkeep rate at 35% and policy spending rate at 60% so large cities remain profitable
   const upkeepRate = Math.min(0.35, 0.03 + totalBuildings(s) * 0.0015);
-  const upkeep = gross * upkeepRate;
+  const upkeep = buildingGross * upkeepRate;
   const policySpendShare = Math.min(
     0.6,
     (((s.wel + s.edu) * 0.7 + (s.rd || 0) * 0.55 + (s.green || 0) * 0.45 + (s.transitSub || 0) * 0.4) / 100) * gov.wel,
   );
-  const welfareCost = gross * policySpendShare;
-  const net = gross - welfareCost - upkeep;
+  const welfareCost = buildingGross * policySpendShare;
+  const buildingNet = buildingGross - welfareCost - upkeep;
+
+  const prov = calculateProvinceNationalContribution(s);
+  const totalGross = buildingGross + prov.grossIncomePerSec;
+  const net = buildingNet + prov.grossIncomePerSec - prov.maintenancePerSec;
 
   return {
-    gross,
+    gross: totalGross,
     net,
     welfareCost,
     upkeep,
     upkeepRate,
     policySpendShare,
+    provinceGross: prov.grossIncomePerSec,
+    provinceMaint: prov.maintenancePerSec,
+    provinceNet: prov.netIncomePerSec,
   };
 }
 
@@ -795,12 +821,14 @@ export function targetHappiness(s: GameState): number {
   const factPenaltyPer = ecoTech ? 1.05 : 1.5;
   const hospBonusPer = careTech ? 1.5 : 1.2;
   const techFlatHap = (ecoTech ? 2 : 0) + (careTech ? 5 : 0);
+  const provHapBonus = calculateProvinceNationalContribution(s).happinessBonus;
   return Math.max(
     5,
     Math.min(
       100,
       40 +
         techFlatHap +
+        provHapBonus +
         gxHappinessMod(s) +
         s.wel * 1.5 +
         s.edu * 0.6 +
@@ -990,19 +1018,20 @@ export function applyOfflineEarnings(
   }
 
   const away = Math.min(OFFLINE_CAP_SEC, rawAway);
+  const steppedState = stepProvincesTick(s, away, nowMs);
   // Offline calculation strictly excludes short-lived temporary boosters
-  const net = Math.max(0, calculateIncome(s, { tradeTier, nowMs, ignoreTempBoosters: true }).net);
+  const net = Math.max(0, calculateIncome(steppedState, { tradeTier, nowMs, ignoreTempBoosters: true }).net);
   const credited = net * away * OFFLINE_RATE;
   if (net <= 0 || credited < 1) {
-    return { state: { ...s, t: nowMs }, credited: 0, awaySec: away, wasCapped: rawAway > OFFLINE_CAP_SEC };
+    return { state: { ...steppedState, t: nowMs }, credited: 0, awaySec: away, wasCapped: rawAway > OFFLINE_CAP_SEC };
   }
 
-  const capPool = net * getTaxPoolCapSeconds(s);
-  const prevPool = s.taxPool || 0;
+  const capPool = net * getTaxPoolCapSeconds(steppedState);
+  const prevPool = steppedState.taxPool || 0;
   const newPool = prevPool >= capPool ? prevPool : Math.min(capPool, prevPool + credited);
 
   return {
-    state: { ...s, taxPool: newPool, t: nowMs },
+    state: { ...steppedState, taxPool: newPool, t: nowMs },
     credited,
     awaySec: away,
     wasCapped: rawAway > OFFLINE_CAP_SEC,

@@ -1,6 +1,7 @@
 export type TabId =
   | 'build'
   | 'gov'
+  | 'provinces'
   | 'policy'
   | 'rivals'
   | 'stickers'
@@ -12,6 +13,7 @@ export type PlayersSubTab = 'lb' | 'chat' | 'dm';
 export type GiftsSubTab = 'in' | 'out' | 'hist' | 'find';
 export type ShopSubTab = 'rank' | 'sub' | 'boost';
 export type GovtSubTab = 'infra' | 'projects' | 'research';
+export type ProvincesSubTab = 'overview' | 'manage' | 'leaderboard';
 
 export type CountryTuple = [code: string, name: string, realGdp?: number];
 
@@ -206,6 +208,9 @@ export interface GameState {
   sub?: SubscriptionState;
   subPromo?: SubPromoState;
   tech?: Record<string, number>;
+  provinces?: Province[];
+  provBudgetLog?: ProvinceBudgetLogEntry[];
+  provTxs?: string[];
 }
 
 export interface PlayerStats {
@@ -331,3 +336,132 @@ export interface QuestDef {
   g: number;
   r: number;
 }
+
+export type ProvinceBudgetCategory =
+  | 'infrastructure'
+  | 'education'
+  | 'healthcare'
+  | 'security'
+  | 'welfare'
+  | 'industry';
+
+export type ProvinceExpenseArea =
+  | 'infrastructure'
+  | 'healthcare'
+  | 'education'
+  | 'security'
+  | 'publicServices';
+
+export type ProvinceLeaderboardCategory = 'gdp' | 'hap' | 'dev' | 'pop' | 'emp' | 'overall';
+
+export interface ProvinceBudgetMap {
+  infrastructure: number;
+  education: number;
+  healthcare: number;
+  security: number;
+  welfare: number;
+  industry: number;
+}
+
+export interface ProvinceLevels {
+  infrastructure: number;
+  education: number;
+  healthcare: number;
+  security: number;
+  welfare: number;
+  businessActivity: number;
+}
+
+export interface Province {
+  id: string;
+  slot: number;
+  name: string;
+  desc: string;
+  flagId: string;
+  color: string;
+  unlockedAt: number;
+  paidPrice: number;
+  gdp: number;
+  pop: number;
+  hap: number;
+  dev: number;
+  emp: number;
+  prod: number;
+  budget: ProvinceBudgetMap;
+  allocTotal: number;
+  lvls: ProvinceLevels;
+  lastMaint: number;
+  fundingRatio: number;
+}
+
+export interface ProvinceBudgetLogEntry {
+  t: number;
+  provId: string;
+  provName: string;
+  cat: string;
+  amt: number;
+  kind: 'alloc' | 'rebal' | 'unlock';
+}
+
+export interface ProvinceCustomizationInput {
+  name: string;
+  desc?: string;
+  flagId: string;
+  color: string;
+}
+
+export interface WeeklyProvinceDiscount {
+  weekIndex: number;
+  cycleWeek: 1 | 2 | 3 | 4;
+  targetSlot: 2 | 3 | 4 | 5;
+  discountPct: number;
+  basePrice: number;
+  discountedPrice: number;
+  startsAtMs: number;
+  endsAtMs: number;
+  msLeft: number;
+}
+
+export interface ProvinceUnlockQuote {
+  maxReached: boolean;
+  ownedCount: number;
+  maxProvinces: number;
+  nextSlot: number;
+  basePrice: number;
+  discountPct: number;
+  discountApplied: boolean;
+  finalPrice: number;
+  canAfford: boolean;
+  remainingCash: number;
+  activeOffer: WeeklyProvinceDiscount;
+  upcomingOffer: WeeklyProvinceDiscount;
+}
+
+export interface ProvinceMaintenanceBreakdown {
+  total: number;
+  infrastructure: number;
+  healthcare: number;
+  education: number;
+  security: number;
+  publicServices: number;
+}
+
+export interface ProvinceLeaderboardEntry {
+  entryId: string;
+  ownerUid: string;
+  ownerName: string;
+  countryCode: string;
+  provId: string;
+  slot: number;
+  name: string;
+  flagId: string;
+  color: string;
+  gdp: number;
+  pop: number;
+  hap: number;
+  dev: number;
+  emp: number;
+  overallScore: number;
+  updatedMs: number;
+}
+
