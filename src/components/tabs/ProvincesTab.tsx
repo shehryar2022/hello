@@ -32,7 +32,7 @@ import {
   calculateProvinceOverallScore,
   calculateSingleProvinceGrossPerSec,
   getProvinceUnlockQuote,
-  sortProvinceLeaderboard,
+  selectBestProvinceLeaderboardEntries,
   totalProvinceBudget,
 } from '../../game/province';
 import { formatNumber } from '../../game/rules';
@@ -186,7 +186,7 @@ export const ProvincesTab: React.FC<ProvincesTabProps> = memo(({
     [activeProv],
   );
 
-  // Merge live own provinces into global leaderboard so player always sees fresh stats & works offline too
+  // Merge live own provinces into global leaderboard and keep strictly each player's single best province
   const mergedLb = useMemo(() => {
     const localUid = uid || 'offline';
     const localOwner = uid ? ownerName : 'Offline Leader';
@@ -197,14 +197,14 @@ export const ProvincesTab: React.FC<ProvincesTabProps> = memo(({
       state.country?.[0] || 'PK',
       nowSrv,
     );
-    const byId = new Map<string, ProvinceLeaderboardEntry>();
+    const combined: ProvinceLeaderboardEntry[] = [];
     for (const row of lbEntries) {
-      byId.set(row.entryId, row);
+      if (row.ownerUid !== localUid) {
+        combined.push(row);
+      }
     }
-    for (const own of ownEntries) {
-      byId.set(own.entryId, own);
-    }
-    return sortProvinceLeaderboard(Array.from(byId.values()), lbCategory);
+    combined.push(...ownEntries);
+    return selectBestProvinceLeaderboardEntries(combined, lbCategory);
   }, [lbEntries, lbCategory, state, uid, ownerName, nowSrv]);
 
   const handleSubmitUnlock = async (e: React.FormEvent) => {
@@ -982,12 +982,23 @@ export const ProvincesTab: React.FC<ProvincesTabProps> = memo(({
 
           {!uid && (
             <div className="tradelim">
-              <span>Showing your local Provinces. Sign in to compete on the global Province leaderboard!</span>
+              <span>Showing your best local Province. Sign in to compete on the global Province leaderboard!</span>
               <button type="button" className="btn sm gold" onClick={onOpenLogin}>
                 Sign In
               </button>
             </div>
           )}
+
+          <div
+            className="dim"
+            style={{ fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+            data-testid="prov-lb-summary"
+          >
+            <span>Top Province per player (1 entry per player)</span>
+            <span>
+              {mergedLb.length} {mergedLb.length === 1 ? 'player' : 'players'} ranked
+            </span>
+          </div>
 
           <div className="list" data-testid="prov-leaderboard-list">
             {mergedLb.map((entry, idx) => {
@@ -1005,6 +1016,8 @@ export const ProvincesTab: React.FC<ProvincesTabProps> = memo(({
                   key={entry.entryId}
                   className={`row prov-lb-row ${isMine ? 'me' : ''}`}
                   data-testid={`prov-lb-row-${idx}`}
+                  data-owner-uid={entry.ownerUid}
+                  data-prov-id={entry.provId}
                 >
                   <div className={`medal ${rank <= 3 ? `m${rank}` : ''}`}>{rank}</div>
                   <div style={{ minWidth: 0 }}>

@@ -187,6 +187,7 @@ import {
   applyRebalanceProvinceBudget,
   applyUnlockProvince,
   buildProvinceLeaderboardEntries,
+  buildProvinceLeaderboardFingerprint,
   stepProvincesTick,
 } from './game/province';
 import { playSfx, triggerBuzz } from './game/sound';
@@ -386,6 +387,10 @@ export default function App() {
   const subBuyBusyRef = useRef<boolean>(false);
   const lastExpiredSubKeyRef = useRef<string>('');
   const lastProvLbSyncAtRef = useRef<number>(0);
+  const lastProvLbHashRef = useRef<string>('');
+  const provLbCacheRef = useRef<
+    Partial<Record<ProvinceLeaderboardCategory, { entries: ProvinceLeaderboardEntry[]; fetchedAt: number }>>
+  >({});
   const rankPositionRef = useRef<number>(1);
   const modalOpenRef = useRef<boolean>(false);
   const anyModalOpen = Boolean(
@@ -946,6 +951,8 @@ export default function App() {
     subBuyBusyRef.current = false;
     lastExpiredSubKeyRef.current = '';
     lastProvLbSyncAtRef.current = 0;
+    lastProvLbHashRef.current = '';
+    provLbCacheRef.current = {};
     cloudReadyRef.current = false;
     needsOnboardingRef.current = false;
 
@@ -1109,6 +1116,7 @@ export default function App() {
             finalState.country?.[0] || 'PK',
             Date.now() + serverOffsetMsRef.current,
           );
+          lastProvLbHashRef.current = buildProvinceLeaderboardFingerprint(lbEntries);
           void syncProvinceLeaderboardEntries(lbEntries, u.uid).catch(() => null);
         }
       } catch (err) {
@@ -1954,7 +1962,6 @@ export default function App() {
         syncRetryCountRef.current = 0;
         void performCloudSync(false);
         if (now - lastProvLbSyncAtRef.current >= 120_000 && (stateRef.current.provinces?.length || 0) > 0) {
-          lastProvLbSyncAtRef.current = now;
           const entries = buildProvinceLeaderboardEntries(
             stateRef.current,
             uidRef.current,
@@ -1962,7 +1969,12 @@ export default function App() {
             stateRef.current.country?.[0] || 'PK',
             nowSrv,
           );
-          void syncProvinceLeaderboardEntries(entries).catch(() => null);
+          const nextHash = buildProvinceLeaderboardFingerprint(entries);
+          if (nextHash && nextHash !== lastProvLbHashRef.current) {
+            lastProvLbSyncAtRef.current = now;
+            lastProvLbHashRef.current = nextHash;
+            void syncProvinceLeaderboardEntries(entries, uidRef.current).catch(() => null);
+          }
         }
       }
 
@@ -2771,17 +2783,23 @@ export default function App() {
 
   // Province Management Handlers & Leaderboard Fetcher
   const refreshProvLeaderboard = useCallback(
-    async (category: ProvinceLeaderboardCategory) => {
+    async (category: ProvinceLeaderboardCategory, force = false) => {
       const currentUid = uidRef.current;
       const capturedSeq = authSeqRef.current;
       if (!currentUid || !cloudReadyRef.current) {
         setProvLbEntries([]);
         return;
       }
+      const cached = provLbCacheRef.current[category];
+      if (!force && cached && Date.now() - cached.fetchedAt < 20_000) {
+        setProvLbEntries(cached.entries);
+        return;
+      }
       setProvLbLoading(true);
       try {
-        const list = await fetchProvinceLeaderboard(category, 50);
+        const list = await fetchProvinceLeaderboard(category, 100);
         if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+          provLbCacheRef.current[category] = { entries: list, fetchedAt: Date.now() };
           setProvLbEntries(list);
         }
       } catch (err) {
@@ -2799,7 +2817,7 @@ export default function App() {
 
   useEffect(() => {
     if (tab === 'provinces' && provincesSubTab === 'leaderboard' && uid && cloudReady) {
-      void refreshProvLeaderboard(provLbCat);
+      void refreshProvLeaderboard(provLbCat, false);
     }
   }, [tab, provincesSubTab, provLbCat, uid, cloudReady, refreshProvLeaderboard]);
 
@@ -2873,6 +2891,8 @@ export default function App() {
               stateRef.current.country?.[0] || 'PK',
               nowSrv,
             );
+            lastProvLbSyncAtRef.current = Date.now();
+            lastProvLbHashRef.current = buildProvinceLeaderboardFingerprint(lbEntries);
             void syncProvinceLeaderboardEntries(lbEntries, currentUid).catch(() => null);
           }
         }
@@ -2913,6 +2933,8 @@ export default function App() {
           stateRef.current.country?.[0] || 'PK',
           Date.now() + serverOffsetMsRef.current,
         );
+        lastProvLbSyncAtRef.current = Date.now();
+        lastProvLbHashRef.current = buildProvinceLeaderboardFingerprint(lbEntries);
         void syncProvinceLeaderboardEntries(lbEntries, currentUid).catch(() => null);
       }
       return true;
@@ -3883,7 +3905,7 @@ export default function App() {
                 onAllocateBudget={handleAllocateProvinceBudget}
                 onRebalanceBudget={handleRebalanceProvinceBudget}
                 onChangeLbCategory={setProvLbCat}
-                onRefreshLb={() => void refreshProvLeaderboard(provLbCat)}
+                onRefreshLb={() => void refreshProvLeaderboard(provLbCat, true)}
                 onOpenLogin={handleOpenLoginGate}
               />
             )}

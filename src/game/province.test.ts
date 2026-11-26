@@ -14,6 +14,7 @@ import {
   applyRebalanceProvinceBudget,
   applyUnlockProvince,
   buildProvinceLeaderboardEntries,
+  buildProvinceLeaderboardFingerprint,
   calculateProvinceMaintenance,
   calculateProvinceNationalContribution,
   calculateProvinceOverallScore,
@@ -22,6 +23,7 @@ import {
   getWeeklyProvinceDiscount,
   normalizeProvinces,
   sanitizeProvinceName,
+  selectBestProvinceLeaderboardEntries,
   sortProvinceLeaderboard,
   stepProvincesTick,
   totalProvinceBudget,
@@ -294,7 +296,7 @@ test('Independent 6-category budget allocation, zero-sum rebalance, gradual dev,
   assert.ok(contrib.maintenancePerSec > 0);
 });
 
-test('Global Province Leaderboard scores and sorts across all 6 categories accurately', () => {
+test('Global Province Leaderboard scores and sorts across all 6 categories accurately with 1 entry per player', () => {
   const s = freshState();
   s.cash = 1_000_000_000;
   const u2 = applyUnlockProvince(
@@ -310,8 +312,16 @@ test('Global Province Leaderboard scores and sorts across all 6 categories accur
   const entries = buildProvinceLeaderboardEntries(u2, 'uid_test', 'Leader', 'PK');
   assert.equal(entries.length, 2);
 
-  assert.equal(sortProvinceLeaderboard(entries, 'gdp')[0].provId, 'prov_2');
-  assert.equal(sortProvinceLeaderboard(entries, 'hap')[0].provId, 'prov_1');
+  // Single player with 2 provinces yields strictly 1 best entry per category
+  const gdpRanked = sortProvinceLeaderboard(entries, 'gdp');
+  assert.equal(gdpRanked.length, 1);
+  assert.equal(gdpRanked[0].provId, 'prov_2');
+
+  const hapRanked = sortProvinceLeaderboard(entries, 'hap');
+  assert.equal(hapRanked.length, 1);
+  assert.equal(hapRanked[0].provId, 'prov_1');
+
+  assert.equal(sortProvinceLeaderboard(entries, 'dev').length, 1);
   assert.equal(sortProvinceLeaderboard(entries, 'dev')[0].provId, 'prov_2');
   assert.equal(sortProvinceLeaderboard(entries, 'pop')[0].provId, 'prov_2');
   assert.equal(sortProvinceLeaderboard(entries, 'emp')[0].provId, 'prov_2');
@@ -321,4 +331,129 @@ test('Global Province Leaderboard scores and sorts across all 6 categories accur
   const score1 = calculateProvinceOverallScore(provs[1]);
   assert.ok(score0 >= 0 && score0 <= 1000);
   assert.ok(score1 > score0);
+});
+
+test('Global Province Leaderboard shows only each unique player best province across multiple multi-province players and updates dynamically', () => {
+  const mkPlayerEntries = (
+    uid: string,
+    ownerName: string,
+    countryCode: string,
+    specs: Array<{ gdp: number; hap: number; dev: number; pop: number; emp: number; name: string }>,
+  ) => {
+    let st = freshState();
+    st.cash = 50_000_000_000;
+    for (let i = 1; i < specs.length; i++) {
+      st = applyUnlockProvince(
+        st,
+        {
+          name: specs[i].name,
+          flagId: PROVINCE_FLAGS[i % PROVINCE_FLAGS.length].id,
+          color: PROVINCE_COLORS[i % PROVINCE_COLORS.length].hex,
+        },
+        PROVINCE_DISCOUNT_EPOCH_MS + i * 1000,
+      ).state;
+    }
+    st.provinces = st.provinces!.map((p, idx) => ({
+      ...p,
+      name: specs[idx].name,
+      gdp: specs[idx].gdp,
+      hap: specs[idx].hap,
+      dev: specs[idx].dev,
+      pop: specs[idx].pop,
+      emp: specs[idx].emp,
+    }));
+    return {
+      state: st,
+      entries: buildProvinceLeaderboardEntries(st, uid, ownerName, countryCode),
+    };
+  };
+
+  // Player A: prov_1 leads Happiness (98%), prov_2 leads Overall/GDP/Dev/Pop/Emp
+  const playerA = mkPlayerEntries('uid_A', 'Alice', 'PK', [
+    { name: 'Alice Garden', gdp: 120_000_000, hap: 98, dev: 40, pop: 18, emp: 74 },
+    { name: 'Alice Mega', gdp: 2_500_000_000, hap: 62, dev: 88, pop: 80, emp: 95 },
+  ]);
+
+  // Player B: 3 provinces, prov_3 leads Pop/Dev/Overall, prov_1 leads Emp, prov_2 leads Hap
+  const playerB = mkPlayerEntries('uid_B', 'Bilal', 'JP', [
+    { name: 'Bilal Works', gdp: 400_000_000, hap: 60, dev: 50, pop: 25, emp: 97 },
+    { name: 'Bilal Resort', gdp: 200_000_000, hap: 94, dev: 45, pop: 10, emp: 70 },
+    { name: 'Bilal Capital', gdp: 1_800_000_000, hap: 82, dev: 92, pop: 110, emp: 88 },
+  ]);
+
+  // Player C: single province player must never be hidden
+  const playerC = mkPlayerEntries('uid_C', 'Clara', 'DE', [
+    { name: 'Clara Solo', gdp: 950_000_000, hap: 85, dev: 66, pop: 42, emp: 84 },
+  ]);
+
+  const allRaw = [...playerA.entries, ...playerB.entries, ...playerC.entries];
+  assert.equal(allRaw.length, 6);
+
+  const cats = ['overall', 'gdp', 'hap', 'dev', 'pop', 'emp'] as const;
+  for (const cat of cats) {
+    const ranked = selectBestProvinceLeaderboardEntries(allRaw, cat);
+    // Exactly 1 entry per unique player, no legitimate player dropped
+    assert.equal(ranked.length, 3);
+    assert.deepEqual(new Set(ranked.map((r) => r.ownerUid)).size, 3);
+  }
+
+  // Verify category-specific winners per player & overall ordering
+  const overall = selectBestProvinceLeaderboardEntries(allRaw, 'overall');
+  assert.equal(overall.find((e) => e.ownerUid === 'uid_A')?.provId, 'prov_2');
+  assert.equal(overall.find((e) => e.ownerUid === 'uid_B')?.provId, 'prov_3');
+  assert.equal(overall.find((e) => e.ownerUid === 'uid_C')?.provId, 'prov_1');
+  assert.ok(overall[0].overallScore >= overall[1].overallScore);
+  assert.ok(overall[1].overallScore >= overall[2].overallScore);
+
+  const byHap = selectBestProvinceLeaderboardEntries(allRaw, 'hap');
+  assert.deepEqual(
+    byHap.map((e) => `${e.ownerUid}:${e.provId}`),
+    ['uid_A:prov_1', 'uid_B:prov_2', 'uid_C:prov_1'],
+  );
+
+  const byDev = selectBestProvinceLeaderboardEntries(allRaw, 'dev');
+  assert.deepEqual(
+    byDev.map((e) => `${e.ownerUid}:${e.provId}`),
+    ['uid_B:prov_3', 'uid_A:prov_2', 'uid_C:prov_1'],
+  );
+
+  const byPop = selectBestProvinceLeaderboardEntries(allRaw, 'pop');
+  assert.deepEqual(
+    byPop.map((e) => `${e.ownerUid}:${e.provId}`),
+    ['uid_B:prov_3', 'uid_A:prov_2', 'uid_C:prov_1'],
+  );
+
+  const byEmp = selectBestProvinceLeaderboardEntries(allRaw, 'emp');
+  assert.deepEqual(
+    byEmp.map((e) => `${e.ownerUid}:${e.provId}`),
+    ['uid_B:prov_1', 'uid_A:prov_2', 'uid_C:prov_1'],
+  );
+
+  const byGdp = selectBestProvinceLeaderboardEntries(allRaw, 'gdp');
+  assert.deepEqual(
+    byGdp.map((e) => `${e.ownerUid}:${e.provId}`),
+    ['uid_A:prov_2', 'uid_B:prov_3', 'uid_C:prov_1'],
+  );
+
+  // Dynamic update: Alice's prov_1 overtakes prov_2 in overallScore and GDP
+  const fpBefore = buildProvinceLeaderboardFingerprint(playerA.entries);
+  playerA.state.provinces![0] = {
+    ...playerA.state.provinces![0],
+    gdp: 9_000_000_000,
+    dev: 96,
+    pop: 140,
+    emp: 98,
+    hap: 99,
+  };
+  const updatedAEntries = buildProvinceLeaderboardEntries(playerA.state, 'uid_A', 'Alice', 'PK');
+  assert.notEqual(buildProvinceLeaderboardFingerprint(updatedAEntries), fpBefore);
+
+  const updatedOverall = selectBestProvinceLeaderboardEntries(
+    [...updatedAEntries, ...playerB.entries, ...playerC.entries],
+    'overall',
+  );
+  assert.equal(updatedOverall.length, 3);
+  assert.equal(updatedOverall[0].ownerUid, 'uid_A');
+  assert.equal(updatedOverall[0].provId, 'prov_1');
+  assert.equal(updatedOverall[0].name, 'Alice Garden');
 });

@@ -37,6 +37,7 @@ import {
   sanitizeStats,
   totalBuildings,
 } from '../game/rules';
+import { selectBestProvinceLeaderboardEntries } from '../game/province';
 import type {
   GameState,
   PlayerProfile,
@@ -1358,7 +1359,7 @@ const LEADERBOARD_ORDER_FIELD: Record<ProvinceLeaderboardCategory, string> = {
 
 export async function fetchProvinceLeaderboard(
   category: ProvinceLeaderboardCategory,
-  limitCount = 50,
+  limitCount = 100,
 ): Promise<ProvinceLeaderboardEntry[]> {
   if (!auth?.currentUser?.uid) return [];
   const field = LEADERBOARD_ORDER_FIELD[category] || 'overallScore';
@@ -1369,7 +1370,7 @@ export async function fetchProvinceLeaderboard(
       limit(Math.max(1, Math.min(100, limitCount))),
     ),
   );
-  return snap.docs.map((d) => {
+  const mapped: ProvinceLeaderboardEntry[] = snap.docs.map((d) => {
     const raw = d.data() as Record<string, unknown>;
     return {
       entryId: d.id,
@@ -1390,5 +1391,6 @@ export async function fetchProvinceLeaderboard(
       updatedMs: timestampToMs(raw.updatedAt),
     };
   });
+  return selectBestProvinceLeaderboardEntries(mapped, category);
 }
 

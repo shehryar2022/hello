@@ -1039,27 +1039,96 @@ export function buildProvinceLeaderboardEntries(
   }));
 }
 
+export function compareProvinceLeaderboardEntries(
+  a: ProvinceLeaderboardEntry,
+  b: ProvinceLeaderboardEntry,
+  category: ProvinceLeaderboardCategory,
+): number {
+  switch (category) {
+    case 'gdp':
+      return (
+        b.gdp - a.gdp ||
+        b.overallScore - a.overallScore ||
+        b.dev - a.dev ||
+        a.slot - b.slot ||
+        a.provId.localeCompare(b.provId)
+      );
+    case 'hap':
+      return (
+        b.hap - a.hap ||
+        b.overallScore - a.overallScore ||
+        b.gdp - a.gdp ||
+        a.slot - b.slot ||
+        a.provId.localeCompare(b.provId)
+      );
+    case 'dev':
+      return (
+        b.dev - a.dev ||
+        b.overallScore - a.overallScore ||
+        b.gdp - a.gdp ||
+        a.slot - b.slot ||
+        a.provId.localeCompare(b.provId)
+      );
+    case 'pop':
+      return (
+        b.pop - a.pop ||
+        b.overallScore - a.overallScore ||
+        b.gdp - a.gdp ||
+        a.slot - b.slot ||
+        a.provId.localeCompare(b.provId)
+      );
+    case 'emp':
+      return (
+        b.emp - a.emp ||
+        b.overallScore - a.overallScore ||
+        b.gdp - a.gdp ||
+        a.slot - b.slot ||
+        a.provId.localeCompare(b.provId)
+      );
+    case 'overall':
+    default:
+      return (
+        b.overallScore - a.overallScore ||
+        b.gdp - a.gdp ||
+        b.dev - a.dev ||
+        b.hap - a.hap ||
+        a.slot - b.slot ||
+        a.provId.localeCompare(b.provId)
+      );
+  }
+}
+
+export function selectBestProvinceLeaderboardEntries(
+  entries: ProvinceLeaderboardEntry[],
+  category: ProvinceLeaderboardCategory,
+): ProvinceLeaderboardEntry[] {
+  const bestByOwner = new Map<string, ProvinceLeaderboardEntry>();
+  for (const entry of entries) {
+    if (!entry) continue;
+    const ownerKey = (entry.ownerUid || '').trim() || entry.entryId;
+    const prev = bestByOwner.get(ownerKey);
+    if (!prev || compareProvinceLeaderboardEntries(entry, prev, category) < 0) {
+      bestByOwner.set(ownerKey, entry);
+    }
+  }
+  const unique = Array.from(bestByOwner.values());
+  unique.sort((a, b) => compareProvinceLeaderboardEntries(a, b, category));
+  return unique;
+}
+
 export function sortProvinceLeaderboard(
   entries: ProvinceLeaderboardEntry[],
   category: ProvinceLeaderboardCategory,
 ): ProvinceLeaderboardEntry[] {
-  const copy = [...entries];
-  copy.sort((a, b) => {
-    switch (category) {
-      case 'gdp':
-        return b.gdp - a.gdp || b.overallScore - a.overallScore;
-      case 'hap':
-        return b.hap - a.hap || b.overallScore - a.overallScore;
-      case 'dev':
-        return b.dev - a.dev || b.overallScore - a.overallScore;
-      case 'pop':
-        return b.pop - a.pop || b.overallScore - a.overallScore;
-      case 'emp':
-        return b.emp - a.emp || b.overallScore - a.overallScore;
-      case 'overall':
-      default:
-        return b.overallScore - a.overallScore || b.gdp - a.gdp;
-    }
-  });
-  return copy;
+  return selectBestProvinceLeaderboardEntries(entries, category);
+}
+
+export function buildProvinceLeaderboardFingerprint(entries: ProvinceLeaderboardEntry[]): string {
+  if (!entries.length) return '';
+  return entries
+    .map(
+      (e) =>
+        `${e.provId}:${e.ownerName}:${e.countryCode}:${e.name}:${e.flagId}:${e.color}:${e.gdp}:${e.pop}:${e.hap}:${e.dev}:${e.emp}:${e.overallScore}`,
+    )
+    .join(';');
 }
