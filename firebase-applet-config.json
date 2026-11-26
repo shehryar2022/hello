@@ -1,10 +1,12 @@
 {
+  "projectId": "pakora-tab",
+  "appId": "1:88621916854:web:95ceacc2bced7e6530bc17",
   "apiKey": "AIzaSyADfvhFfSuJYVGHqubAR8foY237MQ2QIdc",
   "authDomain": "pakora-tab.firebaseapp.com",
-  "databaseURL": "https://pakora-tab-default-rtdb.asia-southeast1.firebasedatabase.app",
-  "projectId": "pakora-tab",
+  "firestoreDatabaseId": "ai-studio-hello-92e5e653-773c-4693-a811-557cb0f20367",
   "storageBucket": "pakora-tab.firebasestorage.app",
   "messagingSenderId": "88621916854",
-  "appId": "1:88621916854:web:95ceacc2bced7e6530bc17",
-  "measurementId": "G-75YCGCSXXB"
+  "measurementId": "G-75YCGCSXXB",
+  "oAuthClientId": "88621916854-otjrl47obf0ac7sth191glsuntj2f9vv.apps.googleusercontent.com",
+  "recaptchaSiteKey": ""
 }

@@ -23,6 +23,11 @@ test('Firebase configures pakora-tab once and initializes Auth and Firestore cle
   assert.ok(auth !== null);
   assert.equal(auth.app, firebaseApp);
 
+  assert.ok(FIREBASE_CONFIG.firestoreDatabaseId.length > 0);
   assert.ok(db !== null);
   assert.equal(db.app, firebaseApp);
+  assert.equal(
+    (db as unknown as { _databaseId?: { database?: string } })._databaseId?.database,
+    FIREBASE_CONFIG.firestoreDatabaseId,
+  );
 });

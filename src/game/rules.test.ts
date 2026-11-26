@@ -700,6 +700,23 @@ test('cleanSavePayload strips undefined/country fields and clamps all values wit
   assert.equal(fx.taxSurge, 1);
   assert.ok(Object.keys(cleaned.boosterCd as Record<string, unknown>).length <= 20);
   assert.ok(Object.keys(cleaned).length <= 72);
+
+  const weird = freshState() as unknown as Record<string, unknown>;
+  weird.cash = Number.NaN;
+  weird.gems = -0;
+  weird.rank = -0;
+  weird.fused = 3.9;
+  weird.streak = Number.POSITIVE_INFINITY;
+  weird.day = Number.NaN;
+  weird.ev = Number.NEGATIVE_INFINITY;
+  const cleanedWeird = cleanSavePayload(weird as never);
+  assert.equal(cleanedWeird.cash, 260);
+  assert.equal(Object.is(cleanedWeird.gems, 0), true);
+  assert.equal(Object.is(cleanedWeird.rank, 0), true);
+  assert.equal(cleanedWeird.fused, 3);
+  assert.equal(cleanedWeird.streak, 0);
+  assert.equal(cleanedWeird.day, 0);
+  assert.equal(cleanedWeird.ev, 40);
 });
 
 test('atomic gameplay updaters prevent double-click double-spend, double-collect, and double-claim', () => {

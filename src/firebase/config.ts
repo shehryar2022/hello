@@ -16,36 +16,52 @@ function readConfigValue(envValue: unknown, fallbackValue: unknown): string {
   return typeof fallbackValue === 'string' ? fallbackValue.trim() : '';
 }
 
+const rawAppletConfig = firebaseAppletConfig as {
+  apiKey?: string;
+  authDomain?: string;
+  databaseURL?: string;
+  projectId?: string;
+  storageBucket?: string;
+  messagingSenderId?: string;
+  appId?: string;
+  measurementId?: string;
+  firestoreDatabaseId?: string;
+};
+
 export const FIREBASE_CONFIG = {
-  apiKey: readConfigValue(import.meta.env?.VITE_FIREBASE_API_KEY, firebaseAppletConfig.apiKey),
+  apiKey: readConfigValue(import.meta.env?.VITE_FIREBASE_API_KEY, rawAppletConfig.apiKey),
   authDomain: readConfigValue(
     import.meta.env?.VITE_FIREBASE_AUTH_DOMAIN,
-    firebaseAppletConfig.authDomain,
+    rawAppletConfig.authDomain,
   ),
   databaseURL: readConfigValue(
     import.meta.env?.VITE_FIREBASE_DATABASE_URL,
-    firebaseAppletConfig.databaseURL,
+    rawAppletConfig.databaseURL,
   ),
   projectId: readConfigValue(
     import.meta.env?.VITE_FIREBASE_PROJECT_ID,
-    firebaseAppletConfig.projectId,
+    rawAppletConfig.projectId,
   ),
   storageBucket: readConfigValue(
     import.meta.env?.VITE_FIREBASE_STORAGE_BUCKET,
-    firebaseAppletConfig.storageBucket,
+    rawAppletConfig.storageBucket,
   ),
   messagingSenderId: readConfigValue(
     import.meta.env?.VITE_FIREBASE_MESSAGING_SENDER_ID,
-    firebaseAppletConfig.messagingSenderId,
+    rawAppletConfig.messagingSenderId,
   ),
-  appId: readConfigValue(import.meta.env?.VITE_FIREBASE_APP_ID, firebaseAppletConfig.appId),
+  appId: readConfigValue(import.meta.env?.VITE_FIREBASE_APP_ID, rawAppletConfig.appId),
   measurementId: readConfigValue(
     import.meta.env?.VITE_FIREBASE_MEASUREMENT_ID,
-    firebaseAppletConfig.measurementId,
+    rawAppletConfig.measurementId,
+  ),
+  firestoreDatabaseId: readConfigValue(
+    import.meta.env?.VITE_FIREBASE_DATABASE_ID,
+    rawAppletConfig.firestoreDatabaseId,
   ),
 };
 
-const databaseId = readConfigValue(import.meta.env?.VITE_FIREBASE_DATABASE_ID, '');
+const databaseId = FIREBASE_CONFIG.firestoreDatabaseId;
 
 const hasRequiredFirebaseConfig = Boolean(
   FIREBASE_CONFIG.apiKey &&
@@ -197,6 +213,21 @@ export function formatFirebaseError(err: unknown): string {
     // Not JSON
   }
   return raw || 'Something went wrong';
+}
+
+export async function testConnection(): Promise<void> {
+  if (!isFirebaseConfigured || !db) return;
+  try {
+    await getDocFromServer(doc(db, 'test', 'connection'));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.error('Please check your Firebase configuration.');
+    }
+  }
+}
+
+if (typeof window !== 'undefined' && isFirebaseConfigured) {
+  void testConnection();
 }
 
 export async function testFirestoreConnection(): Promise<void> {

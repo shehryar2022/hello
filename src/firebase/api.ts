@@ -74,8 +74,9 @@ export function timestampToMs(t: unknown): number {
 }
 
 export function capValue(v: unknown, max: number): number {
-  const n = Math.floor(Number(v) || 0);
-  return Math.min(max, Math.max(0, n));
+  const raw = Number(v);
+  const n = Number.isFinite(raw) ? Math.floor(raw) : 0;
+  return Math.min(max, Math.max(0, n)) + 0;
 }
 
 function makeError(code: string, message: string): Error & { code: string } {
@@ -86,6 +87,15 @@ function requireUid(): string {
   const u = auth.currentUser?.uid;
   if (!u) throw makeError('unauthenticated', 'Not signed in');
   return u;
+}
+
+function isPermissionDeniedError(err: unknown): boolean {
+  const code = (err as { code?: string })?.code || '';
+  const msg = err instanceof Error ? err.message : String(err || '');
+  return (
+    code === 'permission-denied' ||
+    /permission-denied|Missing or insufficient permissions/i.test(`${code} ${msg}`)
+  );
 }
 
 function reportAndRethrow(
@@ -108,8 +118,8 @@ async function runSessionTx<T>(
   opPath: string | null = null,
 ): Promise<T> {
   const uid = requireUid();
-  try {
-    return await runTransaction(db, async (tx) => {
+  const exec = () =>
+    runTransaction(db, async (tx) => {
       if (checkSession) {
         const sesSnap = await tx.get(doc(db, 'players', uid, 'private', 'session'));
         if (sesSnap.exists() && sesSnap.data()?.sid !== sid) {
@@ -119,7 +129,19 @@ async function runSessionTx<T>(
       }
       return fn(tx, uid);
     });
+
+  try {
+    return await exec();
   } catch (err) {
+    if (isPermissionDeniedError(err) && auth?.currentUser) {
+      await auth.currentUser.getIdToken(true).catch(() => null);
+      await new Promise((r) => setTimeout(r, 450));
+      try {
+        return await exec();
+      } catch (retryErr) {
+        reportAndRethrow(retryErr, OperationType.WRITE, opPath || `players/${uid}`);
+      }
+    }
     reportAndRethrow(err, OperationType.WRITE, opPath || `players/${uid}`);
   }
 }
@@ -308,7 +330,7 @@ export async function syncSaveToCloud(params: {
     const accepted = !wData || curRev === rev;
 
     if (accepted) {
-      const nextRev = Math.min(1e9, curRev + 1);
+      const nextRev = (curRev >= 1e9 ? 1e9 : curRev + 1) + 0;
       tx.set(wRef, {
         cash,
         gems,
@@ -331,10 +353,10 @@ export async function syncSaveToCloud(params: {
         gdp: gdpVal,
         cash,
         gems,
-        level: Math.max(1, Math.min(10_000_000, Math.floor(playerLevel(state)))),
-        rank: Math.max(0, Math.min(MAX_RANK, Math.floor(state.rank || 0))),
+        level: capValue(playerLevel(state), 10_000_000) || 1,
+        rank: capValue(state.rank, MAX_RANK),
         subTier: activeSub ? activeSub.def.id : '',
-        subExp: activeSub ? Math.max(0, Math.min(1e13, Math.floor(activeSub.exp))) : 0,
+        subExp: activeSub ? capValue(activeSub.exp, 1e13) : 0,
         lastSeen: serverTimestamp(),
         stats: mergedStats,
       });

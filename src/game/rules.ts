@@ -195,7 +195,7 @@ export function cleanTechMap(raw: unknown): Record<string, number> {
 
 export function migrateState(raw: Partial<GameState> & Record<string, unknown>): GameState {
   const D = freshState();
-  const s = Object.assign(D, raw || {}) as GameState & {
+  const s = Object.assign({}, D, raw || {}) as GameState & {
     loan?: unknown;
     deals?: unknown;
     avHist?: unknown;
@@ -434,24 +434,30 @@ function stripUndefinedDeep(value: unknown): unknown {
   return out;
 }
 
+function toSafeInt(value: unknown, min: number, max: number): number {
+  const n = Math.trunc(Number(value));
+  if (!Number.isFinite(n)) return min;
+  return Math.min(max, Math.max(min, n)) + 0;
+}
+
 const ALLOWED_SAVE_KEYS = new Set(Object.keys(freshState()).filter((k) => k !== 'country'));
 
 export function cleanSavePayload(s: GameState): Record<string, unknown> {
   const normalized = migrateState({ ...(s as GameState & Record<string, unknown>) });
-  normalized.cash = Math.min(1e13, Math.max(0, Number(normalized.cash) || 0));
-  normalized.gems = Math.min(1e9, Math.max(0, Math.floor(Number(normalized.gems) || 0)));
-  normalized.taxPool = Math.min(1e13, Math.max(0, Number(normalized.taxPool) || 0));
-  normalized.rank = Math.max(0, Math.min(MAX_RANK, Math.floor(Number(normalized.rank) || 0)));
-  normalized.fused = Math.max(0, Math.min(1_000_000, Math.floor(Number(normalized.fused) || 0)));
-  normalized.streak = Math.max(0, Math.min(10_000, Math.floor(Number(normalized.streak) || 0)));
-  normalized.day = Math.max(0, Math.min(100_000_000, Number(normalized.day) || 0));
-  normalized.ev = Math.max(0, Math.min(1000, Number(normalized.ev) || 0));
-  normalized.crateCd = Math.max(0, Math.min(1e13, Number(normalized.crateCd) || 0));
-  normalized.t = Math.max(0, Math.min(1e13, Number(normalized.t) || 0));
-  normalized.lastDaily = Math.max(0, Math.min(1e13, Number(normalized.lastDaily) || 0));
-  normalized.govT = Math.max(0, Math.min(1e13, Number(normalized.govT) || 0));
+  normalized.cash = Math.min(1e13, Math.max(0, Number.isFinite(Number(normalized.cash)) ? Number(normalized.cash) : 0)) + 0;
+  normalized.gems = toSafeInt(normalized.gems, 0, 1e9);
+  normalized.taxPool = Math.min(1e13, Math.max(0, Number.isFinite(Number(normalized.taxPool)) ? Number(normalized.taxPool) : 0)) + 0;
+  normalized.rank = toSafeInt(normalized.rank, 0, MAX_RANK);
+  normalized.fused = toSafeInt(normalized.fused, 0, 1_000_000);
+  normalized.streak = toSafeInt(normalized.streak, 0, 10_000);
+  normalized.day = Math.max(0, Math.min(100_000_000, Number.isFinite(Number(normalized.day)) ? Number(normalized.day) : 0)) + 0;
+  normalized.ev = Math.max(0, Math.min(1000, Number.isFinite(Number(normalized.ev)) ? Number(normalized.ev) : 0)) + 0;
+  normalized.crateCd = Math.max(0, Math.min(1e13, Number.isFinite(Number(normalized.crateCd)) ? Number(normalized.crateCd) : 0)) + 0;
+  normalized.t = Math.max(0, Math.min(1e13, Number.isFinite(Number(normalized.t)) ? Number(normalized.t) : 0)) + 0;
+  normalized.lastDaily = Math.max(0, Math.min(1e13, Number.isFinite(Number(normalized.lastDaily)) ? Number(normalized.lastDaily) : 0)) + 0;
+  normalized.govT = Math.max(0, Math.min(1e13, Number.isFinite(Number(normalized.govT)) ? Number(normalized.govT) : 0)) + 0;
   normalized.questIds = Array.isArray(normalized.questIds)
-    ? normalized.questIds.filter((x) => Number.isFinite(x)).slice(0, 10)
+    ? normalized.questIds.filter((x) => Number.isFinite(x)).map((x) => Math.trunc(x) + 0).slice(0, 10)
     : [];
   normalized.questDay = typeof normalized.questDay === 'string' ? normalized.questDay.slice(0, 32) : '';
 
