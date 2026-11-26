@@ -1,4 +1,4 @@
-import React, { memo } from 'react';
+import React, { memo, useId } from 'react';
 import { normalizeFlagId, normalizeProvinceColor } from '../game/province';
 
 interface ProvinceFlagProps {
@@ -15,6 +15,7 @@ export const ProvinceFlag: React.FC<ProvinceFlagProps> = memo(
   ({ flagId, color, slot = 1, width = 44, height = 30, className = 'prov-flag-svg', title }) => {
     const id = normalizeFlagId(flagId, slot);
     const accent = normalizeProvinceColor(color, slot);
+    const clipId = `clip_${id}_${slot}_${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
 
     return (
       <svg
@@ -28,10 +29,10 @@ export const ProvinceFlag: React.FC<ProvinceFlagProps> = memo(
       >
         {title && <title>{title}</title>}
         <rect x="0.75" y="0.75" width="58.5" height="38.5" rx="6" fill="#171236" stroke="rgba(255,255,255,0.22)" strokeWidth="1.5" />
-        <clipPath id={`clip_${id}_${slot}`}>
+        <clipPath id={clipId}>
           <rect x="1" y="1" width="58" height="38" rx="5.5" />
         </clipPath>
-        <g clipPath={`url(#clip_${id}_${slot})`}>
+        <g clipPath={`url(#${clipId})`}>
           {id === 'crest_star' && (
             <>
               <rect x="0" y="0" width="60" height="40" fill={accent} fillOpacity="0.22" />

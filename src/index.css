@@ -2233,3 +2233,95 @@ body.doc-hidden .sub-crest-ic {
   .prov-quick-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+#authBoot {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background:
+    radial-gradient(800px 420px at 20% 0%, rgba(124, 92, 255, 0.3), transparent 70%),
+    linear-gradient(180deg, #1e174b, #141033 65%);
+}
+.auth-boot-card {
+  max-width: 340px;
+  width: 100%;
+  text-align: center;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 24px 20px;
+}
+.auth-boot-card h2 { font-size: 19px; margin: 0; }
+.auth-boot-card p { margin: 0; font-size: 13px; color: var(--mu); }
+
+body.update-locked {
+  overflow: hidden !important;
+}
+
+#updateLock {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(10, 7, 30, 0.96);
+  backdrop-filter: blur(12px);
+}
+.update-lock-card {
+  max-width: 440px;
+  width: 100%;
+  text-align: center;
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 26px 22px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.72), 0 0 0 2px rgba(255, 194, 61, 0.55), var(--in);
+}
+.update-lock-icon {
+  width: 62px;
+  height: 62px;
+  border-radius: 20px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(145deg, rgba(255, 194, 61, 0.22), rgba(124, 92, 255, 0.24));
+  box-shadow: var(--sm), var(--in);
+}
+.update-lock-card h2 {
+  margin: 0;
+  font: 800 22px/1.15 var(--d);
+  letter-spacing: 0.02em;
+  color: var(--gold);
+}
+.update-lock-card p {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.45;
+  color: var(--tx);
+  max-width: 36ch;
+}
+.update-lock-warn {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 194, 61, 0.14);
+  box-shadow: 0 0 0 1px rgba(255, 194, 61, 0.45);
+  color: #ffe9a8;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.update-lock-warn code {
+  font: 600 11.5px var(--m);
+  color: #fff;
+}
+.update-lock-btn {
+  width: 100%;
+  min-height: 48px;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+}
+
+

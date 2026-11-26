@@ -330,8 +330,16 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    if (open) {
+      setUsername('');
+      setStatus(null);
+      setBusy(false);
+    }
+  }, [open]);
+
+  useEffect(() => {
     if (defaultCountryCode) setCountryCode(defaultCountryCode);
-  }, [defaultCountryCode]);
+  }, [defaultCountryCode, open]);
 
   useEffect(() => {
     const trimmed = username.trim();

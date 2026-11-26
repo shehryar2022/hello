@@ -1,14 +1,65 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import {defineConfig} from 'vite';
+import { defineConfig, type Plugin } from 'vite';
+
+const BUILD_VERSION = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+const BUILT_AT = Date.now();
+
+function versionManifestPlugin(version: string, builtAt: number): Plugin {
+  const payload = JSON.stringify({ version, builtAt });
+
+  const serveVersionJson = (
+    req: { url?: string },
+    res: {
+      statusCode: number;
+      setHeader: (name: string, value: string) => void;
+      end: (body: string) => void;
+    },
+    next: () => void,
+  ) => {
+    const cleanUrl = (req.url || '').split('?')[0];
+    if (cleanUrl === '/version.json') {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.end(payload);
+      return;
+    }
+    next();
+  };
+
+  return {
+    name: 'version-manifest',
+    configureServer(server) {
+      server.middlewares.use(serveVersionJson);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(serveVersionJson);
+    },
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'version.json',
+        source: payload,
+      });
+    },
+  };
+}
 
 export default defineConfig(() => {
   return {
+    define: {
+      __APP_VERSION__: JSON.stringify(BUILD_VERSION),
+    },
     plugins: [
       react(),
       tailwindcss(),
+      versionManifestPlugin(BUILD_VERSION, BUILT_AT),
       // Copies src/assets into dist/ so root-relative URLs like
       // "/src/assets/images/..." (e.g. generate_image output) still resolve
       // in production builds. Do not remove.
@@ -23,7 +74,7 @@ export default defineConfig(() => {
           const srcAssets = path.resolve(import.meta.dirname, 'src/assets');
           const distAssets = path.resolve(import.meta.dirname, 'dist', 'src/assets');
           if (fs.existsSync(distDir) && fs.existsSync(srcAssets)) {
-            fs.cpSync(srcAssets, distAssets, {recursive: true, force: true});
+            fs.cpSync(srcAssets, distAssets, { recursive: true, force: true });
           }
         },
       },

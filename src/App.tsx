@@ -32,6 +32,7 @@ import {
   type DialogConfig,
 } from './components/modals/GameModals';
 import { GiftTableModal } from './components/modals/GiftTableModal';
+import { UpdateRequiredModal } from './components/modals/UpdateRequiredModal';
 import { NavBar, TopBar } from './components/TopBar';
 import { BuildTab } from './components/tabs/BuildTab';
 import { GiftsTab } from './components/tabs/GiftsTab';
@@ -42,6 +43,14 @@ import { ProvincesTab } from './components/tabs/ProvincesTab';
 import { QuestsTab } from './components/tabs/QuestsTab';
 import { ShopTab } from './components/tabs/ShopTab';
 import { StickersTab } from './components/tabs/StickersTab';
+import {
+  buildInitialCloudState,
+  buildOnboardingSeedState,
+  hasOfflineSave,
+  isSessionStillValid,
+  readAccountSave,
+  writeAccountSave,
+} from './firebase/accountSession';
 import {
   acceptGiftOffer,
   buildQueryHelpers,
@@ -110,7 +119,6 @@ import {
   HEARTBEAT_MS,
   PROJECT_STAGES,
   RANKS,
-  SAVE_KEY,
   STICKERS,
   SUBSCRIPTIONS,
   TAB_META,
@@ -152,12 +160,25 @@ import {
   POLICY_BOUNDS,
   resolveExecutiveDecision,
   rollWeeklySubPromo,
+  rotateDailyQuestsIfNeeded,
   selectDailyQuestIds,
   shouldRunOfflineEntryCheck,
   targetHappiness,
   tierOfCompletedTrades,
   type DailyOfflineCheckResult,
 } from './game/rules';
+import {
+  buildCacheBustedUrl,
+  clearAppCachesBeforeReload,
+  clearUpdateReloadGuardIfMatched,
+  evaluateUpdateReloadGuard,
+  fetchLatestVersion,
+  getRunningAppVersion,
+  isNewerVersionDeployed,
+  recordUpdateReloadAttempt,
+  VERSION_BROADCAST_CHANNEL,
+  VERSION_POLL_INTERVAL_MS,
+} from './game/versionCheck';
 import {
   applyAllocateProvinceBudget,
   applyCustomizeProvince,
@@ -204,21 +225,13 @@ interface FloatPop {
 }
 
 const TAB_LOCK_KEY = 'cet_tab_lock';
-
-function loadInitialState(): GameState {
-  try {
-    const raw = localStorage.getItem(SAVE_KEY);
-    if (raw) {
-      return migrateState(JSON.parse(raw) as Partial<GameState>);
-    }
-  } catch {
-    // Ignore invalid local storage
-  }
-  return freshState();
-}
+const HAS_FIREBASE_AUTH = Boolean(isFirebaseConfigured && auth && db);
 
 export default function App() {
-  const [state, setState] = useState<GameState>(() => loadInitialState());
+  // Never preload offline shared localStorage before Firebase auth resolves when Firebase is configured
+  const [state, setState] = useState<GameState>(() =>
+    HAS_FIREBASE_AUTH ? freshState() : readAccountSave(null) || freshState(),
+  );
   const stateRef = useRef<GameState>(state);
   stateRef.current = state;
 
@@ -235,16 +248,21 @@ export default function App() {
   const [shopSubTab, setShopSubTab] = useState<ShopSubTab>('rank');
 
   const [gateOpen, setGateOpen] = useState<boolean>(() => {
+    if (HAS_FIREBASE_AUTH) return false;
     const params = new URLSearchParams(window.location.search);
     if (params.get('autostart') === '1') return false;
-    return !localStorage.getItem(SAVE_KEY);
+    return !hasOfflineSave();
   });
+  const gateOpenRef = useRef<boolean>(gateOpen);
+  gateOpenRef.current = gateOpen;
 
   const [user, setUser] = useState<User | null>(null);
   const userRef = useRef<User | null>(null);
   userRef.current = user;
   const [uid, setUid] = useState<string | null>(null);
-  const [authResolved, setAuthResolved] = useState<boolean>(() => !(isFirebaseConfigured && auth && db));
+  const [authResolved, setAuthResolved] = useState<boolean>(() => !HAS_FIREBASE_AUTH);
+  const authResolvedRef = useRef<boolean>(authResolved);
+  authResolvedRef.current = authResolved;
   const [authMsg, setAuthMsg] = useState('');
   const [cloudReady, setCloudReady] = useState(false);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
@@ -292,6 +310,17 @@ export default function App() {
   const [dismissedErrorId, setDismissedErrorId] = useState<string | null>(null);
   const appErrors = React.useSyncExternalStore(subscribeErrorLog, getErrorLog);
 
+  const [updateAvailable, setUpdateAvailable] = useState<{
+    version: string;
+    loopDetected: boolean;
+  } | null>(null);
+  const updateAvailableRef = useRef<boolean>(false);
+  updateAvailableRef.current = Boolean(updateAvailable);
+  const [refreshingUpdate, setRefreshingUpdate] = useState(false);
+  const refreshingUpdateRef = useRef<boolean>(false);
+  const lastVersionCheckAtRef = useRef<number>(0);
+  const versionChannelRef = useRef<BroadcastChannel | null>(null);
+
   const sidRef = useRef<string>(`${Date.now()}_${Math.random().toString(36).slice(2, 10)}`);
   const entryCheckedKeyRef = useRef<string | null>(null);
   const cloudLoadingRef = useRef<boolean>(false);
@@ -309,12 +338,15 @@ export default function App() {
   const lastActivityRef = useRef<number>(Date.now());
   const cloudSyncTimerRef = useRef<number | null>(null);
   const syncRetryTimerRef = useRef<number | null>(null);
+  const cloudRetryTailTimerRef = useRef<number | null>(null);
   const syncRetryCountRef = useRef<number>(0);
   const lastSyncedAtRef = useRef<number>(0);
   const cloudSyncBusyRef = useRef<boolean>(false);
   const cloudDirtyRef = useRef<boolean>(false);
   const pendingDirtyRef = useRef<boolean>(false);
   const localSaveTimerRef = useRef<number | null>(null);
+  const toastTimersRef = useRef<Set<number>>(new Set());
+  const floatTimersRef = useRef<Set<number>>(new Set());
   const permWarnShownRef = useRef<boolean>(false);
   const cloudSyncPermDeniedRef = useRef<boolean>(false);
   const cloudSyncQuotaPausedRef = useRef<boolean>(false);
@@ -323,6 +355,7 @@ export default function App() {
   pubProfileRef.current = pubProfile;
   const uidRef = useRef<string | null>(null);
   uidRef.current = uid;
+  const prevAuthUidRef = useRef<string | null | undefined>(undefined);
   const cloudReadyRef = useRef<boolean>(false);
   cloudReadyRef.current = cloudReady;
   const needsOnboardingRef = useRef<boolean>(false);
@@ -376,8 +409,10 @@ export default function App() {
 
   const triggerHeartbeat = useCallback(async () => {
     const currentUid = uidRef.current;
+    const capturedSeq = authSeqRef.current;
     if (
       !currentUid ||
+      updateAvailableRef.current ||
       !cloudReadyRef.current ||
       kickedRef.current ||
       needsOnboardingRef.current ||
@@ -390,8 +425,10 @@ export default function App() {
     lastHeartbeatAttemptAtRef.current = Date.now();
     try {
       await sendHeartbeat(currentUid);
+      if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) return;
       lastHeartbeatSuccessAtRef.current = Date.now();
     } catch (err) {
+      if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) return;
       const code = extractErrorCode(err);
       if (code === 'resource-exhausted') {
         cloudSyncQuotaPausedRef.current = true;
@@ -410,9 +447,11 @@ export default function App() {
   const addToast = useCallback((text: string) => {
     const id = Date.now() + Math.random();
     setToasts((prev) => [...prev.slice(-3), { id, text }]);
-    window.setTimeout(() => {
+    const tid = window.setTimeout(() => {
+      toastTimersRef.current.delete(tid);
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 2800);
+    toastTimersRef.current.add(tid);
   }, []);
 
   const spawnFloat = useCallback((text: string, x: number, y: number, color = '#ffc23d') => {
@@ -421,47 +460,55 @@ export default function App() {
     const clampedY = Math.max(40, Math.min(window.innerHeight - 80, y - 24));
     const id = Date.now() + Math.random();
     setFloats((prev) => [...prev.slice(-10), { id, text, x: clampedX, y: clampedY, color }]);
-    window.setTimeout(() => {
+    const tid = window.setTimeout(() => {
+      floatTimersRef.current.delete(tid);
       setFloats((prev) => prev.filter((f) => f.id !== id));
     }, 950);
+    floatTimersRef.current.add(tid);
   }, []);
 
-  const saveLocal = useCallback((next: GameState) => {
+  const saveLocal = useCallback((next: GameState, targetUid: string | null = uidRef.current) => {
     if (localSaveTimerRef.current) {
       window.clearTimeout(localSaveTimerRef.current);
       localSaveTimerRef.current = null;
     }
-    try {
-      const toStore = { ...next, t: Date.now() };
-      localStorage.setItem(SAVE_KEY, JSON.stringify(toStore));
-    } catch {
-      // Ignore quota issues
-    }
+    if (HAS_FIREBASE_AUTH && !authResolvedRef.current) return;
+    if (targetUid !== uidRef.current) return;
+    if (targetUid !== null && (cloudLoadingRef.current || needsOnboardingRef.current)) return;
+    writeAccountSave(targetUid, next);
   }, []);
 
   const scheduleSaveLocal = useCallback(() => {
+    if (HAS_FIREBASE_AUTH && !authResolvedRef.current) return;
+    const capturedUid = uidRef.current;
+    const capturedSeq = authSeqRef.current;
+    if (capturedUid !== null && (cloudLoadingRef.current || needsOnboardingRef.current)) return;
     if (localSaveTimerRef.current) window.clearTimeout(localSaveTimerRef.current);
     localSaveTimerRef.current = window.setTimeout(() => {
       localSaveTimerRef.current = null;
-      try {
-        const toStore = { ...stateRef.current, t: Date.now() };
-        localStorage.setItem(SAVE_KEY, JSON.stringify(toStore));
-      } catch {
-        // Ignore quota issues
-      }
+      if (!isSessionStillValid(uidRef.current, capturedUid, authSeqRef.current, capturedSeq)) return;
+      if (capturedUid !== null && (cloudLoadingRef.current || needsOnboardingRef.current)) return;
+      writeAccountSave(capturedUid, stateRef.current);
     }, 300);
   }, []);
 
   useEffect(() => {
     installGlobalErrorListeners();
+    const toastTimers = toastTimersRef.current;
+    const floatTimers = floatTimersRef.current;
     return () => {
       if (localSaveTimerRef.current) window.clearTimeout(localSaveTimerRef.current);
       if (cloudSyncTimerRef.current) window.clearTimeout(cloudSyncTimerRef.current);
       if (syncRetryTimerRef.current) window.clearTimeout(syncRetryTimerRef.current);
+      if (cloudRetryTailTimerRef.current) window.clearTimeout(cloudRetryTailTimerRef.current);
+      for (const tid of toastTimers) window.clearTimeout(tid);
+      toastTimers.clear();
+      for (const tid of floatTimers) window.clearTimeout(tid);
+      floatTimers.clear();
     };
   }, []);
 
-  // Keep body classes synced with animation preference and modal/gate state
+  // Keep body classes synced with animation preference and modal/gate/update state
   useEffect(() => {
     document.body.classList.toggle('noanim', !state.set.anim);
   }, [state.set.anim]);
@@ -473,6 +520,11 @@ export default function App() {
   useEffect(() => {
     document.body.classList.toggle('gate-open', gateOpen);
   }, [gateOpen]);
+
+  useEffect(() => {
+    document.body.classList.toggle('update-locked', Boolean(updateAvailable));
+    return () => document.body.classList.remove('update-locked');
+  }, [updateAvailable]);
 
   // Track responsive mobile vs desktop viewport
   useEffect(() => {
@@ -566,9 +618,11 @@ export default function App() {
   }, []);
 
   const performCloudSync = useCallback(
-    async (immediate = false) => {
+    async (immediate = false, allowDuringUpdate = false) => {
       const currentUid = uidRef.current;
+      const capturedSeq = authSeqRef.current;
       if (!currentUid || !cloudReadyRef.current || kickedRef.current || needsOnboardingRef.current) return;
+      if (updateAvailableRef.current && !allowDuringUpdate) return;
       if (!immediate && (cloudSyncPermDeniedRef.current || cloudSyncQuotaPausedRef.current)) return;
       if (immediate) {
         cloudSyncPermDeniedRef.current = false;
@@ -578,6 +632,10 @@ export default function App() {
       if (syncRetryTimerRef.current) {
         window.clearTimeout(syncRetryTimerRef.current);
         syncRetryTimerRef.current = null;
+      }
+      if (cloudRetryTailTimerRef.current) {
+        window.clearTimeout(cloudRetryTailTimerRef.current);
+        cloudRetryTailTimerRef.current = null;
       }
       if (cloudSyncBusyRef.current) {
         cloudDirtyRef.current = true;
@@ -589,6 +647,7 @@ export default function App() {
       setCloudStatus({ cls: 'warn', text: 'Saving…' });
       try {
         const res = await syncSaveToCloud({
+          expectedUid: currentUid,
           state: stateRef.current,
           pubStats: pubProfileRef.current?.stats,
           completedTradesCount: completedTradesRef.current,
@@ -596,6 +655,7 @@ export default function App() {
           sid: sidRef.current,
           onKicked: handleKicked,
         });
+        if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) return;
         walletRevRef.current = res.wallet.rev;
         syncRetryCountRef.current = 0;
         cloudSyncPermDeniedRef.current = false;
@@ -611,7 +671,7 @@ export default function App() {
             stk: res.wallet.stk,
           };
           stateRef.current = next;
-          saveLocal(next);
+          saveLocal(next, currentUid);
           setState((prev) => ({
             ...prev,
             cash: res.wallet.cash,
@@ -621,7 +681,9 @@ export default function App() {
           cloudDirtyRef.current = true;
           void sendHeartbeat(currentUid)
             .then(() => {
-              lastHeartbeatSuccessAtRef.current = Date.now();
+              if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+                lastHeartbeatSuccessAtRef.current = Date.now();
+              }
             })
             .catch(() => null);
         } else {
@@ -630,17 +692,21 @@ export default function App() {
         }
         setCloudStatus({ cls: 'ok', text: 'Saved' });
       } catch (err) {
+        if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) return;
         const code = (err as { code?: string })?.code || '';
         const msg = err instanceof Error ? err.message : String(err || '');
         const combined = `${code} ${msg}`;
-        if (code === 'aborted' && msg.includes('Another session')) {
-          setCloudStatus({ cls: 'bad', text: 'Session displaced' });
+        if (code === 'aborted' && (msg.includes('Another session') || msg.includes('Active account changed'))) {
+          if (msg.includes('Another session')) {
+            setCloudStatus({ cls: 'bad', text: 'Session displaced' });
+          }
         } else if (code === 'failed-precondition' && /not initialized/i.test(msg)) {
           if (db) {
             const pRef = doc(db, 'players', currentUid);
             const pCheck = await getDocFromServer(pRef)
               .catch(() => getDoc(pRef))
               .catch(() => null);
+            if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) return;
             if (pCheck && !pCheck.exists()) {
               needsOnboardingRef.current = true;
               cloudReadyRef.current = false;
@@ -688,7 +754,9 @@ export default function App() {
             setCloudStatus({ cls: 'warn', text: 'Retrying…' });
             syncRetryTimerRef.current = window.setTimeout(() => {
               syncRetryTimerRef.current = null;
-              void performCloudSync(false);
+              if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+                void performCloudSync(false);
+              }
             }, backoff);
           } else {
             recordAppError({
@@ -706,7 +774,9 @@ export default function App() {
             setCloudStatus({ cls: 'warn', text: 'Retrying…' });
             syncRetryTimerRef.current = window.setTimeout(() => {
               syncRetryTimerRef.current = null;
-              void performCloudSync(false);
+              if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+                void performCloudSync(false);
+              }
             }, 3000);
           } else {
             recordAppError({
@@ -722,9 +792,20 @@ export default function App() {
       } finally {
         expectedWalletRevRef.current = null;
         cloudSyncBusyRef.current = false;
-        if (cloudDirtyRef.current && !cloudSyncPermDeniedRef.current && !cloudSyncQuotaPausedRef.current) {
+        if (
+          isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq) &&
+          cloudDirtyRef.current &&
+          !cloudSyncPermDeniedRef.current &&
+          !cloudSyncQuotaPausedRef.current &&
+          !updateAvailableRef.current
+        ) {
           cloudDirtyRef.current = false;
-          window.setTimeout(() => void performCloudSync(false), 1200);
+          cloudRetryTailTimerRef.current = window.setTimeout(() => {
+            cloudRetryTailTimerRef.current = null;
+            if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+              void performCloudSync(false);
+            }
+          }, 1200);
         }
       }
     },
@@ -734,8 +815,11 @@ export default function App() {
   const scheduleCloudSync = useCallback(
     (delayMs = 10_000) => {
       pendingDirtyRef.current = true;
+      const capturedUid = uidRef.current;
+      const capturedSeq = authSeqRef.current;
       if (
-        !uidRef.current ||
+        !capturedUid ||
+        updateAvailableRef.current ||
         !cloudReadyRef.current ||
         kickedRef.current ||
         needsOnboardingRef.current ||
@@ -750,7 +834,9 @@ export default function App() {
       if (cloudSyncTimerRef.current) window.clearTimeout(cloudSyncTimerRef.current);
       cloudSyncTimerRef.current = window.setTimeout(() => {
         cloudSyncTimerRef.current = null;
-        void performCloudSync(false);
+        if (isSessionStillValid(uidRef.current, capturedUid, authSeqRef.current, capturedSeq)) {
+          void performCloudSync(false);
+        }
       }, delayMs);
     },
     [performCloudSync],
@@ -800,9 +886,104 @@ export default function App() {
     return null;
   }, []);
 
+  const resetSessionStateForAccountSwitch = useCallback((nextUid: string | null) => {
+    if (cloudSyncTimerRef.current) {
+      window.clearTimeout(cloudSyncTimerRef.current);
+      cloudSyncTimerRef.current = null;
+    }
+    if (syncRetryTimerRef.current) {
+      window.clearTimeout(syncRetryTimerRef.current);
+      syncRetryTimerRef.current = null;
+    }
+    if (localSaveTimerRef.current) {
+      window.clearTimeout(localSaveTimerRef.current);
+      localSaveTimerRef.current = null;
+    }
+    if (cloudRetryTailTimerRef.current) {
+      window.clearTimeout(cloudRetryTailTimerRef.current);
+      cloudRetryTailTimerRef.current = null;
+    }
+
+    cloudLoadingRef.current = false;
+    kickedRef.current = false;
+    setKicked(false);
+    walletRevRef.current = 0;
+    expectedWalletRevRef.current = null;
+    lastSyncedAtRef.current = 0;
+    cloudSyncBusyRef.current = false;
+    cloudDirtyRef.current = false;
+    pendingDirtyRef.current = false;
+    syncRetryCountRef.current = 0;
+    cloudSyncPermDeniedRef.current = false;
+    cloudSyncQuotaPausedRef.current = false;
+    quotaPausedAtRef.current = 0;
+    permWarnShownRef.current = false;
+    completedTradesRef.current = 0;
+    settlingTradesRef.current = false;
+    lastSettledTradeCheckRef.current = 0;
+    serverTimeVerifiedRef.current = false;
+    serverOffsetMsRef.current = 0;
+    lastHeartbeatSuccessAtRef.current = 0;
+    lastHeartbeatAttemptAtRef.current = 0;
+    ownLastSeenMsRef.current = 0;
+    leaderboardRawRef.current = [];
+    projBusyRef.current.clear();
+    projPayBusyRef.current.clear();
+    projClaimedLocalRef.current.clear();
+    projCreatingRef.current = false;
+    justCreatedProjIdsRef.current.clear();
+    projStartedLocalAtRef.current = {};
+    projLiveRef.current = {};
+    projLastSyncRef.current = {};
+    projPrevTickMsRef.current = {};
+    markingNotifIdsRef.current.clear();
+    provUnlockBusyRef.current = false;
+    provAllocBusyRef.current = false;
+    lastProvLbSyncAtRef.current = 0;
+    cloudReadyRef.current = false;
+    needsOnboardingRef.current = false;
+
+    setServerOffsetMs(0);
+    setCloudReady(false);
+    setNeedsOnboarding(false);
+    setPubProfile(null);
+    setTrades([]);
+    setNotifications([]);
+    setProjects([]);
+    setLeaderboard([]);
+    setLbLoaded(false);
+    setProvLbEntries([]);
+    setProvLbLoading(false);
+    setSelectedProvinceId('prov_1');
+    setSentToday(0);
+    setLiveProjectProgress({});
+    setGlobalChat([]);
+    setDmMessages([]);
+    setDmRecipient(null);
+    setRecentDms([]);
+    setSentDmContacts([]);
+    setDialog(null);
+    setGiftModal(null);
+    setProfileView(null);
+    setNotifsOpen(false);
+    setSettingsOpen(false);
+    setCloudStatus({ cls: '', text: 'Saved' });
+
+    if (nextUid === null) {
+      const offlineState = readAccountSave(null) || freshState();
+      stateRef.current = offlineState;
+      setState(offlineState);
+    } else {
+      const clean = freshState();
+      stateRef.current = clean;
+      setState(clean);
+    }
+  }, []);
+
   const loadCloudSession = useCallback(
     async (u: User, seq: number) => {
-      if (!db || cloudLoadingRef.current) return;
+      if (!db) return;
+      if (!isSessionStillValid(uidRef.current, u.uid, authSeqRef.current, seq)) return;
       cloudLoadingRef.current = true;
       cloudSyncPermDeniedRef.current = false;
       cloudSyncQuotaPausedRef.current = false;
@@ -817,11 +998,11 @@ export default function App() {
           sid: sidRef.current,
           t: serverTimestamp(),
         });
-        if (authSeqRef.current !== seq) return;
+        if (!isSessionStillValid(uidRef.current, u.uid, authSeqRef.current, seq)) return;
 
         // Estimate server clock offset strictly from server (never fall back to stale cache)
         const sesSnap = await getDocFromServer(doc(db, 'players', u.uid, 'private', 'session')).catch(() => null);
-        if (authSeqRef.current !== seq) return;
+        if (!isSessionStillValid(uidRef.current, u.uid, authSeqRef.current, seq)) return;
         if (sesSnap && sesSnap.exists()) {
           const srvMs = timestampToMs(sesSnap.data()?.t);
           if (srvMs > 0) updateServerOffset(srvMs);
@@ -829,12 +1010,17 @@ export default function App() {
 
         const pRef = doc(db, 'players', u.uid);
         const pSnap = await getDocFromServer(pRef).catch(() => getDoc(pRef));
-        if (authSeqRef.current !== seq) return;
+        if (!isSessionStillValid(uidRef.current, u.uid, authSeqRef.current, seq)) return;
         if (!pSnap.exists()) {
+          // Brand new account: ensure clean state and trigger onboarding
+          const clean = freshState();
+          stateRef.current = clean;
+          setState(clean);
           needsOnboardingRef.current = true;
           cloudReadyRef.current = false;
           setNeedsOnboarding(true);
           setCloudReady(false);
+          authResolvedRef.current = true;
           setAuthResolved(true);
           return;
         }
@@ -842,26 +1028,21 @@ export default function App() {
         const pData = pSnap.data() as Omit<PlayerProfile, 'id'>;
         setPubProfile({ ...pData, id: u.uid, seen: timestampToMs(pData.lastSeen) });
 
-        // Load authoritative wallet + save from server when online (fallback to cache offline)
+        // Load authoritative wallet + save strictly from saves/{uid} (never fall back to localStorage)
         const wRef = doc(db, 'players', u.uid, 'private', 'wallet');
         const sRef = doc(db, 'saves', u.uid);
         const [wSnap, sSnap] = await Promise.all([
           getDocFromServer(wRef).catch(() => getDoc(wRef)),
           getDocFromServer(sRef).catch(() => getDoc(sRef)),
         ]);
-        if (authSeqRef.current !== seq) return;
+        if (!isSessionStillValid(uidRef.current, u.uid, authSeqRef.current, seq)) return;
 
-        let loaded = sSnap.exists()
-          ? migrateState((sSnap.data()?.save as Partial<GameState>) || {})
-          : loadInitialState();
-        loaded = {
-          ...loaded,
-          country:
-            COUNTRIES.find((c) => c[0] === pData.countryCode) || [
-              pData.countryCode || 'PK',
-              pData.countryName || 'Pakistan',
-            ],
-        };
+        const cloudSaveRaw = sSnap.exists() ? (sSnap.data()?.save as Partial<GameState> | undefined) : null;
+        const loaded = buildInitialCloudState(
+          cloudSaveRaw,
+          pData.countryCode || 'PK',
+          pData.countryName || 'Pakistan',
+        );
 
         if (wSnap.exists()) {
           const w = wSnap.data();
@@ -872,6 +1053,9 @@ export default function App() {
           loaded.stk = cleanStickersMap(w.stk);
         } else {
           walletRevRef.current = 0;
+          pendingDirtyRef.current = true;
+        }
+        if (!sSnap.exists()) {
           pendingDirtyRef.current = true;
         }
 
@@ -901,12 +1085,15 @@ export default function App() {
 
         stateRef.current = finalState;
         setState(finalState);
-        saveLocal(finalState);
         needsOnboardingRef.current = false;
         cloudReadyRef.current = true;
+        cloudLoadingRef.current = false;
         setNeedsOnboarding(false);
         setCloudReady(true);
         setAuthResolved(true);
+        authResolvedRef.current = true;
+        writeAccountSave(u.uid, finalState);
+
         if ((finalState.provinces?.length || 0) > 0) {
           lastProvLbSyncAtRef.current = Date.now();
           const lbEntries = buildProvinceLeaderboardEntries(
@@ -916,22 +1103,23 @@ export default function App() {
             finalState.country?.[0] || 'PK',
             Date.now() + serverOffsetMsRef.current,
           );
-          void syncProvinceLeaderboardEntries(lbEntries).catch(() => null);
+          void syncProvinceLeaderboardEntries(lbEntries, u.uid).catch(() => null);
         }
       } catch (err) {
-        if (authSeqRef.current === seq) {
+        if (isSessionStillValid(uidRef.current, u.uid, authSeqRef.current, seq)) {
           setAuthResolved(true);
+          authResolvedRef.current = true;
           setCloudStatus({ cls: 'warn', text: 'Cloud load pending' });
           recordFirestoreError(err, OperationType.GET, `players/${u.uid}`);
           addToast(formatFirebaseError(err));
         }
       } finally {
-        if (authSeqRef.current === seq) {
+        if (isSessionStillValid(uidRef.current, u.uid, authSeqRef.current, seq)) {
           cloudLoadingRef.current = false;
         }
       }
     },
-    [addToast, buildEntryDialog, saveLocal, updateServerOffset],
+    [addToast, buildEntryDialog, updateServerOffset],
   );
 
   // Automatically recover cloud sync, heartbeat, and presence listeners on connectivity or tab resume
@@ -942,6 +1130,7 @@ export default function App() {
       }
     };
     const onOnline = () => {
+      if (updateAvailableRef.current) return;
       if (
         userRef.current &&
         !cloudReadyRef.current &&
@@ -976,8 +1165,9 @@ export default function App() {
     const onVisChange = () => {
       document.body.classList.toggle('doc-hidden', document.visibilityState === 'hidden');
       if (document.visibilityState === 'hidden') {
-        saveLocal(stateRef.current);
+        saveLocal(stateRef.current, uidRef.current);
         if (
+          !updateAvailableRef.current &&
           uidRef.current &&
           cloudReadyRef.current &&
           !kickedRef.current &&
@@ -991,6 +1181,7 @@ export default function App() {
         }
       } else if (
         document.visibilityState === 'visible' &&
+        !updateAvailableRef.current &&
         uidRef.current &&
         cloudReadyRef.current &&
         !kickedRef.current &&
@@ -1014,7 +1205,8 @@ export default function App() {
 
   // Firebase bootstrap & auth listener
   useEffect(() => {
-    if (!isFirebaseConfigured || !auth || !db) {
+    if (!HAS_FIREBASE_AUTH || !auth || !db) {
+      authResolvedRef.current = true;
       setAuthResolved(true);
       return;
     }
@@ -1029,71 +1221,30 @@ export default function App() {
 
     const unsub = onAuthStateChanged(auth, async (u) => {
       const seq = ++authSeqRef.current;
-      const hadSignedInUser = Boolean(uidRef.current);
+      const prevUid = prevAuthUidRef.current;
+      const nextUid = u?.uid || null;
+      const hadSignedInUser = typeof prevUid === 'string' && prevUid.length > 0;
+      prevAuthUidRef.current = nextUid;
+
+      uidRef.current = nextUid;
+      userRef.current = u;
       setUser(u);
-      setUid(u?.uid || null);
+      setUid(nextUid);
+
+      if (prevUid !== nextUid || !u) {
+        resetSessionStateForAccountSwitch(nextUid);
+      }
+
       if (!u) {
-        if (cloudSyncTimerRef.current) {
-          window.clearTimeout(cloudSyncTimerRef.current);
-          cloudSyncTimerRef.current = null;
-        }
-        if (syncRetryTimerRef.current) {
-          window.clearTimeout(syncRetryTimerRef.current);
-          syncRetryTimerRef.current = null;
-        }
-        cloudLoadingRef.current = false;
         if (hadSignedInUser) {
-          // Signing out mid-session switches to offline play without re-firing an entry Welcome popup
+          // Signing out switches strictly to offline storage without reusing signed-in user's state
           entryCheckedKeyRef.current = 'signed-out';
         }
-        walletRevRef.current = 0;
-        expectedWalletRevRef.current = null;
-        lastSyncedAtRef.current = 0;
-        cloudSyncBusyRef.current = false;
-        cloudDirtyRef.current = false;
-        pendingDirtyRef.current = false;
-        syncRetryCountRef.current = 0;
-        cloudSyncPermDeniedRef.current = false;
-        cloudSyncQuotaPausedRef.current = false;
-        quotaPausedAtRef.current = 0;
-        permWarnShownRef.current = false;
-        completedTradesRef.current = 0;
-        settlingTradesRef.current = false;
-        serverTimeVerifiedRef.current = false;
-        serverOffsetMsRef.current = 0;
-        lastHeartbeatSuccessAtRef.current = 0;
-        lastHeartbeatAttemptAtRef.current = 0;
-        ownLastSeenMsRef.current = 0;
-        leaderboardRawRef.current = [];
-        projBusyRef.current.clear();
-        projPayBusyRef.current.clear();
-        projClaimedLocalRef.current.clear();
-        projCreatingRef.current = false;
-        justCreatedProjIdsRef.current.clear();
-        projStartedLocalAtRef.current = {};
-        projLiveRef.current = {};
-        projLastSyncRef.current = {};
-        projPrevTickMsRef.current = {};
-        cloudReadyRef.current = false;
-        needsOnboardingRef.current = false;
-        setServerOffsetMs(0);
-        setCloudReady(false);
-        setNeedsOnboarding(false);
-        setPubProfile(null);
-        setTrades([]);
-        setNotifications([]);
-        setProjects([]);
-        setLeaderboard([]);
-        setLbLoaded(false);
-        setSentToday(0);
-        setLiveProjectProgress({});
-        setGlobalChat([]);
-        setDmMessages([]);
-        setDmRecipient(null);
-        setRecentDms([]);
-        setSentDmContacts([]);
-        setCloudStatus({ cls: '', text: 'Saved' });
+        authResolvedRef.current = true;
         setAuthResolved(true);
+        const params = new URLSearchParams(window.location.search);
+        const shouldAutoOpen = params.get('autostart') === '1' || hasOfflineSave();
+        setGateOpen(!shouldAutoOpen);
         return;
       }
 
@@ -1101,12 +1252,12 @@ export default function App() {
     });
 
     return () => unsub();
-  }, [loadCloudSession]);
+  }, [loadCloudSession, resetSessionStateForAccountSwitch]);
 
   // Run daily & offline check ONCE for offline mode only after Firebase auth is confirmed signed-out (or unconfigured)
   useEffect(() => {
     const canRunOffline = shouldRunOfflineEntryCheck({
-      isFirebaseConfigured: Boolean(isFirebaseConfigured && auth && db),
+      isFirebaseConfigured: HAS_FIREBASE_AUTH,
       authResolved,
       uid,
       gateOpen,
@@ -1118,7 +1269,7 @@ export default function App() {
     const checkedRes = computeDailyAndOfflineChecks(stateRef.current, 0, Date.now() + serverOffsetMsRef.current);
     stateRef.current = checkedRes.state;
     setState(checkedRes.state);
-    saveLocal(checkedRes.state);
+    saveLocal(checkedRes.state, null);
     if (checkedRes.promoBannerText) addToast(checkedRes.promoBannerText);
     const entryDlg = buildEntryDialog(checkedRes);
     if (entryDlg) setDialog(entryDlg);
@@ -1520,9 +1671,19 @@ export default function App() {
   projectsRef.current = projects;
 
   useEffect(() => {
-    if (gateOpen || otherTabLocked || kicked) return;
+    if (
+      gateOpen ||
+      otherTabLocked ||
+      kicked ||
+      updateAvailable ||
+      (HAS_FIREBASE_AUTH && !authResolved) ||
+      needsOnboarding
+    ) {
+      return;
+    }
 
     const iv = window.setInterval(() => {
+      if (updateAvailableRef.current) return;
       const now = Date.now();
       const nowSrv = now + serverOffsetMsRef.current;
       const isUserActive = !document.hidden && now - lastActivityRef.current < 120_000;
@@ -1646,22 +1807,25 @@ export default function App() {
           nextHist = [...prev.hist, calculateGdp({ ...prev, cash: nextCash })].slice(-60);
         }
 
-        const preProv: GameState = {
-          ...prev,
-          cash: nextCash,
-          taxPool: nextTaxPool,
-          day: nextDay,
-          hap: nextHap,
-          appr: nextAppr,
-          pop: nextPop,
-          boost: Math.max(0, (prev.boost || 0) - 1),
-          ev: nextEv,
-          hist: nextHist,
-          activeFx: nextActiveFx,
-          gx: nextGx,
-          subPromo: nextSubPromo,
-          t: now,
-        };
+        const preProv: GameState = rotateDailyQuestsIfNeeded(
+          {
+            ...prev,
+            cash: nextCash,
+            taxPool: nextTaxPool,
+            day: nextDay,
+            hap: nextHap,
+            appr: nextAppr,
+            pop: nextPop,
+            boost: Math.max(0, (prev.boost || 0) - 1),
+            ev: nextEv,
+            hist: nextHist,
+            activeFx: nextActiveFx,
+            gx: nextGx,
+            subPromo: nextSubPromo,
+            t: now,
+          },
+          nowSrv,
+        );
 
         return stepProvincesTick(preProv, 1, nowSrv);
       });
@@ -1805,174 +1969,185 @@ export default function App() {
         });
       }
 
-      // Tick active Gov Projects in Firestore
-      if (
-        curUid &&
-        cloudReadyRef.current &&
-        projectsRef.current.length > 0 &&
-        !cloudSyncPermDeniedRef.current &&
-        !cloudSyncQuotaPausedRef.current
-      ) {
-        let liveDirty = false;
-        const speedMult = getProjectSpeedMult(stateRef.current, nowSrv);
-        const stepMs = Math.max(1000, Math.floor(1000 * speedMult));
-        const onProjWriteErr = (pid: string, err: unknown) => {
-          const code = extractErrorCode(err);
-          if (code === 'resource-exhausted') {
-            cloudSyncQuotaPausedRef.current = true;
-            quotaPausedAtRef.current = Date.now();
-            setCloudStatus({ cls: 'bad', text: 'Quota paused' });
-            return;
-          }
-          if (code === 'permission-denied') {
-            cloudSyncPermDeniedRef.current = true;
-            setCloudStatus({ cls: 'bad', text: 'Rules blocked sync' });
-          }
-          if (code !== 'aborted') {
-            recordFirestoreError(err, OperationType.UPDATE, `players/${curUid}/projects/${pid}`);
-          }
-        };
+        // Tick active Gov Projects in Firestore
+        const capturedProjUid = curUid;
+        const capturedProjSeq = authSeqRef.current;
+        if (
+          capturedProjUid &&
+          cloudReadyRef.current &&
+          projectsRef.current.length > 0 &&
+          !cloudSyncPermDeniedRef.current &&
+          !cloudSyncQuotaPausedRef.current
+        ) {
+          let liveDirty = false;
+          const speedMult = getProjectSpeedMult(stateRef.current, nowSrv);
+          const stepMs = Math.max(1000, Math.floor(1000 * speedMult));
+          const onProjWriteErr = (pid: string, err: unknown) => {
+            if (!isSessionStillValid(uidRef.current, capturedProjUid, authSeqRef.current, capturedProjSeq)) return;
+            const code = extractErrorCode(err);
+            if (code === 'resource-exhausted') {
+              cloudSyncQuotaPausedRef.current = true;
+              quotaPausedAtRef.current = Date.now();
+              setCloudStatus({ cls: 'bad', text: 'Quota paused' });
+              return;
+            }
+            if (code === 'permission-denied') {
+              cloudSyncPermDeniedRef.current = true;
+              setCloudStatus({ cls: 'bad', text: 'Rules blocked sync' });
+            }
+            if (code !== 'aborted') {
+              recordFirestoreError(err, OperationType.UPDATE, `players/${capturedProjUid}/projects/${pid}`);
+            }
+          };
 
-        for (const p of projectsRef.current) {
-          if (p.status === 'active') {
-            const curLive = Math.max(p.progressMs, projLiveRef.current[p.id] || 0);
-            const alreadyDoneLocally = curLive >= p.t.dur && p.paid >= PROJECT_STAGES;
-            if (alreadyDoneLocally) {
-              const lastSync = projLastSyncRef.current[p.id] || 0;
-              if (now - lastSync >= 10_000 && !projBusyRef.current.has(p.id)) {
-                projLastSyncRef.current[p.id] = now;
-                projBusyRef.current.add(p.id);
-                void finishGovProject(curUid, p.id, 'done', p.t.dur)
-                  .catch((err) => onProjWriteErr(p.id, err))
-                  .finally(() => projBusyRef.current.delete(p.id));
+          for (const p of projectsRef.current) {
+            if (p.status === 'active') {
+              const curLive = Math.max(p.progressMs, projLiveRef.current[p.id] || 0);
+              const alreadyDoneLocally = curLive >= p.t.dur && p.paid >= PROJECT_STAGES;
+              if (alreadyDoneLocally) {
+                const lastSync = projLastSyncRef.current[p.id] || 0;
+                if (now - lastSync >= 10_000 && !projBusyRef.current.has(p.id)) {
+                  projLastSyncRef.current[p.id] = now;
+                  projBusyRef.current.add(p.id);
+                  void finishGovProject(capturedProjUid, p.id, 'done', p.t.dur)
+                    .catch((err) => onProjWriteErr(p.id, err))
+                    .finally(() => projBusyRef.current.delete(p.id));
+                }
+              } else if (
+                serverTimeVerifiedRef.current &&
+                !p.pending &&
+                p.st > 0 &&
+                nowSrv >= p.dl &&
+                now - (projStartedLocalAtRef.current[p.id] || 0) >= 30_000
+              ) {
+                if (!projBusyRef.current.has(p.id)) {
+                  projBusyRef.current.add(p.id);
+                  void finishGovProject(capturedProjUid, p.id, 'failed')
+                    .catch((err) => onProjWriteErr(p.id, err))
+                    .finally(() => projBusyRef.current.delete(p.id));
+                }
+              } else if (isUserActive && !p.pending) {
+                const capMs = Math.floor((p.t.dur * p.paid) / PROJECT_STAGES);
+                if (curLive < capMs) {
+                  const nextMs = Math.min(capMs, curLive + stepMs);
+                  projLiveRef.current[p.id] = nextMs;
+                  liveDirty = true;
+                  if (nextMs >= p.t.dur && p.paid >= PROJECT_STAGES && !projBusyRef.current.has(p.id)) {
+                    projLastSyncRef.current[p.id] = now;
+                    projBusyRef.current.add(p.id);
+                    void finishGovProject(capturedProjUid, p.id, 'done', p.t.dur)
+                      .catch((err) => onProjWriteErr(p.id, err))
+                      .finally(() => projBusyRef.current.delete(p.id));
+                  } else {
+                    const lastSync = projLastSyncRef.current[p.id] || 0;
+                    const hitStageCap = nextMs >= capMs && p.progressMs < capMs;
+                    if ((hitStageCap || now - lastSync >= 60_000) && !projBusyRef.current.has(p.id)) {
+                      projLastSyncRef.current[p.id] = now;
+                      projBusyRef.current.add(p.id);
+                      void tickGovProject(capturedProjUid, p.id, nextMs)
+                        .catch((err) => onProjWriteErr(p.id, err))
+                        .finally(() => projBusyRef.current.delete(p.id));
+                    }
+                  }
+                } else if (p.progressMs < capMs && p.paid < PROJECT_STAGES && !projBusyRef.current.has(p.id)) {
+                  projLastSyncRef.current[p.id] = now;
+                  projBusyRef.current.add(p.id);
+                  void tickGovProject(capturedProjUid, p.id, capMs)
+                    .catch((err) => onProjWriteErr(p.id, err))
+                    .finally(() => projBusyRef.current.delete(p.id));
+                }
               }
             } else if (
-              serverTimeVerifiedRef.current &&
-              !p.pending &&
-              p.st > 0 &&
-              nowSrv >= p.dl &&
-              now - (projStartedLocalAtRef.current[p.id] || 0) >= 30_000
+              !p.claimed &&
+              !projClaimedLocalRef.current.has(p.id) &&
+              (p.status === 'done' || p.status === 'failed')
             ) {
               if (!projBusyRef.current.has(p.id)) {
                 projBusyRef.current.add(p.id);
-                void finishGovProject(curUid, p.id, 'failed')
+                void claimGovProject(capturedProjUid, p.id)
+                  .then((resStatus) => {
+                    if (!isSessionStillValid(uidRef.current, capturedProjUid, authSeqRef.current, capturedProjSeq)) {
+                      return;
+                    }
+                    if (resStatus) projClaimedLocalRef.current.add(p.id);
+                    if (resStatus === 'done') {
+                      const early = p.rs > 0 && p.dl > p.st && (p.dl - p.rs) / (p.dl - p.st) > 0.5;
+                      const profit = Math.ceil(p.t.cost * 0.4 * (early ? 1.5 : 1));
+                      const cashReward = p.t.cost + profit;
+                      const applyDoneReward = (s: GameState): GameState => ({
+                        ...s,
+                        cash: Math.min(1e13, s.cash + cashReward),
+                        hap: Math.min(100, s.hap + 3),
+                        gx: {
+                          ...s.gx,
+                          pb: Math.min(0.25, (s.gx.pb || 0) + p.t.pb),
+                          ph: Math.min(10, (s.gx.ph || 0) + p.t.ph),
+                          log: [
+                            `${p.t.n} completed${early ? ' EARLY' : ''}! +₨ ${formatNumber(cashReward)}`,
+                            ...s.gx.log,
+                          ].slice(0, 8),
+                        },
+                      });
+                      const nextSnap = applyDoneReward(stateRef.current);
+                      stateRef.current = nextSnap;
+                      saveLocal(nextSnap, capturedProjUid);
+                      setState(applyDoneReward);
+                      addToast(`${p.t.n} finished! +₨ ${formatNumber(cashReward)}`);
+                      scheduleCloudSync(150);
+                    } else if (resStatus === 'failed') {
+                      const refund = Math.ceil((p.t.cost / PROJECT_STAGES) * p.paid * 0.75);
+                      const applyFailedRefund = (s: GameState): GameState => ({
+                        ...s,
+                        cash: Math.min(1e13, s.cash + refund),
+                        gx: {
+                          ...s.gx,
+                          log: [`${p.t.n} missed deadline (75% refunded)`, ...s.gx.log].slice(0, 8),
+                        },
+                      });
+                      const nextSnap = applyFailedRefund(stateRef.current);
+                      stateRef.current = nextSnap;
+                      saveLocal(nextSnap, capturedProjUid);
+                      setState(applyFailedRefund);
+                      addToast(`${p.t.n} missed deadline — ₨ ${formatNumber(refund)} refunded`);
+                      scheduleCloudSync(150);
+                    }
+                  })
                   .catch((err) => onProjWriteErr(p.id, err))
                   .finally(() => projBusyRef.current.delete(p.id));
               }
-            } else if (isUserActive && !p.pending) {
-              const capMs = Math.floor((p.t.dur * p.paid) / PROJECT_STAGES);
-              if (curLive < capMs) {
-                const nextMs = Math.min(capMs, curLive + stepMs);
-                projLiveRef.current[p.id] = nextMs;
-                liveDirty = true;
-                if (nextMs >= p.t.dur && p.paid >= PROJECT_STAGES && !projBusyRef.current.has(p.id)) {
-                  projLastSyncRef.current[p.id] = now;
-                  projBusyRef.current.add(p.id);
-                  void finishGovProject(curUid, p.id, 'done', p.t.dur)
-                    .catch((err) => onProjWriteErr(p.id, err))
-                    .finally(() => projBusyRef.current.delete(p.id));
-                } else {
-                  const lastSync = projLastSyncRef.current[p.id] || 0;
-                  const hitStageCap = nextMs >= capMs && p.progressMs < capMs;
-                  if ((hitStageCap || now - lastSync >= 60_000) && !projBusyRef.current.has(p.id)) {
-                    projLastSyncRef.current[p.id] = now;
-                    projBusyRef.current.add(p.id);
-                    void tickGovProject(curUid, p.id, nextMs)
-                      .catch((err) => onProjWriteErr(p.id, err))
-                      .finally(() => projBusyRef.current.delete(p.id));
-                  }
-                }
-              } else if (p.progressMs < capMs && p.paid < PROJECT_STAGES && !projBusyRef.current.has(p.id)) {
-                projLastSyncRef.current[p.id] = now;
-                projBusyRef.current.add(p.id);
-                void tickGovProject(curUid, p.id, capMs)
-                  .catch((err) => onProjWriteErr(p.id, err))
-                  .finally(() => projBusyRef.current.delete(p.id));
-              }
-            }
-          } else if (
-            !p.claimed &&
-            !projClaimedLocalRef.current.has(p.id) &&
-            (p.status === 'done' || p.status === 'failed')
-          ) {
-            if (!projBusyRef.current.has(p.id)) {
-              projBusyRef.current.add(p.id);
-              void claimGovProject(curUid, p.id)
-                .then((resStatus) => {
-                  if (resStatus) projClaimedLocalRef.current.add(p.id);
-                  if (resStatus === 'done') {
-                    const early = p.rs > 0 && p.dl > p.st && (p.dl - p.rs) / (p.dl - p.st) > 0.5;
-                    const profit = Math.ceil(p.t.cost * 0.4 * (early ? 1.5 : 1));
-                    const cashReward = p.t.cost + profit;
-                    const applyDoneReward = (s: GameState): GameState => ({
-                      ...s,
-                      cash: Math.min(1e13, s.cash + cashReward),
-                      hap: Math.min(100, s.hap + 3),
-                      gx: {
-                        ...s.gx,
-                        pb: Math.min(0.25, (s.gx.pb || 0) + p.t.pb),
-                        ph: Math.min(10, (s.gx.ph || 0) + p.t.ph),
-                        log: [
-                          `${p.t.n} completed${early ? ' EARLY' : ''}! +₨ ${formatNumber(cashReward)}`,
-                          ...s.gx.log,
-                        ].slice(0, 8),
-                      },
-                    });
-                    const nextSnap = applyDoneReward(stateRef.current);
-                    stateRef.current = nextSnap;
-                    saveLocal(nextSnap);
-                    setState(applyDoneReward);
-                    addToast(`${p.t.n} finished! +₨ ${formatNumber(cashReward)}`);
-                    scheduleCloudSync(150);
-                  } else if (resStatus === 'failed') {
-                    const refund = Math.ceil((p.t.cost / PROJECT_STAGES) * p.paid * 0.75);
-                    const applyFailedRefund = (s: GameState): GameState => ({
-                      ...s,
-                      cash: Math.min(1e13, s.cash + refund),
-                      gx: {
-                        ...s.gx,
-                        log: [`${p.t.n} missed deadline (75% refunded)`, ...s.gx.log].slice(0, 8),
-                      },
-                    });
-                    const nextSnap = applyFailedRefund(stateRef.current);
-                    stateRef.current = nextSnap;
-                    saveLocal(nextSnap);
-                    setState(applyFailedRefund);
-                    addToast(`${p.t.n} missed deadline — ₨ ${formatNumber(refund)} refunded`);
-                    scheduleCloudSync(150);
-                  }
-                })
-                .catch((err) => onProjWriteErr(p.id, err))
-                .finally(() => projBusyRef.current.delete(p.id));
             }
           }
+          if (liveDirty && isSessionStillValid(uidRef.current, capturedProjUid, authSeqRef.current, capturedProjSeq)) {
+            setLiveProjectProgress({ ...projLiveRef.current });
+          }
         }
-        if (liveDirty) {
-          setLiveProjectProgress({ ...projLiveRef.current });
-        }
-      }
-    }, 1000);
+      }, 1000);
 
-    return () => window.clearInterval(iv);
-  }, [
-    gateOpen,
-    otherTabLocked,
-    kicked,
-    tradeTier,
-    addToast,
-    saveLocal,
-    scheduleSaveLocal,
-    performCloudSync,
-    scheduleCloudSync,
-    handleKicked,
-  ]);
+      return () => window.clearInterval(iv);
+    }, [
+      gateOpen,
+      otherTabLocked,
+      kicked,
+      updateAvailable,
+      authResolved,
+      needsOnboarding,
+      tradeTier,
+      addToast,
+      saveLocal,
+      scheduleSaveLocal,
+      performCloudSync,
+      scheduleCloudSync,
+      handleKicked,
+    ]);
 
   // Helper to commit state + persist + sync (keeps setState updater pure)
   const updateState = useCallback(
     (updater: (prev: GameState) => GameState, syncDelay = 10_000) => {
+      if (otherTabLockedRef.current || kickedRef.current || updateAvailableRef.current) return;
+      const targetUid = uidRef.current;
       const immediateNext = updater(stateRef.current);
       stateRef.current = immediateNext;
-      saveLocal(immediateNext);
+      saveLocal(immediateNext, targetUid);
       setState(updater);
       scheduleCloudSync(syncDelay);
     },
@@ -2148,6 +2323,7 @@ export default function App() {
   const handleStartProject = useCallback(
     async (type: ProjectType) => {
       const currentUid = uidRef.current;
+      const capturedSeq = authSeqRef.current;
       if (!currentUid || !cloudReadyRef.current || projCreatingRef.current) return;
       const pendingNewCount = Array.from(justCreatedProjIdsRef.current).filter(
         (id) => !projectsRef.current.some((p) => p.id === id),
@@ -2168,17 +2344,23 @@ export default function App() {
       updateState((prev) => ({ ...prev, cash: Math.max(0, prev.cash - stageCost) }), 3_000);
       try {
         await createGovProject(currentUid, type, (newId) => {
-          justCreatedProjIdsRef.current.add(newId);
-          projStartedLocalAtRef.current[newId] = Date.now();
+          if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+            justCreatedProjIdsRef.current.add(newId);
+            projStartedLocalAtRef.current[newId] = Date.now();
+          }
         });
+        if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) return;
         playSfx('buy', !!stateRef.current.set.sfx);
         addToast(`Started ${def.n}!`);
       } catch (err) {
+        if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) return;
         updateState((prev) => ({ ...prev, cash: Math.min(1e13, prev.cash + stageCost) }), 3_000);
         recordFirestoreError(err, OperationType.CREATE, `players/${currentUid}/projects`);
         addToast(formatFirebaseError(err));
       } finally {
-        projCreatingRef.current = false;
+        if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+          projCreatingRef.current = false;
+        }
       }
     },
     [addToast, updateState],
@@ -2187,6 +2369,7 @@ export default function App() {
   const handlePayProjectStage = useCallback(
     async (projectId: string) => {
       const currentUid = uidRef.current;
+      const capturedSeq = authSeqRef.current;
       if (!currentUid || !cloudReadyRef.current || projPayBusyRef.current.has(projectId)) return;
       const proj = projectsRef.current.find((p) => p.id === projectId);
       if (!proj || proj.status !== 'active' || proj.paid >= PROJECT_STAGES) return;
@@ -2199,14 +2382,18 @@ export default function App() {
       updateState((prev) => ({ ...prev, cash: Math.max(0, prev.cash - stageCost) }), 3_000);
       try {
         await payGovProjectStage(currentUid, projectId, proj.paid);
+        if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) return;
         playSfx('buy', !!stateRef.current.set.sfx);
         addToast(`Paid stage ${proj.paid + 1}/${PROJECT_STAGES}`);
       } catch (err) {
+        if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) return;
         updateState((prev) => ({ ...prev, cash: Math.min(1e13, prev.cash + stageCost) }), 3_000);
         recordFirestoreError(err, OperationType.UPDATE, `players/${currentUid}/projects/${projectId}`);
         addToast(formatFirebaseError(err));
       } finally {
-        projPayBusyRef.current.delete(projectId);
+        if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+          projPayBusyRef.current.delete(projectId);
+        }
       }
     },
     [addToast, updateState],
@@ -2496,18 +2683,26 @@ export default function App() {
   // Province Management Handlers & Leaderboard Fetcher
   const refreshProvLeaderboard = useCallback(
     async (category: ProvinceLeaderboardCategory) => {
-      if (!uidRef.current || !cloudReadyRef.current) {
+      const currentUid = uidRef.current;
+      const capturedSeq = authSeqRef.current;
+      if (!currentUid || !cloudReadyRef.current) {
         setProvLbEntries([]);
         return;
       }
       setProvLbLoading(true);
       try {
         const list = await fetchProvinceLeaderboard(category, 50);
-        setProvLbEntries(list);
+        if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+          setProvLbEntries(list);
+        }
       } catch (err) {
-        recordFirestoreError(err, OperationType.LIST, 'provinceLeaderboard');
+        if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+          recordFirestoreError(err, OperationType.LIST, 'provinceLeaderboard');
+        }
       } finally {
-        setProvLbLoading(false);
+        if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+          setProvLbLoading(false);
+        }
       }
     },
     [],
@@ -2522,6 +2717,8 @@ export default function App() {
   const handleUnlockProvince = useCallback(
     async (input: ProvinceCustomizationInput): Promise<boolean> => {
       if (provUnlockBusyRef.current) return false;
+      const currentUid = uidRef.current;
+      const capturedSeq = authSeqRef.current;
       const nowSrv = Date.now() + serverOffsetMsRef.current;
       const res = applyUnlockProvince(stateRef.current, input, nowSrv);
       if (!res.ok || !res.unlocked) {
@@ -2532,7 +2729,7 @@ export default function App() {
       provUnlockBusyRef.current = true;
       setProvUnlockBusy(true);
       stateRef.current = res.state;
-      saveLocal(res.state);
+      saveLocal(res.state, currentUid);
       playSfx('win', !!res.state.set.sfx);
       triggerBuzz(20, !!res.state.set.vib);
       setSelectedProvinceId(res.unlocked.id);
@@ -2546,12 +2743,12 @@ export default function App() {
           : `Chartered ${res.unlocked.name}!`,
       );
 
-      const currentUid = uidRef.current;
       try {
         if (currentUid && cloudReadyRef.current && !needsOnboardingRef.current && !kickedRef.current) {
           if (!cloudSyncPermDeniedRef.current && !cloudSyncQuotaPausedRef.current) {
             try {
               const txRes = await recordProvinceTxAndSyncOnline({
+                expectedUid: currentUid,
                 txId: res.txId,
                 kind: 'unlock',
                 provId: res.unlocked.id,
@@ -2565,12 +2762,20 @@ export default function App() {
                 sid: sidRef.current,
                 onKicked: handleKicked,
               });
+              if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+                return false;
+              }
               walletRevRef.current = txRes.walletRev;
               pendingDirtyRef.current = false;
               lastSyncedAtRef.current = Date.now();
               setCloudStatus({ cls: 'ok', text: 'Saved' });
             } catch {
-              scheduleCloudSync(800);
+              if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+                scheduleCloudSync(800);
+              }
+            }
+            if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+              return false;
             }
             const lbEntries = buildProvinceLeaderboardEntries(
               stateRef.current,
@@ -2579,12 +2784,14 @@ export default function App() {
               stateRef.current.country?.[0] || 'PK',
               nowSrv,
             );
-            void syncProvinceLeaderboardEntries(lbEntries).catch(() => null);
+            void syncProvinceLeaderboardEntries(lbEntries, currentUid).catch(() => null);
           }
         }
       } finally {
-        provUnlockBusyRef.current = false;
-        setProvUnlockBusy(false);
+        if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+          provUnlockBusyRef.current = false;
+          setProvUnlockBusy(false);
+        }
       }
       return true;
     },
@@ -2593,13 +2800,14 @@ export default function App() {
 
   const handleCustomizeProvince = useCallback(
     async (provId: string, input: ProvinceCustomizationInput): Promise<boolean> => {
+      const currentUid = uidRef.current;
       const res = applyCustomizeProvince(stateRef.current, provId, input);
       if (!res.ok || !res.province) {
         addToast(res.reason || 'Invalid Province details.');
         return false;
       }
       stateRef.current = res.state;
-      saveLocal(res.state);
+      saveLocal(res.state, currentUid);
       playSfx('buy', !!res.state.set.sfx);
       setState((prev) => {
         const recheck = applyCustomizeProvince(prev, provId, input);
@@ -2608,7 +2816,6 @@ export default function App() {
       scheduleCloudSync(2500);
       addToast(`Updated ${res.province.name}!`);
 
-      const currentUid = uidRef.current;
       if (currentUid && cloudReadyRef.current && !needsOnboardingRef.current && !kickedRef.current) {
         const lbEntries = buildProvinceLeaderboardEntries(
           stateRef.current,
@@ -2617,7 +2824,7 @@ export default function App() {
           stateRef.current.country?.[0] || 'PK',
           Date.now() + serverOffsetMsRef.current,
         );
-        void syncProvinceLeaderboardEntries(lbEntries).catch(() => null);
+        void syncProvinceLeaderboardEntries(lbEntries, currentUid).catch(() => null);
       }
       return true;
     },
@@ -2627,6 +2834,8 @@ export default function App() {
   const handleAllocateProvinceBudget = useCallback(
     async (provId: string, category: ProvinceBudgetCategory, amount: number): Promise<boolean> => {
       if (provAllocBusyRef.current) return false;
+      const currentUid = uidRef.current;
+      const capturedSeq = authSeqRef.current;
       const nowSrv = Date.now() + serverOffsetMsRef.current;
       const res = applyAllocateProvinceBudget(stateRef.current, provId, category, amount, nowSrv);
       if (!res.ok) {
@@ -2636,7 +2845,7 @@ export default function App() {
 
       provAllocBusyRef.current = true;
       stateRef.current = res.state;
-      saveLocal(res.state);
+      saveLocal(res.state, currentUid);
       playSfx('coin', !!res.state.set.sfx);
       triggerBuzz(12, !!res.state.set.vib);
       setState((prev) => {
@@ -2645,7 +2854,6 @@ export default function App() {
       });
       addToast(`Allocated ₨ ${formatNumber(res.amount)} to ${category}`);
 
-      const currentUid = uidRef.current;
       try {
         if (
           currentUid &&
@@ -2658,6 +2866,7 @@ export default function App() {
           try {
             const targetProv = stateRef.current.provinces?.find((p) => p.id === provId);
             const txRes = await recordProvinceTxAndSyncOnline({
+              expectedUid: currentUid,
               txId: res.txId,
               kind: 'alloc',
               provId,
@@ -2671,16 +2880,23 @@ export default function App() {
               sid: sidRef.current,
               onKicked: handleKicked,
             });
+            if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+              return false;
+            }
             walletRevRef.current = txRes.walletRev;
             pendingDirtyRef.current = false;
             lastSyncedAtRef.current = Date.now();
             setCloudStatus({ cls: 'ok', text: 'Saved' });
           } catch {
-            scheduleCloudSync(1200);
+            if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+              scheduleCloudSync(1200);
+            }
           }
         }
       } finally {
-        provAllocBusyRef.current = false;
+        if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+          provAllocBusyRef.current = false;
+        }
       }
       return true;
     },
@@ -2779,23 +2995,29 @@ export default function App() {
   }, []);
 
   const handleSignOut = useCallback(async () => {
-    if (
-      uidRef.current &&
-      cloudReadyRef.current &&
-      pendingDirtyRef.current &&
-      !kickedRef.current &&
-      !needsOnboardingRef.current &&
-      navigator.onLine !== false
-    ) {
-      await performCloudSync(true).catch(() => null);
+    if (authBusyRef.current) return;
+    authBusyRef.current = true;
+    try {
+      if (
+        uidRef.current &&
+        cloudReadyRef.current &&
+        pendingDirtyRef.current &&
+        !kickedRef.current &&
+        !needsOnboardingRef.current &&
+        navigator.onLine !== false
+      ) {
+        await performCloudSync(true).catch(() => null);
+      }
+      if (auth) {
+        await signOut(auth);
+      }
+      setDialog(null);
+      setProfileView(null);
+      setSettingsOpen(false);
+      addToast('Signed out — switched to offline mode');
+    } finally {
+      authBusyRef.current = false;
     }
-    if (auth) {
-      await signOut(auth);
-    }
-    setDialog(null);
-    setProfileView(null);
-    setSettingsOpen(false);
-    addToast('Signed out — switched to offline mode');
   }, [addToast, performCloudSync]);
 
   const handleResetGame = useCallback(() => {
@@ -2901,6 +3123,8 @@ export default function App() {
 
   const openPlayerProfile = useCallback(
     async (targetUid: string) => {
+      const capturedUid = uidRef.current;
+      const capturedSeq = authSeqRef.current;
       const cached = leaderboardRef.current.find((p) => p.id === targetUid);
       if (cached) {
         setProfileView(cached);
@@ -2908,10 +3132,13 @@ export default function App() {
       }
       try {
         const p = await fetchPlayerProfile(targetUid);
+        if (!isSessionStillValid(uidRef.current, capturedUid, authSeqRef.current, capturedSeq)) return;
         if (p) setProfileView(p);
         else addToast('Player profile not found.');
       } catch (err) {
-        addToast(formatFirebaseError(err));
+        if (isSessionStillValid(uidRef.current, capturedUid, authSeqRef.current, capturedSeq)) {
+          addToast(formatFirebaseError(err));
+        }
       }
     },
     [addToast],
@@ -2919,6 +3146,8 @@ export default function App() {
 
   const openGiftComposer = useCallback(
     async (targetUid: string) => {
+      const capturedUid = uidRef.current;
+      const capturedSeq = authSeqRef.current;
       let target = leaderboardRef.current.find((p) => p.id === targetUid) || null;
       if (!target) {
         target = await fetchPlayerProfile(targetUid).catch((err) => {
@@ -2926,6 +3155,7 @@ export default function App() {
           return null;
         });
       }
+      if (!isSessionStillValid(uidRef.current, capturedUid, authSeqRef.current, capturedSeq)) return;
       if (!target) {
         addToast('Could not load recipient.');
         return;
@@ -2936,10 +3166,24 @@ export default function App() {
   );
 
   const handleSelectCountry = useCallback(
-    (c: CountryTuple) => updateState((prev) => ({ ...prev, country: c }), 0),
+    (c: CountryTuple) => {
+      if (uidRef.current === null && gateOpenRef.current && !hasOfflineSave()) {
+        if (otherTabLockedRef.current || kickedRef.current || updateAvailableRef.current) return;
+        const next = { ...stateRef.current, country: c };
+        stateRef.current = next;
+        setState((prev) => ({ ...prev, country: c }));
+        return;
+      }
+      updateState((prev) => ({ ...prev, country: c }), 0);
+    },
     [updateState],
   );
-  const handlePlayOffline = useCallback(() => setGateOpen(false), []);
+  const handlePlayOffline = useCallback(() => {
+    setGateOpen(false);
+    if (uidRef.current === null) {
+      saveLocal(stateRef.current, null);
+    }
+  }, [saveLocal]);
   const handleOpenLoginGate = useCallback(() => setGateOpen(true), []);
   const handleOpenSettings = useCallback(() => setSettingsOpen(true), []);
   const handleCloseSettings = useCallback(() => setSettingsOpen(false), []);
@@ -3226,6 +3470,120 @@ export default function App() {
   const srvMinute = Math.floor((state.t + serverOffsetMs) / 60_000);
   const dayKey = useMemo(() => dayKeyFor(srvMinute * 60_000), [srvMinute]);
 
+  // Mandatory Website Version Detection & Cross-Tab Update Lock
+  useEffect(() => {
+    const runningVersion = getRunningAppVersion();
+    clearUpdateReloadGuardIfMatched(runningVersion);
+
+    let channel: BroadcastChannel | null = null;
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        channel = new BroadcastChannel(VERSION_BROADCAST_CHANNEL);
+        versionChannelRef.current = channel;
+        channel.onmessage = (ev: MessageEvent) => {
+          const msg = ev?.data as { type?: string; version?: string } | undefined;
+          if (msg?.type === 'new-version' && msg.version && msg.version !== runningVersion) {
+            const guard = evaluateUpdateReloadGuard(runningVersion, msg.version);
+            setUpdateAvailable((prev) =>
+              prev?.version === msg.version
+                ? prev
+                : { version: msg.version!, loopDetected: guard.loopDetected },
+            );
+          }
+        };
+      }
+    } catch {
+      // BroadcastChannel unavailable in restricted environments
+    }
+
+    const checkForUpdates = async (force = false) => {
+      if (updateAvailableRef.current) return;
+      const now = Date.now();
+      if (!force && now - lastVersionCheckAtRef.current < 5_000) return;
+      lastVersionCheckAtRef.current = now;
+
+      const manifest = await fetchLatestVersion();
+      if (!isNewerVersionDeployed(runningVersion, manifest) || !manifest) return;
+
+      const guard = evaluateUpdateReloadGuard(runningVersion, manifest.version);
+      setUpdateAvailable({
+        version: manifest.version,
+        loopDetected: guard.loopDetected,
+      });
+      try {
+        channel?.postMessage({ type: 'new-version', version: manifest.version });
+      } catch {
+        // ignore
+      }
+    };
+
+    void checkForUpdates(true);
+
+    const pollIv = window.setInterval(() => {
+      if (!document.hidden) {
+        void checkForUpdates(false);
+      }
+    }, VERSION_POLL_INTERVAL_MS);
+
+    const onVis = () => {
+      if (document.visibilityState === 'visible') {
+        void checkForUpdates(false);
+      }
+    };
+    const onFocus = () => void checkForUpdates(false);
+    const onOnline = () => void checkForUpdates(true);
+
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('online', onOnline);
+    return () => {
+      window.clearInterval(pollIv);
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('online', onOnline);
+      if (channel) {
+        channel.close();
+      }
+      versionChannelRef.current = null;
+    };
+  }, []);
+
+  const handleForceUpdateRefresh = useCallback(async () => {
+    if (refreshingUpdateRef.current || !updateAvailable) return;
+    refreshingUpdateRef.current = true;
+    setRefreshingUpdate(true);
+    const runningVersion = getRunningAppVersion();
+    const targetVersion = updateAvailable.version;
+    try {
+      // Flush active account's critical state safely before leaving without overwriting newer cloud data
+      if (
+        uidRef.current &&
+        cloudReadyRef.current &&
+        pendingDirtyRef.current &&
+        !kickedRef.current &&
+        !needsOnboardingRef.current &&
+        navigator.onLine !== false
+      ) {
+        await Promise.race([
+          performCloudSync(true, true).catch(() => null),
+          new Promise<void>((resolve) => window.setTimeout(resolve, 4000)),
+        ]);
+      } else if (authResolvedRef.current && !cloudLoadingRef.current && !needsOnboardingRef.current) {
+        saveLocal(stateRef.current, uidRef.current);
+      }
+
+      recordUpdateReloadAttempt(runningVersion, targetVersion);
+      await clearAppCachesBeforeReload();
+    } finally {
+      const nextUrl = buildCacheBustedUrl(window.location.href, targetVersion);
+      if (nextUrl !== window.location.href) {
+        window.location.replace(nextUrl);
+      } else {
+        window.location.reload();
+      }
+    }
+  }, [performCloudSync, saveLocal, updateAvailable]);
+
   // Daily gift limit listener (automatically rotates at midnight Asia/Karachi time)
   useEffect(() => {
     if (!uid || !cloudReady || needsOnboarding || kicked || !db) return;
@@ -3239,6 +3597,32 @@ export default function App() {
     );
     return () => unsub();
   }, [uid, cloudReady, needsOnboarding, kicked, dayKey, handleSnapshotError]);
+
+  if (updateAvailable) {
+    return (
+      <UpdateRequiredModal
+        open
+        refreshing={refreshingUpdate}
+        loopDetected={updateAvailable.loopDetected}
+        remoteVersion={updateAvailable.version}
+        onRefreshNow={() => void handleForceUpdateRefresh()}
+      />
+    );
+  }
+
+  if (HAS_FIREBASE_AUTH && !authResolved) {
+    return (
+      <div id="authBoot" role="status" aria-live="polite">
+        <div className="auth-boot-card card">
+          <div className="g-mark">
+            <Landmark size={26} strokeWidth={2.2} />
+          </div>
+          <h2>Country Economy Tycoon</h2>
+          <p>Verifying session…</p>
+        </div>
+      </div>
+    );
+  }
 
   if (otherTabLocked || kicked) {
     return (
@@ -3579,17 +3963,29 @@ export default function App() {
         onCheckUsername={checkUsernameAvailability}
         onSubmitProfile={async (username, cc) => {
           const currentUid = uidRef.current;
+          const capturedSeq = authSeqRef.current;
           if (!currentUid) return;
           try {
-            const res = await createPlayerProfile(username, cc, stateRef.current, sidRef.current, handleKicked);
+            // Strictly seed new accounts with a fresh state (never copy previous account/offline progress)
+            const seedState = buildOnboardingSeedState(cc);
+            const res = await createPlayerProfile(
+              username,
+              cc,
+              seedState,
+              sidRef.current,
+              handleKicked,
+              currentUid,
+            );
+            if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) return;
             walletRevRef.current = res.walletRev;
             cloudSyncPermDeniedRef.current = false;
             permWarnShownRef.current = false;
             syncRetryCountRef.current = 0;
             const p = await fetchPlayerProfile(currentUid);
+            if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) return;
             if (p) setPubProfile(p);
             const chosen = COUNTRIES.find((c) => c[0] === cc) || COUNTRIES[0];
-            const base = res.restoredSave ? migrateState(res.restoredSave) : stateRef.current;
+            const base = res.restoredSave ? migrateState(res.restoredSave) : seedState;
             let merged: GameState = { ...base, country: chosen };
             if (res.wallet) {
               merged = {
@@ -3610,15 +4006,16 @@ export default function App() {
               if (entryDlg) setDialog(entryDlg);
             }
             stateRef.current = merged;
-            saveLocal(merged);
             setState(merged);
             needsOnboardingRef.current = false;
             cloudReadyRef.current = true;
             setNeedsOnboarding(false);
             setCloudReady(true);
+            saveLocal(merged, currentUid);
             scheduleCloudSync(500);
             addToast(`Welcome, ${username}!`);
           } catch (err) {
+            if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) return;
             recordFirestoreError(err, OperationType.CREATE, `players/${currentUid}`);
             addToast(formatFirebaseError(err));
           }
@@ -3638,11 +4035,17 @@ export default function App() {
           serverOffsetMs={serverOffsetMs}
           onClose={handleCloseGiftModal}
           onSendGift={async (payload) => {
+            const currentUid = uidRef.current;
+            const capturedSeq = authSeqRef.current;
+            if (!currentUid) return false;
             try {
               if (!serverTimeVerifiedRef.current && db) {
-                const sesRef = doc(db, 'players', uid, 'private', 'session');
+                const sesRef = doc(db, 'players', currentUid, 'private', 'session');
                 await setDoc(sesRef, { sid: sidRef.current, t: serverTimestamp() });
                 const sesSnap = await getDocFromServer(sesRef).catch(() => null);
+                if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+                  return false;
+                }
                 if (sesSnap && sesSnap.exists()) {
                   const srvMs = timestampToMs(sesSnap.data()?.t);
                   if (srvMs > 0) updateServerOffset(srvMs);
@@ -3651,17 +4054,24 @@ export default function App() {
               if (pendingDirtyRef.current || cloudSyncBusyRef.current) {
                 await performCloudSync(true);
               }
+              if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+                return false;
+              }
               await createGiftOffer({
                 ...payload,
                 sid: sidRef.current,
                 serverOffsetMs: serverOffsetMsRef.current,
                 onKicked: handleKicked,
               });
-              addToast('Gift sent!');
+              if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+                addToast('Gift sent!');
+              }
               return true;
             } catch (err) {
-              recordFirestoreError(err, OperationType.CREATE, 'trades');
-              addToast(formatFirebaseError(err));
+              if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+                recordFirestoreError(err, OperationType.CREATE, 'trades');
+                addToast(formatFirebaseError(err));
+              }
               return false;
             }
           }}

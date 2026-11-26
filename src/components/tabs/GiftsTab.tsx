@@ -61,6 +61,7 @@ export const GiftsTab: React.FC<GiftsTabProps> = memo(({
   const [searchResults, setSearchResults] = useState<PlayerProfile[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [busyIds, setBusyIds] = useState<Record<string, boolean>>({});
+  const busyIdsRef = useRef<Set<string>>(new Set());
   const searchTimerRef = useRef<number | null>(null);
   const searchSeqRef = useRef(0);
 
@@ -74,11 +75,13 @@ export const GiftsTab: React.FC<GiftsTabProps> = memo(({
   }, []);
 
   const runTradeAction = async (id: string, fn: (tradeId: string) => Promise<boolean | void> | void) => {
-    if (busyIds[id]) return;
+    if (busyIdsRef.current.has(id)) return;
+    busyIdsRef.current.add(id);
     setBusyIds((prev) => ({ ...prev, [id]: true }));
     try {
       await fn(id);
     } finally {
+      busyIdsRef.current.delete(id);
       setBusyIds((prev) => {
         const next = { ...prev };
         delete next[id];

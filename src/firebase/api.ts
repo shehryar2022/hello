@@ -79,9 +79,12 @@ function makeError(code: string, message: string): Error & { code: string } {
   return Object.assign(new Error(message), { code });
 }
 
-function requireUid(): string {
-  const u = auth.currentUser?.uid;
+function requireUid(expectedUid?: string): string {
+  const u = auth?.currentUser?.uid;
   if (!u) throw makeError('unauthenticated', 'Not signed in');
+  if (expectedUid !== undefined && u !== expectedUid) {
+    throw makeError('aborted', 'Active account changed');
+  }
   return u;
 }
 
@@ -117,10 +120,12 @@ async function runSessionTx<T>(
   checkSession = true,
   opPath: string | null = null,
   suppressPermLog = false,
+  expectedUid?: string,
 ): Promise<T> {
-  const uid = requireUid();
+  const uid = requireUid(expectedUid);
   const exec = () =>
     runTransaction(db, async (tx) => {
+      requireUid(uid);
       if (checkSession) {
         const sesSnap = await tx.get(doc(db, 'players', uid, 'private', 'session'));
         if (sesSnap.exists() && sesSnap.data()?.sid !== sid) {
@@ -191,6 +196,7 @@ export async function createPlayerProfile(
   state: GameState,
   sid: string,
   onKicked: () => void,
+  expectedUid?: string,
 ): Promise<{
   restoredSave?: Partial<GameState>;
   wallet?: { cash: number; gems: number; stk: Record<string, number> };
@@ -311,12 +317,15 @@ export async function createPlayerProfile(
     },
     false,
     'players',
+    false,
+    expectedUid,
   );
 
   return out;
 }
 
 export async function syncSaveToCloud(params: {
+  expectedUid?: string;
   state: GameState;
   pubStats: PlayerStats | undefined;
   completedTradesCount: number;
@@ -327,7 +336,8 @@ export async function syncSaveToCloud(params: {
   accepted: boolean;
   wallet: { cash: number; gems: number; stk: Record<string, number>; rev: number };
 }> {
-  const { state, pubStats, completedTradesCount, rev, sid, onKicked } = params;
+  const { expectedUid, state, pubStats, completedTradesCount, rev, sid, onKicked } = params;
+  const activeUid = requireUid(expectedUid);
   const cleanedSave = cleanSavePayload(state);
   const cash = capValue(cleanedSave.cash, 1e13);
   const gems = capValue(cleanedSave.gems, 1e9);
@@ -410,6 +420,7 @@ export async function syncSaveToCloud(params: {
       true,
       'saves (wallet + player + save)',
       true,
+      activeUid,
     );
     return result;
   } catch (err) {
@@ -419,7 +430,7 @@ export async function syncSaveToCloud(params: {
 
     // Pinpoint & salvage fallback: verify player/session/wallet BEFORE writing saves/{uid}
     // so an outdated tab or lower rev can never overwrite newer cloud progress.
-    const uid = requireUid();
+    const uid = requireUid(activeUid);
     let firstFatalErr: unknown = null;
     let savedDocOk = false;
     let walletDocOk = false;
@@ -927,6 +938,7 @@ export async function searchPlayersByUsername(
   queryStr: string,
   myUid: string,
 ): Promise<PlayerProfile[]> {
+  const activeUid = requireUid(myUid);
   const q = queryStr.trim().toLowerCase();
   if (q.length < 2) return [];
   const snap = await getDocs(
@@ -939,7 +951,7 @@ export async function searchPlayersByUsername(
   );
   return snap.docs
     .map((d) => ({ ...(d.data() as Omit<PlayerProfile, 'id'>), id: d.id }))
-    .filter((p) => p.id !== myUid);
+    .filter((p) => p.id !== activeUid);
 }
 
 export async function fetchPlayerProfile(uid: string): Promise<PlayerProfile | null> {
@@ -956,13 +968,14 @@ export async function sendGlobalChatMessage(params: {
   rank: number;
   text: string;
 }): Promise<void> {
+  const activeUid = requireUid(params.uid);
   const cleanText = params.text.trim().slice(0, 200);
   if (!cleanText || !/\S/.test(cleanText)) {
     throw makeError('invalid', 'Enter a message first');
   }
   const cleanName = params.username.trim().slice(0, 16) || 'Player';
   await addDoc(collection(db, 'globalChat'), {
-    uid: params.uid,
+    uid: activeUid,
     name: cleanName,
     cc: sanitizeCountryCode(params.countryCode),
     rank: Math.max(0, Math.min(MAX_RANK, Math.floor(params.rank || 0))),
@@ -979,10 +992,11 @@ export async function sendDirectMessage(params: {
   text: string;
   notify: boolean;
 }): Promise<void> {
+  const activeFromUid = requireUid(params.fromUid);
   if (!/^[a-zA-Z0-9_-]{1,128}$/.test(params.toUid)) {
     throw makeError('invalid', 'Invalid recipient');
   }
-  if (params.fromUid === params.toUid) {
+  if (activeFromUid === params.toUid) {
     throw makeError('invalid', "You can't message yourself");
   }
   const cleanText = params.text.trim().slice(0, 300);
@@ -1012,16 +1026,18 @@ export async function sendDirectMessage(params: {
 }
 
 export async function markNotificationsRead(uid: string, ids: string[]): Promise<void> {
+  const activeUid = requireUid(uid);
   if (!ids.length) return;
   const batch = writeBatch(db);
   for (const id of ids) {
-    batch.update(doc(db, 'players', uid, 'notifications', id), { read: true });
+    batch.update(doc(db, 'players', activeUid, 'notifications', id), { read: true });
   }
   await batch.commit();
 }
 
 export async function sendHeartbeat(uid: string): Promise<void> {
-  const ref = doc(db, 'players', uid);
+  const activeUid = requireUid(uid);
+  const ref = doc(db, 'players', activeUid);
   try {
     await updateDoc(ref, { lastSeen: serverTimestamp() });
   } catch (err) {
@@ -1031,9 +1047,10 @@ export async function sendHeartbeat(uid: string): Promise<void> {
       code === 'unauthenticated' ||
       isPermissionDeniedError(err) ||
       /unauthenticated|permission-denied/i.test(`${code} ${msg}`);
-    if (needsTokenRetry && auth?.currentUser) {
+    if (needsTokenRetry && auth?.currentUser?.uid === activeUid) {
       await auth.currentUser.getIdToken(true).catch(() => null);
       await new Promise((r) => setTimeout(r, 350));
+      requireUid(activeUid);
       await updateDoc(ref, { lastSeen: serverTimestamp() });
       return;
     }
@@ -1046,10 +1063,11 @@ export async function createGovProject(
   type: ProjectType,
   onId?: (id: string) => void,
 ): Promise<string> {
-  const ref = doc(collection(db, 'players', uid, 'projects'));
+  const activeUid = requireUid(uid);
+  const ref = doc(collection(db, 'players', activeUid, 'projects'));
   onId?.(ref.id);
   await setDoc(ref, {
-    uid,
+    uid: activeUid,
     type,
     paid: 1,
     progressMs: 0,
@@ -1066,8 +1084,10 @@ export async function payGovProjectStage(
   projectId: string,
   expectedPaid: number,
 ): Promise<void> {
-  const ref = doc(db, 'players', uid, 'projects', projectId);
+  const activeUid = requireUid(uid);
+  const ref = doc(db, 'players', activeUid, 'projects', projectId);
   await runTransaction(db, async (tx) => {
+    requireUid(activeUid);
     const snap = await tx.get(ref);
     const data = snap.data();
     if (!data || data.status !== 'active' || data.paid !== expectedPaid || expectedPaid >= PROJECT_STAGES) {
@@ -1082,9 +1102,11 @@ export async function tickGovProject(
   projectId: string,
   nextProgressMs: number,
 ): Promise<void> {
-  const ref = doc(db, 'players', uid, 'projects', projectId);
+  const activeUid = requireUid(uid);
+  const ref = doc(db, 'players', activeUid, 'projects', projectId);
   const clamped = Math.max(0, Math.min(2_400_000, Math.floor(nextProgressMs)));
   await runTransaction(db, async (tx) => {
+    requireUid(activeUid);
     const snap = await tx.get(ref);
     const data = snap.data();
     if (!data || data.status !== 'active') return;
@@ -1103,8 +1125,10 @@ export async function finishGovProject(
   status: 'done' | 'failed',
   finalProgressMs?: number,
 ): Promise<void> {
-  const ref = doc(db, 'players', uid, 'projects', projectId);
+  const activeUid = requireUid(uid);
+  const ref = doc(db, 'players', activeUid, 'projects', projectId);
   await runTransaction(db, async (tx) => {
+    requireUid(activeUid);
     const snap = await tx.get(ref);
     const data = snap.data();
     if (!data || data.status !== 'active') return;
@@ -1131,8 +1155,10 @@ export async function claimGovProject(
   uid: string,
   projectId: string,
 ): Promise<'done' | 'failed' | null> {
-  const ref = doc(db, 'players', uid, 'projects', projectId);
+  const activeUid = requireUid(uid);
+  const ref = doc(db, 'players', activeUid, 'projects', projectId);
   return runTransaction(db, async (tx) => {
+    requireUid(activeUid);
     const snap = await tx.get(ref);
     const d = snap.data();
     if (!d || d.claimed || (d.status !== 'done' && d.status !== 'failed')) return null;
@@ -1194,6 +1220,7 @@ export function buildQueryHelpers() {
 }
 
 export async function recordProvinceTxAndSyncOnline(params: {
+  expectedUid?: string;
   txId: string;
   kind: 'unlock' | 'alloc';
   provId: string;
@@ -1207,7 +1234,8 @@ export async function recordProvinceTxAndSyncOnline(params: {
   sid: string;
   onKicked: () => void;
 }): Promise<{ walletRev: number }> {
-  const { txId, kind, provId, slot, finalPrice, discountPct, nextState, pubStats, completedTradesCount, rev, sid, onKicked } = params;
+  const { expectedUid, txId, kind, provId, slot, finalPrice, discountPct, nextState, pubStats, completedTradesCount, rev, sid, onKicked } = params;
+  const activeUid = requireUid(expectedUid);
   const cleanedSave = cleanSavePayload(nextState);
   const cash = capValue(cleanedSave.cash, 1e13);
   const gems = capValue(cleanedSave.gems, 1e9);
@@ -1282,6 +1310,8 @@ export async function recordProvinceTxAndSyncOnline(params: {
     },
     true,
     `players/provinceTxs/${txId}`,
+    false,
+    activeUid,
   );
 
   return { walletRev: nextRevOut };
@@ -1289,9 +1319,10 @@ export async function recordProvinceTxAndSyncOnline(params: {
 
 export async function syncProvinceLeaderboardEntries(
   entries: ProvinceLeaderboardEntry[],
+  expectedUid?: string,
 ): Promise<void> {
   if (!entries.length || !auth?.currentUser?.uid) return;
-  const uid = auth.currentUser.uid;
+  const uid = requireUid(expectedUid);
   const batch = writeBatch(db);
   for (const e of entries.slice(0, 10)) {
     const entryId = `${uid}_${e.provId}`;

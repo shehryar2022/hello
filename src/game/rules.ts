@@ -1180,14 +1180,16 @@ export function claimSubscriptionDaily(
   if (active.lastClaimDay === dayKey) {
     return { ok: false, state: s, cashAdded: 0, gemsAdded: 0, reason: 'Already claimed today' };
   }
+  const safeCash = Number.isFinite(s.cash) ? Math.max(0, s.cash) : 0;
+  const safeGems = Number.isFinite(s.gems) ? Math.max(0, Math.floor(s.gems)) : 0;
   return {
     ok: true,
     cashAdded: active.def.dailyCash,
     gemsAdded: active.def.dailyGems,
     state: {
       ...s,
-      cash: Math.min(1e13, s.cash + active.def.dailyCash),
-      gems: Math.min(1e9, Math.floor(s.gems) + active.def.dailyGems),
+      cash: Math.min(1e13, safeCash + active.def.dailyCash),
+      gems: Math.min(1e9, safeGems + active.def.dailyGems),
       sub: {
         ...s.sub,
         tier: active.def.id,
@@ -1363,12 +1365,13 @@ export function claimMilestone(
   if (m.f(s) < m.g) {
     return { ok: false, state: s, gemsAdded: 0, reason: 'Milestone not yet completed' };
   }
+  const safeGems = Number.isFinite(s.gems) ? Math.max(0, Math.floor(s.gems)) : 0;
   return {
     ok: true,
     gemsAdded: m.r,
     state: {
       ...s,
-      gems: Math.min(1e9, Math.floor(s.gems) + m.r),
+      gems: Math.min(1e9, safeGems + m.r),
       milestones: { ...(s.milestones || {}), [milestoneId]: 1 },
     },
   };
@@ -1526,9 +1529,10 @@ export function resolveExecutiveDecision(
 
   const next: GameState = { ...s, cash: Math.max(0, s.cash - quote.spendCost) };
   if (decisionId === 'tech_expo') {
+    const safeGems = Number.isFinite(next.gems) ? Math.max(0, Math.floor(next.gems)) : 0;
     next.hap = Math.min(100, next.hap + 8);
     next.appr = Math.min(100, next.appr + 6);
-    next.gems = Math.min(1e9, next.gems + 1);
+    next.gems = Math.min(1e9, safeGems + 1);
     return { ok: true, state: next, summary: `Sponsored Tech Expo (−₨ ${formatNumber(quote.spendCost)}): +8% Hap, +6% Appr, +1 Gem!` };
   }
   if (decisionId === 'grid_crunch') {
@@ -1744,6 +1748,8 @@ export function applyCollectTax(
   const nextStk = portDrop.sticker
     ? { ...(s.stk || {}), [portDrop.sticker.id]: ((s.stk || {})[portDrop.sticker.id] || 0) + 1 }
     : s.stk;
+  const safeCash = Number.isFinite(s.cash) ? Math.max(0, s.cash) : 0;
+  const safeGems = Number.isFinite(s.gems) ? Math.max(0, Math.floor(s.gems)) : 0;
   return {
     ok: true,
     collected: res.collected,
@@ -1752,8 +1758,8 @@ export function applyCollectTax(
     portDrop,
     state: {
       ...s,
-      cash: Math.min(1e13, s.cash + res.collected),
-      gems: Math.min(1e9, Math.floor(s.gems) + portDrop.gems),
+      cash: Math.min(1e13, safeCash + res.collected),
+      gems: Math.min(1e9, safeGems + portDrop.gems),
       stk: nextStk,
       taxPool: 0,
       activeFx: res.bonusApplied ? { ...(s.activeFx || {}), taxSurge: 0 } : s.activeFx,
@@ -1890,18 +1896,36 @@ export function applyClaimQuest(
     return { ok: false, state: s, gemsAdded: 0, reason: 'Objective not yet completed' };
   }
   const cleanClaimed: Record<string, number> = {};
-  for (const [k, v] of Object.entries(s.claimed || {}).slice(0, 19)) {
-    if (Number(v) > 0) cleanClaimed[k] = 1;
+  if (s.questDay === todayKey) {
+    for (const [k, v] of Object.entries(s.claimed || {}).slice(0, 19)) {
+      if (Number(v) > 0) cleanClaimed[k] = 1;
+    }
   }
   cleanClaimed[questId] = 1;
+  const safeGems = Number.isFinite(s.gems) ? Math.max(0, Math.floor(s.gems)) : 0;
   return {
     ok: true,
     gemsAdded: q.r,
     state: {
       ...s,
-      gems: Math.min(1e9, Math.floor(s.gems) + q.r),
+      questDay: todayKey,
+      questIds: activeIds,
+      gems: Math.min(1e9, safeGems + q.r),
       claimed: cleanClaimed,
     },
+  };
+}
+
+export function rotateDailyQuestsIfNeeded(s: GameState, nowMs = Date.now()): GameState {
+  const todayKey = dayKeyFor(nowMs);
+  if (s.questDay === todayKey && s.questIds?.length === 3) {
+    return s;
+  }
+  return {
+    ...s,
+    questDay: todayKey,
+    questIds: selectDailyQuestIds(todayKey),
+    claimed: s.questDay === todayKey ? s.claimed : {},
   };
 }
 

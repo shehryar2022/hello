@@ -1068,4 +1068,40 @@ test('NaN or non-finite cash and gems cannot bypass purchase guards', () => {
   assert.equal(buyStickerCrate(nanCashState, 'gems', now).ok, false);
 });
 
+test('rotateDailyQuestsIfNeeded rolls quests & resets claims on new Asia/Karachi day without mid-day reset', async () => {
+  const { rotateDailyQuestsIfNeeded, dayKeyFor } = await import('./rules');
+  const day1 = Date.UTC(2026, 10, 26, 10, 0, 0);
+  const key1 = dayKeyFor(day1);
+  const s1 = freshState();
+  s1.questDay = key1;
+  s1.questIds = selectDailyQuestIds(key1);
+  s1.claimed = { 0: 1, 1: 1 };
+
+  // Same day does NOT rotate or erase claims
+  const sameDay = rotateDailyQuestsIfNeeded(s1, day1 + 60_000);
+  assert.equal(sameDay, s1);
+  assert.deepEqual(sameDay.claimed, { 0: 1, 1: 1 });
+
+  // Next day rotates cleanly and clears prior day's claims
+  const nextDay = rotateDailyQuestsIfNeeded(s1, day1 + 86_400_000);
+  assert.notEqual(nextDay, s1);
+  assert.equal(nextDay.questDay, dayKeyFor(day1 + 86_400_000));
+  assert.deepEqual(nextDay.claimed, {});
+  assert.equal(nextDay.questIds.length, 3);
+});
+
+test('reward claim functions preserve finite cash & gems even if pre-existing wallet field was NaN', () => {
+  const now = 1_750_000_000_000;
+  const nanState = { ...freshState(), cash: Number.NaN, gems: Number.NaN, taxPool: 500 };
+  const taxRes = applyCollectTax(nanState, 0, now, () => 0.9);
+  assert.equal(taxRes.ok, true);
+  assert.equal(taxRes.state.cash, 500);
+
+  const msState = { ...freshState(), cash: Number.NaN, gems: Number.NaN };
+  msState.b.farm = 5;
+  const msRes = claimMilestone(msState, MILESTONES[0].id);
+  assert.equal(msRes.ok, true);
+  assert.equal(msRes.state.gems, MILESTONES[0].r);
+});
+
 

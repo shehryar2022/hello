@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { STICKERS } from '../../game/constants';
 import { formatNumber } from '../../game/rules';
 import type { GameState, PlayerProfile, TradeOffer } from '../../game/types';
@@ -56,7 +56,18 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
   const [message, setMessage] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const [nowLocal, setNowLocal] = useState(() => Date.now());
+
+  useEffect(() => {
+    setCash(0);
+    setGems(0);
+    setStk({});
+    setMessage('');
+    setConfirming(false);
+    setBusy(false);
+    busyRef.current = false;
+  }, [mode, target?.id, trade?.id, uid]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -73,11 +84,11 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
     return () => window.clearInterval(iv);
   }, [mode, trade?.status, trade?.id]);
 
-  const maxCash = Math.max(0, Math.min(1e12, Math.floor(state.cash)));
-  const maxGems = Math.max(0, Math.min(1e9, Math.floor(state.gems)));
+  const maxCash = Math.max(0, Math.min(1e12, Number.isFinite(state.cash) ? Math.floor(state.cash) : 0));
+  const maxGems = Math.max(0, Math.min(1e9, Number.isFinite(state.gems) ? Math.floor(state.gems) : 0));
 
-  const clampedCash = Math.max(0, Math.min(maxCash, Math.floor(cash)));
-  const clampedGems = Math.max(0, Math.min(maxGems, Math.floor(gems)));
+  const clampedCash = Math.max(0, Math.min(maxCash, Number.isFinite(cash) ? Math.floor(cash) : 0));
+  const clampedGems = Math.max(0, Math.min(maxGems, Number.isFinite(gems) ? Math.floor(gems) : 0));
   const clampedStk = useMemo(() => {
     const out: Record<string, number> = {};
     for (const [id, count] of Object.entries(stk)) {
@@ -175,11 +186,12 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
     mode === 'review' && trade && trade.from === uid && trade.status === 'pending' && trade.expMs > nowSrv;
 
   const handleConfirmSend = async () => {
-    if (!target || busy) return;
+    if (!target || busyRef.current) return;
     if (clampedCash + clampedGems + Object.values(clampedStk).reduce((a, b) => a + b, 0) <= 0) {
       setConfirming(false);
       return;
     }
+    busyRef.current = true;
     setBusy(true);
     try {
       const ok = await onSendGift({
@@ -191,6 +203,7 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
       });
       if (ok) onClose();
     } finally {
+      busyRef.current = false;
       setBusy(false);
       setConfirming(false);
     }
