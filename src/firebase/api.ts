@@ -336,6 +336,7 @@ export async function syncSaveToCloud(params: {
 }): Promise<{
   accepted: boolean;
   wallet: { cash: number; gems: number; stk: Record<string, number>; rev: number };
+  serverSave?: Partial<GameState>;
 }> {
   const { expectedUid, state, pubStats, completedTradesCount, rev, sid, onKicked } = params;
   const activeUid = requireUid(expectedUid);
@@ -348,6 +349,7 @@ export async function syncSaveToCloud(params: {
   let result!: {
     accepted: boolean;
     wallet: { cash: number; gems: number; stk: Record<string, number>; rev: number };
+    serverSave?: Partial<GameState>;
   };
 
   try {
@@ -407,6 +409,10 @@ export async function syncSaveToCloud(params: {
             onKicked();
             throw makeError('aborted', 'Another session is active');
           }
+          const sSnap = await tx.get(doc(db, 'saves', uid));
+          const serverSave = sSnap.exists()
+            ? (sSnap.data()?.save as Partial<GameState> | undefined)
+            : undefined;
           result = {
             accepted: false,
             wallet: {
@@ -415,6 +421,7 @@ export async function syncSaveToCloud(params: {
               stk: cleanStickersMap(wData.stk),
               rev: curRev,
             },
+            serverSave,
           };
         }
       },
@@ -1059,6 +1066,40 @@ export async function sendHeartbeat(uid: string): Promise<void> {
   }
 }
 
+/**
+ * Lightweight 1-write public metrics sync (`players/{uid}` only, 0 reads)
+ * so cash/GDP/level/rank/sub changes propagate to other players' live leaderboards
+ * within 1-3s without rewriting the full `saves/{uid}` document on every passive tick.
+ */
+export async function syncPublicProfileMetrics(params: {
+  expectedUid: string;
+  state: GameState;
+  pubStats?: PlayerStats;
+  nowSrvMs?: number;
+}): Promise<void> {
+  const activeUid = requireUid(params.expectedUid);
+  const { state, pubStats, nowSrvMs = Date.now() } = params;
+  const cash = capValue(state.cash, 1e13);
+  const gems = capValue(state.gems, 1e9);
+  const gdp = Math.max(1, Math.min(cash, capValue(calculateGdp(state), 1e13)));
+  const activeSub = getActiveSubscription(state, nowSrvMs);
+  const payload: Record<string, unknown> = {
+    gdp,
+    cash,
+    gems,
+    level: capValue(playerLevel(state), 10_000_000) || 1,
+    rank: capValue(state.rank, MAX_RANK),
+    subTier: activeSub ? activeSub.def.id : '',
+    subExp: activeSub ? capValue(activeSub.exp, 1e13) : 0,
+    lastSeen: serverTimestamp(),
+  };
+  const bTotal = totalBuildings(state);
+  if (pubStats && pubStats.buildings !== bTotal) {
+    payload.stats = sanitizeStats(pubStats, { buildings: bTotal });
+  }
+  await updateDoc(doc(db, 'players', activeUid), payload);
+}
+
 export async function createGovProject(
   uid: string,
   type: ProjectType,
@@ -1217,6 +1258,14 @@ export function buildQueryHelpers() {
       query(collection(db, 'globalChat'), orderBy('createdAt', 'desc'), limit(25)),
     dmQuery: (uidA: string, uidB: string) =>
       query(collection(db, 'dms', pairIdFor(uidA, uidB), 'messages'), orderBy('createdAt', 'desc'), limit(25)),
+    provinceLeaderboardQuery: (category: ProvinceLeaderboardCategory, limitCount = 100) => {
+      const field = LEADERBOARD_ORDER_FIELD[category] || 'overallScore';
+      return query(
+        collection(db, 'provinceLeaderboard'),
+        orderBy(field, 'desc'),
+        limit(Math.max(1, Math.min(100, limitCount))),
+      );
+    },
   };
 }
 
@@ -1357,40 +1406,39 @@ const LEADERBOARD_ORDER_FIELD: Record<ProvinceLeaderboardCategory, string> = {
   emp: 'emp',
 };
 
+export function normalizeProvinceLeaderboardDoc(
+  id: string,
+  raw: Record<string, unknown>,
+): ProvinceLeaderboardEntry {
+  return {
+    entryId: id,
+    ownerUid: String(raw.ownerUid || ''),
+    ownerName: String(raw.ownerName || 'Player'),
+    countryCode: String(raw.countryCode || 'PK'),
+    provId: String(raw.provId || 'prov_1'),
+    slot: Number(raw.slot || 1),
+    name: String(raw.name || 'Province'),
+    flagId: String(raw.flagId || 'crest_star'),
+    color: String(raw.color || '#3fd2ff'),
+    gdp: Number(raw.gdp || 0),
+    pop: Number(raw.pop || 1),
+    hap: Number(raw.hap || 60),
+    dev: Number(raw.dev || 1),
+    emp: Number(raw.emp || 68),
+    overallScore: Number(raw.overallScore || 0),
+    updatedMs: timestampToMs(raw.updatedAt),
+  };
+}
+
 export async function fetchProvinceLeaderboard(
   category: ProvinceLeaderboardCategory,
   limitCount = 100,
 ): Promise<ProvinceLeaderboardEntry[]> {
   if (!auth?.currentUser?.uid) return [];
-  const field = LEADERBOARD_ORDER_FIELD[category] || 'overallScore';
-  const snap = await getDocs(
-    query(
-      collection(db, 'provinceLeaderboard'),
-      orderBy(field, 'desc'),
-      limit(Math.max(1, Math.min(100, limitCount))),
-    ),
+  const snap = await getDocs(buildQueryHelpers().provinceLeaderboardQuery(category, limitCount));
+  const mapped: ProvinceLeaderboardEntry[] = snap.docs.map((d) =>
+    normalizeProvinceLeaderboardDoc(d.id, d.data() as Record<string, unknown>),
   );
-  const mapped: ProvinceLeaderboardEntry[] = snap.docs.map((d) => {
-    const raw = d.data() as Record<string, unknown>;
-    return {
-      entryId: d.id,
-      ownerUid: String(raw.ownerUid || ''),
-      ownerName: String(raw.ownerName || 'Player'),
-      countryCode: String(raw.countryCode || 'PK'),
-      provId: String(raw.provId || 'prov_1'),
-      slot: Number(raw.slot || 1),
-      name: String(raw.name || 'Province'),
-      flagId: String(raw.flagId || 'crest_star'),
-      color: String(raw.color || '#3fd2ff'),
-      gdp: Number(raw.gdp || 0),
-      pop: Number(raw.pop || 1),
-      hap: Number(raw.hap || 60),
-      dev: Number(raw.dev || 1),
-      emp: Number(raw.emp || 68),
-      overallScore: Number(raw.overallScore || 0),
-      updatedMs: timestampToMs(raw.updatedAt),
-    };
-  });
   return selectBestProvinceLeaderboardEntries(mapped, category);
 }
 

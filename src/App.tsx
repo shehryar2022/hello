@@ -67,6 +67,7 @@ import {
   finishGovProject,
   markNotificationsRead,
   normalizeProject,
+  normalizeProvinceLeaderboardDoc,
   payGovProjectStage,
   recordProvinceTxAndSyncOnline,
   rejectGiftOffer,
@@ -76,6 +77,7 @@ import {
   sendHeartbeat,
   settleExpiredTrades,
   syncProvinceLeaderboardEntries,
+  syncPublicProfileMetrics,
   syncSaveToCloud,
   tickGovProject,
   timestampToMs,
@@ -84,8 +86,8 @@ import {
   auth,
   db,
   FIREBASE_CONFIG,
-  formatFirebaseError,
   isFirebaseConfigured,
+  formatFirebaseError,
   OperationType,
   recordFirestoreError,
 } from './firebase/config';
@@ -104,6 +106,24 @@ import {
   isHeartbeatDue,
   shouldRefreshPresenceQuery,
 } from './firebase/presence';
+import {
+  buildMeaningfulSaveFingerprint,
+  buildPublicMetricsFingerprint,
+  classifySyncError,
+  computeCoalescedDelayMs,
+  computeCloudSyncStatus,
+  computeSyncRetryBackoffMs,
+  MAX_TRANSIENT_RETRIES,
+  PASSIVE_FULL_SAVE_INTERVAL_MS,
+  PROV_LB_COALESCE_MS,
+  PROV_LB_MIN_INTERVAL_MS,
+  PUBLIC_METRICS_FAST_INTERVAL_MS,
+  resolveWalletRevisionConflict,
+  SYNC_COALESCE_DEBOUNCE_MS,
+  SYNC_IMMEDIATE_DELAY_MS,
+  SYNC_MAX_WAIT_MS,
+  SYNC_TAIL_DRAIN_MS,
+} from './firebase/syncEngine';
 import {
   BOOSTERS,
   BUILDINGS,
@@ -188,6 +208,7 @@ import {
   applyUnlockProvince,
   buildProvinceLeaderboardEntries,
   buildProvinceLeaderboardFingerprint,
+  selectBestProvinceLeaderboardEntries,
   stepProvincesTick,
 } from './game/province';
 import { playSfx, triggerBuzz } from './game/sound';
@@ -272,7 +293,7 @@ export default function App() {
   const [pubProfile, setPubProfile] = useState<PlayerProfile | null>(null);
   const [cloudStatus, setCloudStatus] = useState<{ cls: 'ok' | 'warn' | 'bad' | ''; text: string }>({
     cls: '',
-    text: 'Saved',
+    text: '',
   });
   const [kicked, setKicked] = useState(false);
   const [otherTabLocked, setOtherTabLocked] = useState(false);
@@ -342,11 +363,21 @@ export default function App() {
   const cloudSyncTimerRef = useRef<number | null>(null);
   const syncRetryTimerRef = useRef<number | null>(null);
   const cloudRetryTailTimerRef = useRef<number | null>(null);
+  const provLbSyncTimerRef = useRef<number | null>(null);
+  const firstDirtyAtRef = useRef<number | null>(null);
+  const cloudScheduledFireAtRef = useRef<number | null>(null);
+  const mutationSeqRef = useRef<number>(0);
   const syncRetryCountRef = useRef<number>(0);
   const lastSyncedAtRef = useRef<number>(0);
+  const lastPubMetricsAtRef = useRef<number>(0);
+  const lastPubMetricsHashRef = useRef<string>('');
+  const lastSavedSaveHashRef = useRef<string>('');
   const cloudSyncBusyRef = useRef<boolean>(false);
   const cloudDirtyRef = useRef<boolean>(false);
   const pendingDirtyRef = useRef<boolean>(false);
+  const provLbPendingRef = useRef<boolean>(false);
+  const isOnlineRef = useRef<boolean>(typeof navigator === 'undefined' ? true : navigator.onLine !== false);
+  const syncErrorRef = useRef<{ active: boolean; label: string }>({ active: false, label: '' });
   const localSaveTimerRef = useRef<number | null>(null);
   const toastTimersRef = useRef<Set<number>>(new Set());
   const floatTimersRef = useRef<Set<number>>(new Set());
@@ -416,11 +447,33 @@ export default function App() {
     }
   }, []);
 
+  const refreshCloudStatus = useCallback(() => {
+    const badge = computeCloudSyncStatus({
+      uid: uidRef.current,
+      online: isOnlineRef.current,
+      cloudLoading: cloudLoadingRef.current,
+      cloudReady: cloudReadyRef.current,
+      needsOnboarding: needsOnboardingRef.current,
+      kicked: kickedRef.current,
+      syncBusy: cloudSyncBusyRef.current,
+      pendingDirty: pendingDirtyRef.current,
+      cloudDirty: cloudDirtyRef.current,
+      permDenied: cloudSyncPermDeniedRef.current,
+      quotaPaused: cloudSyncQuotaPausedRef.current,
+      syncError: syncErrorRef.current.active,
+      errorLabel: syncErrorRef.current.label,
+    });
+    setCloudStatus((prev) =>
+      prev.cls === badge.cls && prev.text === badge.text ? prev : { cls: badge.cls, text: badge.text },
+    );
+  }, []);
+
   const triggerHeartbeat = useCallback(async () => {
     const currentUid = uidRef.current;
     const capturedSeq = authSeqRef.current;
     if (
       !currentUid ||
+      !isOnlineRef.current ||
       updateAvailableRef.current ||
       !cloudReadyRef.current ||
       kickedRef.current ||
@@ -442,16 +495,16 @@ export default function App() {
       if (code === 'resource-exhausted') {
         cloudSyncQuotaPausedRef.current = true;
         quotaPausedAtRef.current = Date.now();
-        setCloudStatus({ cls: 'bad', text: 'Quota paused' });
+        refreshCloudStatus();
       } else if (code === 'permission-denied') {
         cloudSyncPermDeniedRef.current = true;
-        setCloudStatus({ cls: 'bad', text: 'Rules blocked sync' });
+        refreshCloudStatus();
       }
       if (code !== 'aborted' && code !== 'unavailable' && code !== 'resource-exhausted') {
         recordFirestoreError(err, OperationType.UPDATE, `players/${currentUid}`);
       }
     }
-  }, []);
+  }, [refreshCloudStatus]);
 
   const addToast = useCallback((text: string) => {
     const id = Date.now() + Math.random();
@@ -510,6 +563,7 @@ export default function App() {
       if (cloudSyncTimerRef.current) window.clearTimeout(cloudSyncTimerRef.current);
       if (syncRetryTimerRef.current) window.clearTimeout(syncRetryTimerRef.current);
       if (cloudRetryTailTimerRef.current) window.clearTimeout(cloudRetryTailTimerRef.current);
+      if (provLbSyncTimerRef.current) window.clearTimeout(provLbSyncTimerRef.current);
       for (const tid of toastTimers) window.clearTimeout(tid);
       toastTimers.clear();
       for (const tid of floatTimers) window.clearTimeout(tid);
@@ -624,7 +678,67 @@ export default function App() {
     if (kickedRef.current) return;
     kickedRef.current = true;
     setKicked(true);
-  }, []);
+    refreshCloudStatus();
+  }, [refreshCloudStatus]);
+
+  const scheduleProvinceLbSync = useCallback(
+    (immediate = false) => {
+      const currentUid = uidRef.current;
+      const capturedSeq = authSeqRef.current;
+      if (
+        !currentUid ||
+        !cloudReadyRef.current ||
+        kickedRef.current ||
+        needsOnboardingRef.current ||
+        cloudSyncPermDeniedRef.current ||
+        cloudSyncQuotaPausedRef.current ||
+        updateAvailableRef.current ||
+        (stateRef.current.provinces?.length || 0) === 0
+      ) {
+        return;
+      }
+      provLbPendingRef.current = true;
+      if (!isOnlineRef.current) return;
+
+      const now = Date.now();
+      const sinceLast = now - lastProvLbSyncAtRef.current;
+      const delay = immediate
+        ? 120
+        : Math.max(PROV_LB_COALESCE_MS, Math.max(0, PROV_LB_MIN_INTERVAL_MS - sinceLast));
+
+      if (provLbSyncTimerRef.current) {
+        if (!immediate) return;
+        window.clearTimeout(provLbSyncTimerRef.current);
+        provLbSyncTimerRef.current = null;
+      }
+
+      provLbSyncTimerRef.current = window.setTimeout(() => {
+        provLbSyncTimerRef.current = null;
+        if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) return;
+        if (!isOnlineRef.current || !cloudReadyRef.current || kickedRef.current || needsOnboardingRef.current) return;
+        const nowSrv = Date.now() + serverOffsetMsRef.current;
+        const entries = buildProvinceLeaderboardEntries(
+          stateRef.current,
+          currentUid,
+          pubProfileRef.current?.username || 'Player',
+          stateRef.current.country?.[0] || 'PK',
+          nowSrv,
+        );
+        const nextHash = buildProvinceLeaderboardFingerprint(entries);
+        provLbPendingRef.current = false;
+        if (!nextHash || nextHash === lastProvLbHashRef.current) return;
+        lastProvLbSyncAtRef.current = Date.now();
+        lastProvLbHashRef.current = nextHash;
+        void syncProvinceLeaderboardEntries(entries, currentUid).catch(() => {
+          if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+            provLbPendingRef.current = true;
+            lastProvLbHashRef.current = '';
+          }
+        });
+      }, delay);
+    },
+    [],
+  );
 
   const performCloudSync = useCallback(
     async (immediate = false, allowDuringUpdate = false) => {
@@ -632,11 +746,31 @@ export default function App() {
       const capturedSeq = authSeqRef.current;
       if (!currentUid || !cloudReadyRef.current || kickedRef.current || needsOnboardingRef.current) return;
       if (updateAvailableRef.current && !allowDuringUpdate) return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        isOnlineRef.current = false;
+        pendingDirtyRef.current = true;
+        syncErrorRef.current = { active: false, label: '' };
+        refreshCloudStatus();
+        return;
+      }
+      if (!isOnlineRef.current && immediate) {
+        isOnlineRef.current = true;
+      }
+      if (!isOnlineRef.current) {
+        pendingDirtyRef.current = true;
+        refreshCloudStatus();
+        return;
+      }
       if (!immediate && (cloudSyncPermDeniedRef.current || cloudSyncQuotaPausedRef.current)) return;
       if (immediate) {
         cloudSyncPermDeniedRef.current = false;
         cloudSyncQuotaPausedRef.current = false;
         syncRetryCountRef.current = 0;
+        syncErrorRef.current = { active: false, label: '' };
+      }
+      if (cloudSyncTimerRef.current) {
+        window.clearTimeout(cloudSyncTimerRef.current);
+        cloudSyncTimerRef.current = null;
       }
       if (syncRetryTimerRef.current) {
         window.clearTimeout(syncRetryTimerRef.current);
@@ -648,16 +782,25 @@ export default function App() {
       }
       if (cloudSyncBusyRef.current) {
         cloudDirtyRef.current = true;
+        pendingDirtyRef.current = true;
+        refreshCloudStatus();
         return;
       }
+
       cloudSyncBusyRef.current = true;
       cloudDirtyRef.current = false;
+      firstDirtyAtRef.current = null;
+      cloudScheduledFireAtRef.current = null;
+      const capturedMutationSeq = mutationSeqRef.current;
+      const snapshotState = stateRef.current;
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
       expectedWalletRevRef.current = walletRevRef.current + 1;
-      setCloudStatus({ cls: 'warn', text: 'Saving…' });
+      refreshCloudStatus();
+
       try {
         const res = await syncSaveToCloud({
           expectedUid: currentUid,
-          state: stateRef.current,
+          state: snapshotState,
           pubStats: pubProfileRef.current?.stats,
           completedTradesCount: completedTradesRef.current,
           rev: walletRevRef.current,
@@ -667,27 +810,42 @@ export default function App() {
         if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) return;
         walletRevRef.current = res.wallet.rev;
         syncRetryCountRef.current = 0;
+        syncErrorRef.current = { active: false, label: '' };
         cloudSyncPermDeniedRef.current = false;
         cloudSyncQuotaPausedRef.current = false;
         quotaPausedAtRef.current = 0;
         permWarnShownRef.current = false;
         lastSyncedAtRef.current = Date.now();
+        lastPubMetricsAtRef.current = lastSyncedAtRef.current;
+        lastPubMetricsHashRef.current = buildPublicMetricsFingerprint(
+          snapshotState,
+          pubProfileRef.current?.stats,
+          completedTradesRef.current,
+          nowSrv,
+        );
+        lastSavedSaveHashRef.current = buildMeaningfulSaveFingerprint(snapshotState);
+
+        const hasMutationsDuringWrite = mutationSeqRef.current > capturedMutationSeq;
         if (!res.accepted) {
-          const next: GameState = {
-            ...stateRef.current,
-            cash: res.wallet.cash,
-            gems: res.wallet.gems,
-            stk: res.wallet.stk,
-          };
-          stateRef.current = next;
-          saveLocal(next, currentUid);
+          const conflict = resolveWalletRevisionConflict({
+            localState: stateRef.current,
+            serverWallet: res.wallet,
+            serverSave: res.serverSave,
+            hasLocalMutationsDuringWrite: hasMutationsDuringWrite,
+          });
+          stateRef.current = conflict.nextState;
+          saveLocal(conflict.nextState, currentUid);
           setState((prev) => ({
-            ...prev,
-            cash: res.wallet.cash,
-            gems: res.wallet.gems,
-            stk: res.wallet.stk,
+            ...conflict.nextState,
+            taxPool: Math.max(prev.taxPool, conflict.nextState.taxPool),
           }));
-          cloudDirtyRef.current = true;
+          if (conflict.shouldFollowUpSync) {
+            cloudDirtyRef.current = true;
+            pendingDirtyRef.current = true;
+          } else {
+            pendingDirtyRef.current = hasMutationsDuringWrite;
+            if (hasMutationsDuringWrite) cloudDirtyRef.current = true;
+          }
           void sendHeartbeat(currentUid)
             .then(() => {
               if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
@@ -696,20 +854,23 @@ export default function App() {
             })
             .catch(() => null);
         } else {
-          pendingDirtyRef.current = false;
+          if (hasMutationsDuringWrite) {
+            pendingDirtyRef.current = true;
+            cloudDirtyRef.current = true;
+          } else {
+            pendingDirtyRef.current = false;
+          }
           lastHeartbeatSuccessAtRef.current = Date.now();
         }
-        setCloudStatus({ cls: 'ok', text: 'Saved' });
       } catch (err) {
         if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) return;
-        const code = (err as { code?: string })?.code || '';
-        const msg = err instanceof Error ? err.message : String(err || '');
-        const combined = `${code} ${msg}`;
-        if (code === 'aborted' && (msg.includes('Another session') || msg.includes('Active account changed'))) {
-          if (msg.includes('Another session')) {
-            setCloudStatus({ cls: 'bad', text: 'Session displaced' });
-          }
-        } else if (code === 'failed-precondition' && /not initialized/i.test(msg)) {
+        const classified = classifySyncError(
+          err,
+          typeof navigator === 'undefined' ? true : navigator.onLine !== false,
+        );
+        if (classified.kind === 'displaced' || classified.kind === 'account-changed') {
+          // handleKicked or session validation updates UI
+        } else if (classified.kind === 'not-initialized') {
           if (db) {
             const pRef = doc(db, 'players', currentUid);
             const pCheck = await getDocFromServer(pRef)
@@ -721,46 +882,43 @@ export default function App() {
               cloudReadyRef.current = false;
               setNeedsOnboarding(true);
               setCloudReady(false);
-              setCloudStatus({ cls: 'warn', text: 'Setup profile' });
+              refreshCloudStatus();
               return;
             }
           }
-          setCloudStatus({ cls: 'warn', text: 'Retrying…' });
           cloudDirtyRef.current = true;
-        } else if (
-          code === 'permission-denied' ||
-          /permission-denied|Missing or insufficient permissions/i.test(combined)
-        ) {
+          pendingDirtyRef.current = true;
+        } else if (classified.kind === 'permission') {
           cloudSyncPermDeniedRef.current = true;
           cloudDirtyRef.current = false;
           syncRetryCountRef.current = 0;
-          setCloudStatus({ cls: 'bad', text: 'Rules blocked sync' });
           if (!permWarnShownRef.current || immediate) {
             permWarnShownRef.current = true;
             addToast(formatFirebaseError(err));
           }
-        } else if (code === 'resource-exhausted' || /Quota exceeded/i.test(combined)) {
+        } else if (classified.kind === 'quota') {
           cloudSyncQuotaPausedRef.current = true;
           quotaPausedAtRef.current = Date.now();
           cloudDirtyRef.current = false;
           syncRetryCountRef.current = 0;
           recordAppError({
             source: 'sync',
-            code: code || 'resource-exhausted',
+            code: classified.code || 'resource-exhausted',
             path: `players/${currentUid}`,
-            message: msg || 'Firebase Spark free plan quota reached — auto-sync paused (saved locally).',
+            message: classified.message || 'Firebase Spark free plan quota reached — auto-sync paused (saved locally).',
           });
-          setCloudStatus({ cls: 'bad', text: 'Quota paused' });
           addToast('Firebase free quota limit reached — progress saved locally.');
-        } else if (
-          /aborted|unavailable|deadline-exceeded|internal|cancelled|network|offline|unauthenticated|unknown/i.test(
-            combined,
-          )
-        ) {
-          if (syncRetryCountRef.current < 3) {
+        } else if (classified.kind === 'offline') {
+          isOnlineRef.current = false;
+          pendingDirtyRef.current = true;
+          syncRetryCountRef.current = 0;
+          syncErrorRef.current = { active: false, label: '' };
+        } else {
+          pendingDirtyRef.current = true;
+          if (syncRetryCountRef.current < MAX_TRANSIENT_RETRIES && isOnlineRef.current) {
             syncRetryCountRef.current += 1;
-            const backoff = Math.min(20_000, 3000 * Math.pow(2, syncRetryCountRef.current - 1));
-            setCloudStatus({ cls: 'warn', text: 'Retrying…' });
+            const backoff = computeSyncRetryBackoffMs(syncRetryCountRef.current);
+            syncErrorRef.current = { active: false, label: '' };
             syncRetryTimerRef.current = window.setTimeout(() => {
               syncRetryTimerRef.current = null;
               if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
@@ -768,62 +926,47 @@ export default function App() {
               }
             }, backoff);
           } else {
+            syncErrorRef.current = { active: true, label: 'Sync Error' };
             recordAppError({
               source: 'sync',
-              code: code || undefined,
+              code: classified.code || undefined,
               path: `players/${currentUid}`,
-              message: msg || 'Sync paused after retries',
+              message: classified.message || 'Cloud sync failed — tap Sync Error to retry',
             });
-            setCloudStatus({ cls: 'bad', text: 'Sync paused' });
-            if (immediate) addToast(formatFirebaseError(err));
-          }
-        } else {
-          if (syncRetryCountRef.current < 2) {
-            syncRetryCountRef.current += 1;
-            setCloudStatus({ cls: 'warn', text: 'Retrying…' });
-            syncRetryTimerRef.current = window.setTimeout(() => {
-              syncRetryTimerRef.current = null;
-              if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
-                void performCloudSync(false);
-              }
-            }, 3000);
-          } else {
-            recordAppError({
-              source: 'sync',
-              code: code || undefined,
-              path: `players/${currentUid}`,
-              message: msg || 'Cloud sync failed',
-            });
-            setCloudStatus({ cls: 'bad', text: 'Sync failed' });
             if (immediate) addToast(formatFirebaseError(err));
           }
         }
       } finally {
         expectedWalletRevRef.current = null;
         cloudSyncBusyRef.current = false;
-        if (
-          isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq) &&
-          cloudDirtyRef.current &&
-          !cloudSyncPermDeniedRef.current &&
-          !cloudSyncQuotaPausedRef.current &&
-          !updateAvailableRef.current
-        ) {
-          cloudDirtyRef.current = false;
-          cloudRetryTailTimerRef.current = window.setTimeout(() => {
-            cloudRetryTailTimerRef.current = null;
-            if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
-              void performCloudSync(false);
-            }
-          }, 1200);
+        if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+          refreshCloudStatus();
+          if (
+            cloudDirtyRef.current &&
+            isOnlineRef.current &&
+            !cloudSyncPermDeniedRef.current &&
+            !cloudSyncQuotaPausedRef.current &&
+            !updateAvailableRef.current
+          ) {
+            cloudDirtyRef.current = false;
+            cloudRetryTailTimerRef.current = window.setTimeout(() => {
+              cloudRetryTailTimerRef.current = null;
+              if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+                void performCloudSync(false);
+              }
+            }, SYNC_TAIL_DRAIN_MS);
+          }
         }
       }
     },
-    [addToast, handleKicked, saveLocal],
+    [addToast, handleKicked, refreshCloudStatus, saveLocal],
   );
 
   const scheduleCloudSync = useCallback(
-    (delayMs = 10_000) => {
+    (delayMs = SYNC_COALESCE_DEBOUNCE_MS) => {
+      mutationSeqRef.current += 1;
       pendingDirtyRef.current = true;
+      syncErrorRef.current = { active: false, label: '' };
       const capturedUid = uidRef.current;
       const capturedSeq = authSeqRef.current;
       if (
@@ -835,20 +978,58 @@ export default function App() {
         cloudSyncPermDeniedRef.current ||
         cloudSyncQuotaPausedRef.current
       ) {
+        if (capturedUid) refreshCloudStatus();
+        return;
+      }
+      if (!isOnlineRef.current || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
+        isOnlineRef.current = false;
+        refreshCloudStatus();
         return;
       }
       if (syncRetryCountRef.current > 0) {
         syncRetryCountRef.current = 0;
       }
+      if (syncRetryTimerRef.current) {
+        window.clearTimeout(syncRetryTimerRef.current);
+        syncRetryTimerRef.current = null;
+      }
+      if (cloudSyncBusyRef.current) {
+        cloudDirtyRef.current = true;
+        refreshCloudStatus();
+        return;
+      }
+
+      const now = Date.now();
+      const { delayMs: coalescedDelay, nextFirstDirtyAtMs } = computeCoalescedDelayMs(
+        { firstDirtyAtMs: firstDirtyAtRef.current, scheduledAtMs: cloudScheduledFireAtRef.current },
+        delayMs,
+        now,
+        SYNC_MAX_WAIT_MS,
+      );
+      firstDirtyAtRef.current = nextFirstDirtyAtMs;
+      const targetFireAt = now + coalescedDelay;
+
+      if (
+        cloudSyncTimerRef.current !== null &&
+        cloudScheduledFireAtRef.current !== null &&
+        cloudScheduledFireAtRef.current <= targetFireAt
+      ) {
+        refreshCloudStatus();
+        return;
+      }
+
       if (cloudSyncTimerRef.current) window.clearTimeout(cloudSyncTimerRef.current);
+      cloudScheduledFireAtRef.current = targetFireAt;
+      refreshCloudStatus();
       cloudSyncTimerRef.current = window.setTimeout(() => {
         cloudSyncTimerRef.current = null;
+        cloudScheduledFireAtRef.current = null;
         if (isSessionStillValid(uidRef.current, capturedUid, authSeqRef.current, capturedSeq)) {
           void performCloudSync(false);
         }
-      }, delayMs);
+      }, coalescedDelay);
     },
-    [performCloudSync],
+    [performCloudSync, refreshCloudStatus],
   );
 
   // Build Welcome / Daily Streak modal from pure daily & offline check outcome
@@ -895,103 +1076,118 @@ export default function App() {
     return null;
   }, []);
 
-  const resetSessionStateForAccountSwitch = useCallback((nextUid: string | null) => {
-    if (cloudSyncTimerRef.current) {
-      window.clearTimeout(cloudSyncTimerRef.current);
-      cloudSyncTimerRef.current = null;
-    }
-    if (syncRetryTimerRef.current) {
-      window.clearTimeout(syncRetryTimerRef.current);
-      syncRetryTimerRef.current = null;
-    }
-    if (localSaveTimerRef.current) {
-      window.clearTimeout(localSaveTimerRef.current);
-      localSaveTimerRef.current = null;
-    }
-    if (cloudRetryTailTimerRef.current) {
-      window.clearTimeout(cloudRetryTailTimerRef.current);
-      cloudRetryTailTimerRef.current = null;
-    }
+  const resetSessionStateForAccountSwitch = useCallback(
+    (nextUid: string | null) => {
+      if (cloudSyncTimerRef.current) {
+        window.clearTimeout(cloudSyncTimerRef.current);
+        cloudSyncTimerRef.current = null;
+      }
+      if (syncRetryTimerRef.current) {
+        window.clearTimeout(syncRetryTimerRef.current);
+        syncRetryTimerRef.current = null;
+      }
+      if (localSaveTimerRef.current) {
+        window.clearTimeout(localSaveTimerRef.current);
+        localSaveTimerRef.current = null;
+      }
+      if (cloudRetryTailTimerRef.current) {
+        window.clearTimeout(cloudRetryTailTimerRef.current);
+        cloudRetryTailTimerRef.current = null;
+      }
+      if (provLbSyncTimerRef.current) {
+        window.clearTimeout(provLbSyncTimerRef.current);
+        provLbSyncTimerRef.current = null;
+      }
 
-    cloudLoadingRef.current = false;
-    kickedRef.current = false;
-    setKicked(false);
-    walletRevRef.current = 0;
-    expectedWalletRevRef.current = null;
-    lastSyncedAtRef.current = 0;
-    cloudSyncBusyRef.current = false;
-    cloudDirtyRef.current = false;
-    pendingDirtyRef.current = false;
-    syncRetryCountRef.current = 0;
-    cloudSyncPermDeniedRef.current = false;
-    cloudSyncQuotaPausedRef.current = false;
-    quotaPausedAtRef.current = 0;
-    permWarnShownRef.current = false;
-    completedTradesRef.current = 0;
-    settlingTradesRef.current = false;
-    lastSettledTradeCheckRef.current = 0;
-    serverTimeVerifiedRef.current = false;
-    serverOffsetMsRef.current = 0;
-    lastHeartbeatSuccessAtRef.current = 0;
-    lastHeartbeatAttemptAtRef.current = 0;
-    ownLastSeenMsRef.current = 0;
-    leaderboardRawRef.current = [];
-    projBusyRef.current.clear();
-    projPayBusyRef.current.clear();
-    projClaimedLocalRef.current.clear();
-    projCreatingRef.current = false;
-    justCreatedProjIdsRef.current.clear();
-    projStartedLocalAtRef.current = {};
-    projLiveRef.current = {};
-    projLastSyncRef.current = {};
-    projPrevTickMsRef.current = {};
-    markingNotifIdsRef.current.clear();
-    provUnlockBusyRef.current = false;
-    provAllocBusyRef.current = false;
-    subBuyBusyRef.current = false;
-    lastExpiredSubKeyRef.current = '';
-    lastProvLbSyncAtRef.current = 0;
-    lastProvLbHashRef.current = '';
-    provLbCacheRef.current = {};
-    cloudReadyRef.current = false;
-    needsOnboardingRef.current = false;
+      cloudLoadingRef.current = false;
+      kickedRef.current = false;
+      setKicked(false);
+      walletRevRef.current = 0;
+      expectedWalletRevRef.current = null;
+      firstDirtyAtRef.current = null;
+      cloudScheduledFireAtRef.current = null;
+      mutationSeqRef.current = 0;
+      lastSyncedAtRef.current = 0;
+      lastPubMetricsAtRef.current = 0;
+      lastPubMetricsHashRef.current = '';
+      lastSavedSaveHashRef.current = '';
+      cloudSyncBusyRef.current = false;
+      cloudDirtyRef.current = false;
+      pendingDirtyRef.current = false;
+      provLbPendingRef.current = false;
+      syncRetryCountRef.current = 0;
+      cloudSyncPermDeniedRef.current = false;
+      cloudSyncQuotaPausedRef.current = false;
+      quotaPausedAtRef.current = 0;
+      permWarnShownRef.current = false;
+      syncErrorRef.current = { active: false, label: '' };
+      completedTradesRef.current = 0;
+      settlingTradesRef.current = false;
+      lastSettledTradeCheckRef.current = 0;
+      serverTimeVerifiedRef.current = false;
+      serverOffsetMsRef.current = 0;
+      lastHeartbeatSuccessAtRef.current = 0;
+      lastHeartbeatAttemptAtRef.current = 0;
+      ownLastSeenMsRef.current = 0;
+      leaderboardRawRef.current = [];
+      projBusyRef.current.clear();
+      projPayBusyRef.current.clear();
+      projClaimedLocalRef.current.clear();
+      projCreatingRef.current = false;
+      justCreatedProjIdsRef.current.clear();
+      projStartedLocalAtRef.current = {};
+      projLiveRef.current = {};
+      projLastSyncRef.current = {};
+      projPrevTickMsRef.current = {};
+      markingNotifIdsRef.current.clear();
+      provUnlockBusyRef.current = false;
+      provAllocBusyRef.current = false;
+      subBuyBusyRef.current = false;
+      lastExpiredSubKeyRef.current = '';
+      lastProvLbSyncAtRef.current = 0;
+      lastProvLbHashRef.current = '';
+      provLbCacheRef.current = {};
+      cloudReadyRef.current = false;
+      needsOnboardingRef.current = false;
 
-    setServerOffsetMs(0);
-    setCloudReady(false);
-    setNeedsOnboarding(false);
-    setPubProfile(null);
-    setTrades([]);
-    setNotifications([]);
-    setProjects([]);
-    setLeaderboard([]);
-    setLbLoaded(false);
-    setProvLbEntries([]);
-    setProvLbLoading(false);
-    setSelectedProvinceId('prov_1');
-    setSentToday(0);
-    setLiveProjectProgress({});
-    setGlobalChat([]);
-    setDmMessages([]);
-    setDmRecipient(null);
-    setRecentDms([]);
-    setSentDmContacts([]);
-    setDialog(null);
-    setGiftModal(null);
-    setProfileView(null);
-    setNotifsOpen(false);
-    setSettingsOpen(false);
-    setCloudStatus({ cls: '', text: 'Saved' });
+      setServerOffsetMs(0);
+      setCloudReady(false);
+      setNeedsOnboarding(false);
+      setPubProfile(null);
+      setTrades([]);
+      setNotifications([]);
+      setProjects([]);
+      setLeaderboard([]);
+      setLbLoaded(false);
+      setProvLbEntries([]);
+      setProvLbLoading(false);
+      setSelectedProvinceId('prov_1');
+      setSentToday(0);
+      setLiveProjectProgress({});
+      setGlobalChat([]);
+      setDmMessages([]);
+      setDmRecipient(null);
+      setRecentDms([]);
+      setSentDmContacts([]);
+      setDialog(null);
+      setGiftModal(null);
+      setProfileView(null);
+      setNotifsOpen(false);
+      setSettingsOpen(false);
+      refreshCloudStatus();
 
-    if (nextUid === null) {
-      const offlineState = readAccountSave(null) || freshState();
-      stateRef.current = offlineState;
-      setState(offlineState);
-    } else {
-      const clean = freshState();
-      stateRef.current = clean;
-      setState(clean);
-    }
-  }, []);
+      if (nextUid === null) {
+        const offlineState = readAccountSave(null) || freshState();
+        stateRef.current = offlineState;
+        setState(offlineState);
+      } else {
+        const clean = freshState();
+        stateRef.current = clean;
+        setState(clean);
+      }
+    },
+    [refreshCloudStatus],
+  );
 
   const loadCloudSession = useCallback(
     async (u: User, seq: number) => {
@@ -1003,8 +1199,10 @@ export default function App() {
       quotaPausedAtRef.current = 0;
       permWarnShownRef.current = false;
       syncRetryCountRef.current = 0;
+      syncErrorRef.current = { active: false, label: '' };
       setGateOpen(false);
       setAuthMsg('');
+      refreshCloudStatus();
       try {
         // Claim single session lock on sign-in
         await setDoc(doc(db, 'players', u.uid, 'private', 'session'), {
@@ -1031,10 +1229,12 @@ export default function App() {
           setState(clean);
           needsOnboardingRef.current = true;
           cloudReadyRef.current = false;
+          cloudLoadingRef.current = false;
           setNeedsOnboarding(true);
           setCloudReady(false);
           authResolvedRef.current = true;
           setAuthResolved(true);
+          refreshCloudStatus();
           return;
         }
 
@@ -1096,6 +1296,19 @@ export default function App() {
           if (entryDlg) setDialog(entryDlg);
         }
 
+        const srvNow = Date.now() + serverOffsetMsRef.current;
+        if (!pendingDirtyRef.current) {
+          lastSyncedAtRef.current = Date.now();
+          lastSavedSaveHashRef.current = buildMeaningfulSaveFingerprint(finalState);
+        }
+        lastPubMetricsAtRef.current = Date.now();
+        lastPubMetricsHashRef.current = buildPublicMetricsFingerprint(
+          finalState,
+          pData.stats,
+          completedTradesRef.current,
+          srvNow,
+        );
+
         stateRef.current = finalState;
         setState(finalState);
         needsOnboardingRef.current = false;
@@ -1106,6 +1319,7 @@ export default function App() {
         setAuthResolved(true);
         authResolvedRef.current = true;
         writeAccountSave(u.uid, finalState);
+        refreshCloudStatus();
 
         if ((finalState.provinces?.length || 0) > 0) {
           lastProvLbSyncAtRef.current = Date.now();
@@ -1114,37 +1328,61 @@ export default function App() {
             u.uid,
             pData.username || 'Player',
             finalState.country?.[0] || 'PK',
-            Date.now() + serverOffsetMsRef.current,
+            srvNow,
           );
           lastProvLbHashRef.current = buildProvinceLeaderboardFingerprint(lbEntries);
           void syncProvinceLeaderboardEntries(lbEntries, u.uid).catch(() => null);
         }
       } catch (err) {
         if (isSessionStillValid(uidRef.current, u.uid, authSeqRef.current, seq)) {
+          const classified = classifySyncError(
+            err,
+            typeof navigator === 'undefined' ? true : navigator.onLine !== false,
+          );
+          if (classified.kind === 'offline') {
+            isOnlineRef.current = false;
+            syncErrorRef.current = { active: false, label: '' };
+          } else {
+            syncErrorRef.current = { active: true, label: 'Sync Error' };
+          }
           setAuthResolved(true);
           authResolvedRef.current = true;
-          setCloudStatus({ cls: 'warn', text: 'Cloud load pending' });
+          refreshCloudStatus();
           recordFirestoreError(err, OperationType.GET, `players/${u.uid}`);
           addToast(formatFirebaseError(err));
         }
       } finally {
         if (isSessionStillValid(uidRef.current, u.uid, authSeqRef.current, seq)) {
           cloudLoadingRef.current = false;
+          refreshCloudStatus();
         }
       }
     },
-    [addToast, buildEntryDialog, updateServerOffset],
+    [addToast, buildEntryDialog, refreshCloudStatus, updateServerOffset],
   );
 
   // Automatically recover cloud sync, heartbeat, and presence listeners on connectivity or tab resume
   useEffect(() => {
     const onOffline = () => {
-      if (uidRef.current && cloudReadyRef.current) {
-        setCloudStatus({ cls: 'warn', text: 'Offline (local)' });
+      isOnlineRef.current = false;
+      if (syncRetryTimerRef.current) {
+        window.clearTimeout(syncRetryTimerRef.current);
+        syncRetryTimerRef.current = null;
       }
+      if (cloudRetryTailTimerRef.current) {
+        window.clearTimeout(cloudRetryTailTimerRef.current);
+        cloudRetryTailTimerRef.current = null;
+      }
+      refreshCloudStatus();
     };
     const onOnline = () => {
-      if (updateAvailableRef.current) return;
+      isOnlineRef.current = true;
+      syncRetryCountRef.current = 0;
+      syncErrorRef.current = { active: false, label: '' };
+      if (updateAvailableRef.current) {
+        refreshCloudStatus();
+        return;
+      }
       if (
         userRef.current &&
         !cloudReadyRef.current &&
@@ -1152,6 +1390,7 @@ export default function App() {
         !cloudLoadingRef.current &&
         !kickedRef.current
       ) {
+        refreshCloudStatus();
         void loadCloudSession(userRef.current, ++authSeqRef.current);
         return;
       }
@@ -1162,17 +1401,21 @@ export default function App() {
         !needsOnboardingRef.current &&
         !cloudSyncPermDeniedRef.current
       ) {
-        syncRetryCountRef.current = 0;
         if (cloudSyncQuotaPausedRef.current && Date.now() - quotaPausedAtRef.current >= 60_000) {
           cloudSyncQuotaPausedRef.current = false;
         }
         setPresenceEpoch((n) => n + 1);
-        if (pendingDirtyRef.current && !cloudSyncQuotaPausedRef.current) {
+        refreshCloudStatus();
+        if ((pendingDirtyRef.current || cloudDirtyRef.current) && !cloudSyncQuotaPausedRef.current) {
           void performCloudSync(false);
         } else if (!cloudSyncQuotaPausedRef.current) {
-          setCloudStatus({ cls: 'ok', text: 'Saved' });
           void triggerHeartbeat();
         }
+        if (provLbPendingRef.current && !cloudSyncQuotaPausedRef.current) {
+          scheduleProvinceLbSync(true);
+        }
+      } else {
+        refreshCloudStatus();
       }
     };
     document.body.classList.toggle('doc-hidden', document.visibilityState === 'hidden');
@@ -1182,14 +1425,14 @@ export default function App() {
         saveLocal(stateRef.current, uidRef.current);
         if (
           !updateAvailableRef.current &&
+          isOnlineRef.current &&
           uidRef.current &&
           cloudReadyRef.current &&
           !kickedRef.current &&
           !needsOnboardingRef.current &&
           !cloudSyncPermDeniedRef.current &&
           !cloudSyncQuotaPausedRef.current &&
-          pendingDirtyRef.current &&
-          Date.now() - lastSyncedAtRef.current >= 5000
+          (pendingDirtyRef.current || cloudDirtyRef.current)
         ) {
           void performCloudSync(false);
         }
@@ -1201,7 +1444,11 @@ export default function App() {
         !kickedRef.current &&
         !needsOnboardingRef.current
       ) {
-        if (isHeartbeatDue(lastHeartbeatSuccessAtRef.current, lastHeartbeatAttemptAtRef.current, Date.now(), 60_000, 15_000)) {
+        if (pendingDirtyRef.current && isOnlineRef.current && !cloudSyncQuotaPausedRef.current) {
+          void performCloudSync(false);
+        } else if (
+          isHeartbeatDue(lastHeartbeatSuccessAtRef.current, lastHeartbeatAttemptAtRef.current, Date.now(), 60_000, 15_000)
+        ) {
           void triggerHeartbeat();
         }
       }
@@ -1215,7 +1462,7 @@ export default function App() {
       window.removeEventListener('online', onOnline);
       document.removeEventListener('visibilitychange', onVisChange);
     };
-  }, [loadCloudSession, performCloudSync, saveLocal, triggerHeartbeat]);
+  }, [loadCloudSession, performCloudSync, refreshCloudStatus, saveLocal, scheduleProvinceLbSync, triggerHeartbeat]);
 
   // Firebase bootstrap & auth listener
   useEffect(() => {
@@ -1292,7 +1539,7 @@ export default function App() {
   // Trigger initial sync after sign-in if daily/offline rewards updated local state
   useEffect(() => {
     if (uid && cloudReady && !needsOnboarding && !kicked && pendingDirtyRef.current) {
-      scheduleCloudSync(800);
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
     }
   }, [uid, cloudReady, needsOnboarding, kicked, scheduleCloudSync]);
 
@@ -1304,11 +1551,12 @@ export default function App() {
       const code = (err as { code?: string })?.code || '';
       if (/permission-denied|Missing or insufficient permissions/i.test(code + raw) && !permWarnShownRef.current) {
         permWarnShownRef.current = true;
+        cloudSyncPermDeniedRef.current = true;
         addToast(formatFirebaseError(err));
-        setCloudStatus({ cls: 'bad', text: 'Rules / Auth error' });
+        refreshCloudStatus();
       }
     },
-    [addToast],
+    [addToast, refreshCloudStatus],
   );
 
   // Realtime Firestore listeners when signed in & onboarded
@@ -1858,17 +2106,19 @@ export default function App() {
       if (shouldNotifyExpiredSub && expiredSubTier) {
         const expDef = SUBSCRIPTIONS.find((x) => x.id === expiredSubTier.tier);
         addToast(`${expDef ? expDef.n : 'Subscription'} expired — you can renew anytime in Shop.`);
-        scheduleCloudSync(2_000);
+        scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       }
 
-      if (tickCountRef.current % 8 === 0) {
+      if (tickCountRef.current % 6 === 0) {
         scheduleSaveLocal();
       }
 
       if (passiveEvent?.kind === 'bonus') {
         addToast(`Trade Windfall! +₨ ${formatNumber(passiveEvent.amt)}`);
+        scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       } else if (passiveEvent?.kind === 'fine') {
         addToast(`Grid Maintenance Fee: −₨ ${formatNumber(passiveEvent.amt)}`);
+        scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       } else if (triggerDecisionId) {
         const dec = EXEC_DECISIONS.find((d) => d.id === triggerDecisionId);
         if (dec) {
@@ -1916,7 +2166,7 @@ export default function App() {
                     const recheck = resolveExecutiveDecision(prev, dec.id, 0, tradeTier, nowExec);
                     return recheck.ok ? recheck.state : prev;
                   });
-                  scheduleCloudSync(800);
+                  scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
                   addToast(res.summary);
                   setDialog(null);
                 },
@@ -1937,7 +2187,7 @@ export default function App() {
                       const recheck = resolveExecutiveDecision(prev, dec.id, 1, tradeTier, nowExec);
                       return recheck.ok ? recheck.state : prev;
                     });
-                    scheduleCloudSync(800);
+                    scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
                     addToast(res.summary);
                   }
                   setDialog(null);
@@ -1948,23 +2198,73 @@ export default function App() {
         }
       }
 
-      // Dirty-aware cloud sync every 120s when tab is visible (Spark Free Plan friendly)
+      // Near-real-time Spark-optimized passive sync:
+      // 1. Lightweight 1-write public metrics update (~3.5s) when cash/GDP/rank/sub changed (0 extra reads).
+      // 2. Coalesced full save flush (~15s) ONLY if meaningful save state changed or dirty.
+      // 3. Fingerprint-gated province leaderboard sync (~3s) when province metrics cross delta.
+      const capturedTickUid = uidRef.current;
+      const capturedTickSeq = authSeqRef.current;
       if (
-        tickCountRef.current % 120 === 0 &&
         !document.hidden &&
-        uidRef.current &&
+        isOnlineRef.current &&
+        capturedTickUid &&
         cloudReadyRef.current &&
         !needsOnboardingRef.current &&
+        !kickedRef.current &&
         !cloudSyncPermDeniedRef.current &&
-        !cloudSyncQuotaPausedRef.current &&
-        (pendingDirtyRef.current || (isUserActive && now - lastSyncedAtRef.current >= 120_000))
+        !cloudSyncQuotaPausedRef.current
       ) {
-        syncRetryCountRef.current = 0;
-        void performCloudSync(false);
-        if (now - lastProvLbSyncAtRef.current >= 120_000 && (stateRef.current.provinces?.length || 0) > 0) {
+        if (
+          !cloudSyncBusyRef.current &&
+          !pendingDirtyRef.current &&
+          now - lastPubMetricsAtRef.current >= PUBLIC_METRICS_FAST_INTERVAL_MS
+        ) {
+          const nextPubHash = buildPublicMetricsFingerprint(
+            stateRef.current,
+            pubProfileRef.current?.stats,
+            completedTradesRef.current,
+            nowSrv,
+          );
+          if (nextPubHash !== lastPubMetricsHashRef.current) {
+            lastPubMetricsAtRef.current = now;
+            lastPubMetricsHashRef.current = nextPubHash;
+            void syncPublicProfileMetrics({
+              expectedUid: capturedTickUid,
+              state: stateRef.current,
+              pubStats: pubProfileRef.current?.stats,
+              nowSrvMs: nowSrv,
+            })
+              .then(() => {
+                if (isSessionStillValid(uidRef.current, capturedTickUid, authSeqRef.current, capturedTickSeq)) {
+                  lastHeartbeatSuccessAtRef.current = Date.now();
+                }
+              })
+              .catch(() => {
+                if (isSessionStillValid(uidRef.current, capturedTickUid, authSeqRef.current, capturedTickSeq)) {
+                  lastPubMetricsHashRef.current = '';
+                }
+              });
+          }
+        }
+
+        if (
+          !cloudSyncBusyRef.current &&
+          now - lastSyncedAtRef.current >= PASSIVE_FULL_SAVE_INTERVAL_MS
+        ) {
+          const nextSaveHash = buildMeaningfulSaveFingerprint(stateRef.current);
+          if (pendingDirtyRef.current || (isUserActive && nextSaveHash !== lastSavedSaveHashRef.current)) {
+            syncRetryCountRef.current = 0;
+            void performCloudSync(false);
+          }
+        }
+
+        if (
+          (stateRef.current.provinces?.length || 0) > 0 &&
+          now - lastProvLbSyncAtRef.current >= PROV_LB_MIN_INTERVAL_MS
+        ) {
           const entries = buildProvinceLeaderboardEntries(
             stateRef.current,
-            uidRef.current,
+            capturedTickUid,
             pubProfileRef.current?.username || 'Player',
             stateRef.current.country?.[0] || 'PK',
             nowSrv,
@@ -1973,7 +2273,13 @@ export default function App() {
           if (nextHash && nextHash !== lastProvLbHashRef.current) {
             lastProvLbSyncAtRef.current = now;
             lastProvLbHashRef.current = nextHash;
-            void syncProvinceLeaderboardEntries(entries, uidRef.current).catch(() => null);
+            provLbPendingRef.current = false;
+            void syncProvinceLeaderboardEntries(entries, capturedTickUid).catch(() => {
+              if (isSessionStillValid(uidRef.current, capturedTickUid, authSeqRef.current, capturedTickSeq)) {
+                provLbPendingRef.current = true;
+                lastProvLbHashRef.current = '';
+              }
+            });
           }
         }
       }
@@ -2023,12 +2329,12 @@ export default function App() {
             if (code === 'resource-exhausted') {
               cloudSyncQuotaPausedRef.current = true;
               quotaPausedAtRef.current = Date.now();
-              setCloudStatus({ cls: 'bad', text: 'Quota paused' });
+              refreshCloudStatus();
               return;
             }
             if (code === 'permission-denied') {
               cloudSyncPermDeniedRef.current = true;
-              setCloudStatus({ cls: 'bad', text: 'Rules blocked sync' });
+              refreshCloudStatus();
             }
             if (code !== 'aborted') {
               recordFirestoreError(err, OperationType.UPDATE, `players/${capturedProjUid}/projects/${pid}`);
@@ -2171,13 +2477,14 @@ export default function App() {
       saveLocal,
       scheduleSaveLocal,
       performCloudSync,
+      refreshCloudStatus,
       scheduleCloudSync,
       handleKicked,
     ]);
 
   // Helper to commit state + persist + sync (keeps setState updater pure)
   const updateState = useCallback(
-    (updater: (prev: GameState) => GameState, syncDelay = 10_000) => {
+    (updater: (prev: GameState) => GameState, syncDelay = SYNC_COALESCE_DEBOUNCE_MS) => {
       if (otherTabLockedRef.current || kickedRef.current || updateAvailableRef.current) return;
       const targetUid = uidRef.current;
       const immediateNext = updater(stateRef.current);
@@ -2215,7 +2522,7 @@ export default function App() {
         const recheck = applyCollectTax(prev, tradeTier, nowSrv, makeRng());
         return recheck.ok ? recheck.state : prev;
       });
-      scheduleCloudSync(10_000);
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
 
       if (res.bonusApplied) {
         addToast(`Tax Surge added +₨ ${formatNumber(res.bonusAmount)}!`);
@@ -2240,7 +2547,7 @@ export default function App() {
       const recheck = applyActivateGemBoost(prev);
       return recheck.ok ? recheck.state : prev;
     });
-    scheduleCloudSync(10_000);
+    scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
     addToast('×2 Boost active for 30s!');
   }, [addToast, saveLocal, scheduleCloudSync]);
 
@@ -2258,7 +2565,7 @@ export default function App() {
       const bonus = Math.max(5, Math.floor(Math.max(1, inc.net) * 2));
       playSfx('tap', !!cur.set.sfx);
       setBurstKey((k) => k + 1);
-      updateState((prev) => ({ ...prev, cash: Math.min(1e13, prev.cash + bonus) }), 12_000);
+      updateState((prev) => ({ ...prev, cash: Math.min(1e13, prev.cash + bonus) }), SYNC_COALESCE_DEBOUNCE_MS);
       spawnFloat(
         `+₨ ${formatNumber(bonus)}`,
         clientX ?? window.innerWidth / 2,
@@ -2289,7 +2596,7 @@ export default function App() {
         const recheck = applyBuyBuilding(prev, id, qty, nowSrv);
         return recheck.ok ? recheck.state : prev;
       });
-      scheduleCloudSync(10_000);
+      scheduleCloudSync(SYNC_COALESCE_DEBOUNCE_MS);
     },
     [spawnFloat, saveLocal, scheduleCloudSync],
   );
@@ -2306,7 +2613,7 @@ export default function App() {
         const recheck = applyFixInfra(prev, key, full, nowSrv);
         return recheck.ok ? recheck.state : prev;
       });
-      scheduleCloudSync(10_000);
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       addToast('Infrastructure repaired!');
     },
     [addToast, saveLocal, scheduleCloudSync],
@@ -2324,7 +2631,7 @@ export default function App() {
         const recheck = applyUpgradeBuilding(prev, id, nowSrv);
         return recheck.ok ? recheck.state : prev;
       });
-      scheduleCloudSync(10_000);
+      scheduleCloudSync(SYNC_COALESCE_DEBOUNCE_MS);
       addToast('Building upgraded!');
     },
     [addToast, saveLocal, scheduleCloudSync],
@@ -2349,7 +2656,7 @@ export default function App() {
         const recheck = applyUnlockTech(prev, techId);
         return recheck.ok ? recheck.state : prev;
       });
-      scheduleCloudSync(5_000);
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       addToast(`Researched ${tDef.n}!`);
     },
     [addToast, spawnFloat, saveLocal, scheduleCloudSync],
@@ -2376,7 +2683,7 @@ export default function App() {
       }
       projCreatingRef.current = true;
       // Deduct optimistically so the same cash cannot be concurrently spent while awaiting Firestore
-      updateState((prev) => ({ ...prev, cash: Math.max(0, prev.cash - stageCost) }), 3_000);
+      updateState((prev) => ({ ...prev, cash: Math.max(0, prev.cash - stageCost) }), SYNC_IMMEDIATE_DELAY_MS);
       try {
         await createGovProject(currentUid, type, (newId) => {
           if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
@@ -2389,7 +2696,7 @@ export default function App() {
         addToast(`Started ${def.n}!`);
       } catch (err) {
         if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) return;
-        updateState((prev) => ({ ...prev, cash: Math.min(1e13, prev.cash + stageCost) }), 3_000);
+        updateState((prev) => ({ ...prev, cash: Math.min(1e13, prev.cash + stageCost) }), SYNC_IMMEDIATE_DELAY_MS);
         recordFirestoreError(err, OperationType.CREATE, `players/${currentUid}/projects`);
         addToast(formatFirebaseError(err));
       } finally {
@@ -2414,7 +2721,7 @@ export default function App() {
         return;
       }
       projPayBusyRef.current.add(projectId);
-      updateState((prev) => ({ ...prev, cash: Math.max(0, prev.cash - stageCost) }), 3_000);
+      updateState((prev) => ({ ...prev, cash: Math.max(0, prev.cash - stageCost) }), SYNC_IMMEDIATE_DELAY_MS);
       try {
         await payGovProjectStage(currentUid, projectId, proj.paid);
         if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) return;
@@ -2422,7 +2729,7 @@ export default function App() {
         addToast(`Paid stage ${proj.paid + 1}/${PROJECT_STAGES}`);
       } catch (err) {
         if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) return;
-        updateState((prev) => ({ ...prev, cash: Math.min(1e13, prev.cash + stageCost) }), 3_000);
+        updateState((prev) => ({ ...prev, cash: Math.min(1e13, prev.cash + stageCost) }), SYNC_IMMEDIATE_DELAY_MS);
         recordFirestoreError(err, OperationType.UPDATE, `players/${currentUid}/projects/${projectId}`);
         addToast(formatFirebaseError(err));
       } finally {
@@ -2446,7 +2753,7 @@ export default function App() {
         return { ...prev, [key]: clamped };
       });
       scheduleSaveLocal();
-      scheduleCloudSync(10_000);
+      scheduleCloudSync(SYNC_COALESCE_DEBOUNCE_MS);
     },
     [scheduleSaveLocal, scheduleCloudSync],
   );
@@ -2454,7 +2761,7 @@ export default function App() {
   const handleApplyPreset = useCallback(
     (presetId: 'balanced' | 'revenue' | 'welfare') => {
       playSfx('buy', !!stateRef.current.set.sfx);
-      updateState((prev) => applyPolicyPreset(prev, presetId), 8_000);
+      updateState((prev) => applyPolicyPreset(prev, presetId), SYNC_COALESCE_DEBOUNCE_MS);
       const label = presetId === 'balanced' ? 'Balanced Growth' : presetId === 'revenue' ? 'High Revenue' : 'Citizen Bliss';
       addToast(`Policy preset applied: ${label}`);
     },
@@ -2473,7 +2780,7 @@ export default function App() {
         const recheck = applyChangeGov(prev, govId, nowSrv);
         return recheck.ok ? recheck.state : prev;
       });
-      scheduleCloudSync(8_000);
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       addToast(`Switched government to ${res.govName}!`);
     },
     [addToast, saveLocal, scheduleCloudSync],
@@ -2495,7 +2802,7 @@ export default function App() {
         const recheck = fuseSticker(prev, stickerId, () => roll);
         return recheck.ok ? recheck.state : prev;
       });
-      scheduleCloudSync(8_000);
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       setDialog({
         title: 'Sticker Fused!',
         body: (
@@ -2536,7 +2843,7 @@ export default function App() {
         const recheck = buyStickerCrate(prev, kind, nowSrv, makeRng());
         return recheck.ok ? recheck.state : prev;
       });
-      scheduleCloudSync(8_000);
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       setDialog({
         title: kind === 'gems' ? 'Royal Crate Opened!' : 'Standard Crate Opened!',
         body: (
@@ -2575,7 +2882,7 @@ export default function App() {
         const recheck = applyClaimQuest(prev, questId, today, rankPos);
         return recheck.ok ? recheck.state : prev;
       });
-      scheduleCloudSync(8_000);
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
     },
     [spawnFloat, saveLocal, scheduleCloudSync],
   );
@@ -2597,7 +2904,7 @@ export default function App() {
         const recheck = claimMilestone(prev, milestoneId);
         return recheck.ok ? recheck.state : prev;
       });
-      scheduleCloudSync(6_000);
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       addToast(`Milestone completed! +${res.gemsAdded} Gems`);
     },
     [addToast, spawnFloat, saveLocal, scheduleCloudSync],
@@ -2621,7 +2928,7 @@ export default function App() {
         const recheck = applyBuyRank(prev, rankId);
         return recheck.ok ? recheck.state : prev;
       });
-      scheduleCloudSync(2_000);
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       addToast(`Promoted to ${rk.n}!`);
     },
     [addToast, spawnFloat, saveLocal, scheduleCloudSync],
@@ -2700,10 +3007,12 @@ export default function App() {
                   const recheck = applyBuySubscription(prev, subDef, execNow);
                   return recheck.ok ? recheck.state : prev;
                 });
+                mutationSeqRef.current += 1;
+                pendingDirtyRef.current = true;
                 if (uidRef.current && cloudReadyRef.current) {
                   void performCloudSync(true);
                 } else {
-                  scheduleCloudSync(1_000);
+                  scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
                 }
                 addToast(
                   `${subDef.n} (${subDef.durationLabel}) activated for ₨ ${formatNumber(paidCost)} Coins!`,
@@ -2747,7 +3056,7 @@ export default function App() {
         const recheck = claimSubscriptionDaily(prev, today, nowSrv);
         return recheck.ok ? recheck.state : prev;
       });
-      scheduleCloudSync(5_000);
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       addToast(
         `Subscription stipend: +₨ ${formatNumber(res.cashAdded)}${res.gemsAdded > 0 ? ` + ${res.gemsAdded} Gems` : ''}`,
       );
@@ -2775,13 +3084,13 @@ export default function App() {
         const recheck = applyBuyBooster(prev, b, nowSrv);
         return recheck.ok ? recheck.state : prev;
       });
-      scheduleCloudSync(8_000);
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       addToast(`${b.n} activated!`);
     },
     [addToast, spawnFloat, saveLocal, scheduleCloudSync],
   );
 
-  // Province Management Handlers & Leaderboard Fetcher
+  // Province Management Handlers & Scoped Real-Time Leaderboard Listener
   const refreshProvLeaderboard = useCallback(
     async (category: ProvinceLeaderboardCategory, force = false) => {
       const currentUid = uidRef.current;
@@ -2791,7 +3100,7 @@ export default function App() {
         return;
       }
       const cached = provLbCacheRef.current[category];
-      if (!force && cached && Date.now() - cached.fetchedAt < 20_000) {
+      if (!force && cached && Date.now() - cached.fetchedAt < 10_000) {
         setProvLbEntries(cached.entries);
         return;
       }
@@ -2815,11 +3124,46 @@ export default function App() {
     [],
   );
 
+  // Scoped real-time onSnapshot listener: active ONLY while viewing Provinces -> Global Ranks
   useEffect(() => {
-    if (tab === 'provinces' && provincesSubTab === 'leaderboard' && uid && cloudReady) {
-      void refreshProvLeaderboard(provLbCat, false);
+    if (
+      tab !== 'provinces' ||
+      provincesSubTab !== 'leaderboard' ||
+      !uid ||
+      !cloudReady ||
+      needsOnboarding ||
+      kicked ||
+      !db
+    ) {
+      return;
     }
-  }, [tab, provincesSubTab, provLbCat, uid, cloudReady, refreshProvLeaderboard]);
+    const cached = provLbCacheRef.current[provLbCat];
+    if (cached) {
+      setProvLbEntries(cached.entries);
+    } else {
+      setProvLbLoading(true);
+    }
+
+    const q = buildQueryHelpers().provinceLeaderboardQuery(provLbCat, 100);
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const mapped = snap.docs.map((d) =>
+          normalizeProvinceLeaderboardDoc(d.id, d.data({ serverTimestamps: 'estimate' }) as Record<string, unknown>),
+        );
+        const filtered = selectBestProvinceLeaderboardEntries(mapped, provLbCat);
+        provLbCacheRef.current[provLbCat] = { entries: filtered, fetchedAt: Date.now() };
+        setProvLbEntries(filtered);
+        setProvLbLoading(false);
+      },
+      (err) => {
+        setProvLbLoading(false);
+        handleSnapshotError('provinceLeaderboard', err);
+      },
+    );
+
+    return () => unsub();
+  }, [tab, provincesSubTab, provLbCat, uid, cloudReady, needsOnboarding, kicked, handleSnapshotError]);
 
   const handleUnlockProvince = useCallback(
     async (input: ProvinceCustomizationInput): Promise<boolean> => {
@@ -2853,6 +3197,10 @@ export default function App() {
       try {
         if (currentUid && cloudReadyRef.current && !needsOnboardingRef.current && !kickedRef.current) {
           if (!cloudSyncPermDeniedRef.current && !cloudSyncQuotaPausedRef.current) {
+            mutationSeqRef.current += 1;
+            pendingDirtyRef.current = true;
+            const capturedMutSeq = mutationSeqRef.current;
+            refreshCloudStatus();
             try {
               const txRes = await recordProvinceTxAndSyncOnline({
                 expectedUid: currentUid,
@@ -2873,27 +3221,21 @@ export default function App() {
                 return false;
               }
               walletRevRef.current = txRes.walletRev;
-              pendingDirtyRef.current = false;
               lastSyncedAtRef.current = Date.now();
-              setCloudStatus({ cls: 'ok', text: 'Saved' });
+              lastSavedSaveHashRef.current = buildMeaningfulSaveFingerprint(stateRef.current);
+              if (mutationSeqRef.current === capturedMutSeq) {
+                pendingDirtyRef.current = false;
+              }
+              refreshCloudStatus();
             } catch {
               if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
-                scheduleCloudSync(800);
+                scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
               }
             }
             if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
               return false;
             }
-            const lbEntries = buildProvinceLeaderboardEntries(
-              stateRef.current,
-              currentUid,
-              pubProfileRef.current?.username || 'Player',
-              stateRef.current.country?.[0] || 'PK',
-              nowSrv,
-            );
-            lastProvLbSyncAtRef.current = Date.now();
-            lastProvLbHashRef.current = buildProvinceLeaderboardFingerprint(lbEntries);
-            void syncProvinceLeaderboardEntries(lbEntries, currentUid).catch(() => null);
+            scheduleProvinceLbSync(true);
           }
         }
       } finally {
@@ -2904,7 +3246,7 @@ export default function App() {
       }
       return true;
     },
-    [addToast, handleKicked, saveLocal, scheduleCloudSync],
+    [addToast, handleKicked, refreshCloudStatus, saveLocal, scheduleCloudSync, scheduleProvinceLbSync],
   );
 
   const handleCustomizeProvince = useCallback(
@@ -2922,24 +3264,12 @@ export default function App() {
         const recheck = applyCustomizeProvince(prev, provId, input);
         return recheck.ok ? recheck.state : prev;
       });
-      scheduleCloudSync(2500);
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       addToast(`Updated ${res.province.name}!`);
-
-      if (currentUid && cloudReadyRef.current && !needsOnboardingRef.current && !kickedRef.current) {
-        const lbEntries = buildProvinceLeaderboardEntries(
-          stateRef.current,
-          currentUid,
-          pubProfileRef.current?.username || 'Player',
-          stateRef.current.country?.[0] || 'PK',
-          Date.now() + serverOffsetMsRef.current,
-        );
-        lastProvLbSyncAtRef.current = Date.now();
-        lastProvLbHashRef.current = buildProvinceLeaderboardFingerprint(lbEntries);
-        void syncProvinceLeaderboardEntries(lbEntries, currentUid).catch(() => null);
-      }
+      scheduleProvinceLbSync(true);
       return true;
     },
-    [addToast, saveLocal, scheduleCloudSync],
+    [addToast, saveLocal, scheduleCloudSync, scheduleProvinceLbSync],
   );
 
   const handleAllocateProvinceBudget = useCallback(
@@ -2974,6 +3304,10 @@ export default function App() {
           !cloudSyncPermDeniedRef.current &&
           !cloudSyncQuotaPausedRef.current
         ) {
+          mutationSeqRef.current += 1;
+          pendingDirtyRef.current = true;
+          const capturedMutSeq = mutationSeqRef.current;
+          refreshCloudStatus();
           try {
             const targetProv = stateRef.current.provinces?.find((p) => p.id === provId);
             const txRes = await recordProvinceTxAndSyncOnline({
@@ -2995,12 +3329,16 @@ export default function App() {
               return false;
             }
             walletRevRef.current = txRes.walletRev;
-            pendingDirtyRef.current = false;
             lastSyncedAtRef.current = Date.now();
-            setCloudStatus({ cls: 'ok', text: 'Saved' });
+            lastSavedSaveHashRef.current = buildMeaningfulSaveFingerprint(stateRef.current);
+            if (mutationSeqRef.current === capturedMutSeq) {
+              pendingDirtyRef.current = false;
+            }
+            refreshCloudStatus();
+            scheduleProvinceLbSync(true);
           } catch {
             if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
-              scheduleCloudSync(1200);
+              scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
             }
           }
         }
@@ -3011,7 +3349,7 @@ export default function App() {
       }
       return true;
     },
-    [addToast, handleKicked, saveLocal, scheduleCloudSync],
+    [addToast, handleKicked, refreshCloudStatus, saveLocal, scheduleCloudSync, scheduleProvinceLbSync],
   );
 
   const handleRebalanceProvinceBudget = useCallback(
@@ -3029,11 +3367,12 @@ export default function App() {
         const recheck = applyRebalanceProvinceBudget(prev, provId, fromCat, toCat, amount, nowSrv);
         return recheck.ok ? recheck.state : prev;
       });
-      scheduleCloudSync(4_000);
+      scheduleCloudSync(SYNC_COALESCE_DEBOUNCE_MS);
+      scheduleProvinceLbSync(false);
       addToast(`Rebalanced ₨ ${formatNumber(res.amount)} (${fromCat} → ${toCat})`);
       return true;
     },
-    [addToast, saveLocal, scheduleCloudSync],
+    [addToast, saveLocal, scheduleCloudSync, scheduleProvinceLbSync],
   );
 
   // Auth handlers (guarded against double submission)
@@ -4013,14 +4352,29 @@ export default function App() {
         </button>
       )}
 
-      {uid && cloudReady && (
+      {uid && cloudStatus.text && (
         <button
           type="button"
           id="cloudPill"
           className={cloudStatus.cls}
+          data-testid="cloud-sync-pill"
           onClick={() => {
-            if (cloudStatus.cls === 'bad') handleOpenErrorLog();
-            else handleSaveCloudNow();
+            if (
+              cloudStatus.text === 'Rules blocked sync' ||
+              cloudStatus.text === 'Quota paused' ||
+              cloudStatus.text === 'Session displaced'
+            ) {
+              handleOpenErrorLog();
+            } else if (cloudStatus.text === 'Offline') {
+              if (typeof navigator === 'undefined' || navigator.onLine !== false) {
+                isOnlineRef.current = true;
+                handleSaveCloudNow();
+              } else {
+                addToast('Offline — progress saved locally and will sync automatically when connected.');
+              }
+            } else {
+              handleSaveCloudNow();
+            }
           }}
         >
           {cloudStatus.text}
@@ -4123,7 +4477,9 @@ export default function App() {
             setNeedsOnboarding(false);
             setCloudReady(true);
             saveLocal(merged, currentUid);
-            scheduleCloudSync(500);
+            refreshCloudStatus();
+            scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+            scheduleProvinceLbSync(true);
             addToast(`Welcome, ${username}!`);
           } catch (err) {
             if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) return;
