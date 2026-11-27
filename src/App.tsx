@@ -98,8 +98,9 @@ import {
   subscribeErrorLog,
 } from './firebase/errorLog';
 import {
-  filterAndSortLeaderboard,
+  areLeaderboardListsEqual,
   isHeartbeatDue,
+  mergeLeaderboardProfiles,
   shouldRefreshPresenceQuery,
 } from './firebase/presence';
 import {
@@ -253,6 +254,62 @@ interface FloatPop {
 const TAB_LOCK_KEY = 'cet_tab_lock';
 const HAS_FIREBASE_AUTH = Boolean(isFirebaseConfigured && auth && db);
 
+function areTradesEqual(a: TradeOffer[], b: TradeOffer[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const x = a[i];
+    const y = b[i];
+    if (
+      x.id !== y.id ||
+      x.status !== y.status ||
+      x.refunded !== y.refunded ||
+      x.offerCash !== y.offerCash ||
+      x.offerGems !== y.offerGems ||
+      x.reqCash !== y.reqCash ||
+      x.reqGems !== y.reqGems ||
+      x.expMs !== y.expMs ||
+      x.resMs !== y.resMs ||
+      x.message !== y.message
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function areNotificationsEqual(a: NotificationItem[], b: NotificationItem[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const x = a[i];
+    const y = b[i];
+    if (x.id !== y.id || x.read !== y.read || x.text !== y.text || x.type !== y.type) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function areChatListsEqual(a: ChatMessage[], b: ChatMessage[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const x = a[i];
+    const y = b[i];
+    if (
+      x.id !== y.id ||
+      x.text !== y.text ||
+      x.name !== y.name ||
+      x.cc !== y.cc ||
+      x.rank !== y.rank
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export default function App() {
   // Never preload offline shared localStorage before Firebase auth resolves when Firebase is configured
   const [state, setState] = useState<GameState>(() =>
@@ -308,6 +365,8 @@ export default function App() {
   const [globalChat, setGlobalChat] = useState<ChatMessage[]>([]);
   const [dmMessages, setDmMessages] = useState<ChatMessage[]>([]);
   const [dmRecipient, setDmRecipient] = useState<DmRecipient | null>(null);
+  const dmRecipientRef = useRef<DmRecipient | null>(null);
+  dmRecipientRef.current = dmRecipient;
   const [recentDms, setRecentDms] = useState<DmRecipient[]>([]);
   const [sentDmContacts, setSentDmContacts] = useState<DmRecipient[]>([]);
 
@@ -316,6 +375,7 @@ export default function App() {
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 1024);
   const [graphicsSettings, setGraphicsSettings] = useState<GraphicsSettings>(() => readGraphicsSettings(null));
   const [perfStats, setPerfStats] = useState<RuntimePerfStats>(DEFAULT_PERF_STATS);
+  const perfStatsRef = useRef<RuntimePerfStats>(DEFAULT_PERF_STATS);
   const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>(null);
   const [focusRequest, setFocusRequest] = useState<{ id: string; seq: number } | null>(null);
   const focusSeqRef = useRef<number>(0);
@@ -326,6 +386,14 @@ export default function App() {
 
   // Modals
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsOpenRef = useRef<boolean>(false);
+  settingsOpenRef.current = settingsOpen;
+  const handlePerfStats = useCallback((stats: RuntimePerfStats) => {
+    perfStatsRef.current = stats;
+    if (settingsOpenRef.current) {
+      setPerfStats(stats);
+    }
+  }, []);
   const [errorLogOpen, setErrorLogOpen] = useState(false);
   const [notifsOpen, setNotifsOpen] = useState(false);
   const [profileView, setProfileView] = useState<PlayerProfile | null>(null);
@@ -436,7 +504,15 @@ export default function App() {
       if (shouldRefreshPresenceQuery(prevOffset, next, wasVerified)) {
         const curUid = uidRef.current;
         if (curUid && leaderboardRawRef.current.length > 0) {
-          setLeaderboard(filterAndSortLeaderboard(leaderboardRawRef.current, curUid, Date.now() + next));
+          const calibrated = mergeLeaderboardProfiles(
+            leaderboardRawRef.current,
+            leaderboardRawRef.current,
+            curUid,
+            Date.now() + next,
+            { isPrunePass: true, ownProfileOverride: pubProfileRef.current },
+          );
+          leaderboardRawRef.current = calibrated;
+          setLeaderboard((prev) => (areLeaderboardListsEqual(prev, calibrated) ? prev : calibrated));
         }
         setPresenceEpoch((n) => n + 1);
       }
@@ -1650,7 +1726,19 @@ export default function App() {
             }
           }
           completedTradesRef.current = d.stats?.completedTrades || 0;
-          setPubProfile({ ...d, id: snap.id, seen: seenMs });
+          const nextProfile: PlayerProfile = { ...d, id: snap.id, seen: seenMs };
+          setPubProfile(nextProfile);
+          setLeaderboard((prev) => {
+            if (prev.length === 0) return prev;
+            const merged = mergeLeaderboardProfiles(
+              prev,
+              prev,
+              uid,
+              Date.now() + serverOffsetMsRef.current,
+              { ownProfileOverride: nextProfile },
+            );
+            return areLeaderboardListsEqual(prev, merged) ? prev : merged;
+          });
         },
         (err) => handleSnapshotError(`players/${uid}`, err),
       ),
@@ -1686,7 +1774,7 @@ export default function App() {
               resMs: timestampToMs(x.resolvedAt),
             };
           });
-          setTrades(list);
+          setTrades((prev) => (areTradesEqual(prev, list) ? prev : list));
           if (!settlingTradesRef.current) {
             const capturedSettleSeq = authSeqRef.current;
             settlingTradesRef.current = true;
@@ -1731,7 +1819,7 @@ export default function App() {
               ms: timestampToMs(x.createdAt),
             };
           });
-          setNotifications(items);
+          setNotifications((prev) => (areNotificationsEqual(prev, items) ? prev : items));
         },
         (err) => handleSnapshotError(`players/${uid}/notifications`, err),
       ),
@@ -1825,7 +1913,7 @@ export default function App() {
               };
             })
             .reverse();
-          setGlobalChat(msgs);
+          setGlobalChat((prev) => (areChatListsEqual(prev, msgs) ? prev : msgs));
         },
         (err) => handleSnapshotError('globalChat', err),
       ),
@@ -1870,8 +1958,14 @@ export default function App() {
           const data = d.data({ serverTimestamps: 'estimate' }) as Omit<PlayerProfile, 'id'>;
           return { ...data, id: d.id, seen: timestampToMs(data.lastSeen) };
         });
-        leaderboardRawRef.current = rawRows;
-        setLeaderboard(filterAndSortLeaderboard(rawRows, uid, nowEst));
+        setLeaderboard((prev) => {
+          const nextList = mergeLeaderboardProfiles(prev, rawRows, uid, nowEst, {
+            fromCache: snap.metadata.fromCache,
+            ownProfileOverride: pubProfileRef.current,
+          });
+          leaderboardRawRef.current = nextList;
+          return areLeaderboardListsEqual(prev, nextList) ? prev : nextList;
+        });
         setLbLoaded(true);
       },
       (err) => {
@@ -1883,7 +1977,17 @@ export default function App() {
     const pruneTimer = window.setInterval(() => {
       if (leaderboardRawRef.current.length > 0) {
         const nowEst = Date.now() + serverOffsetMsRef.current;
-        setLeaderboard(filterAndSortLeaderboard(leaderboardRawRef.current, uid, nowEst));
+        setLeaderboard((prev) => {
+          const nextList = mergeLeaderboardProfiles(
+            leaderboardRawRef.current,
+            leaderboardRawRef.current,
+            uid,
+            nowEst,
+            { isPrunePass: true, ownProfileOverride: pubProfileRef.current },
+          );
+          leaderboardRawRef.current = nextList;
+          return areLeaderboardListsEqual(prev, nextList) ? prev : nextList;
+        });
       }
     }, 15_000);
 
@@ -1900,19 +2004,20 @@ export default function App() {
     };
   }, [uid, cloudReady, needsOnboarding, kicked, presenceEpoch, handleSnapshotError]);
 
-  // Direct messages listener for active DM recipient (keyed on primitive UID/name/cc)
+  // Direct messages listener for active DM recipient (keyed only on primitive UID)
   const dmUid = dmRecipient?.uid || '';
-  const dmName = dmRecipient?.name || '';
-  const dmCc = dmRecipient?.cc || '';
   useEffect(() => {
     if (!uid || !cloudReady || !dmUid) {
-      setDmMessages([]);
+      setDmMessages((prev) => (prev.length === 0 ? prev : []));
       return;
     }
     const q = buildQueryHelpers().dmQuery(uid, dmUid);
     const unsub = onSnapshot(
       q,
       (snap) => {
+        const curRec = dmRecipientRef.current;
+        const peerName = curRec?.name || 'Player';
+        const peerCc = curRec?.cc || '';
         const msgs = snap.docs
           .map((d) => {
             const x = d.data({ serverTimestamps: 'estimate' });
@@ -1920,20 +2025,20 @@ export default function App() {
             return {
               id: d.id,
               uid: String(x.from || ''),
-              name: isMe ? pubProfileRef.current?.username || 'You' : dmName,
-              cc: isMe ? stateRef.current.country[0] : dmCc,
+              name: isMe ? pubProfileRef.current?.username || 'You' : peerName,
+              cc: isMe ? stateRef.current.country[0] : peerCc,
               rank: 0,
               text: String(x.text || ''),
               ms: timestampToMs(x.createdAt),
             };
           })
           .reverse();
-        setDmMessages(msgs);
+        setDmMessages((prev) => (areChatListsEqual(prev, msgs) ? prev : msgs));
       },
       (err) => handleSnapshotError(`dms/${dmUid}`, err),
     );
     return () => unsub();
-  }, [uid, cloudReady, dmUid, dmName, dmCc, handleSnapshotError]);
+  }, [uid, cloudReady, dmUid, handleSnapshotError]);
 
   // Collect recent DM contacts from both incoming DM notifications and initiated DMs
   useEffect(() => {
@@ -1953,6 +2058,8 @@ export default function App() {
     () => tierOfCompletedTrades(pubProfile?.stats?.completedTrades),
     [pubProfile?.stats?.completedTrades],
   );
+  const tradeTierRef = useRef<number>(tradeTier);
+  tradeTierRef.current = tradeTier;
 
   // Main 1-second simulation & save loop
   const tickCountRef = useRef(0);
@@ -1976,6 +2083,7 @@ export default function App() {
       const now = Date.now();
       const nowSrv = now + serverOffsetMsRef.current;
       const isUserActive = !document.hidden && now - lastActivityRef.current < 120_000;
+      const activeTradeTier = tradeTierRef.current;
       tickCountRef.current += 1;
 
       // Pre-roll event outside setState so React state setters never fire inside updater callbacks
@@ -1991,7 +2099,7 @@ export default function App() {
         lastExpiredSubKeyRef.current = expiredSubKey;
       }
       if (curSnap.ev - 1 <= 0) {
-        const curInc = calculateIncome(curSnap, { tradeTier, nowMs: nowSrv });
+        const curInc = calculateIncome(curSnap, { tradeTier: activeTradeTier, nowMs: nowSrv });
         if (curInc.gross > 8 && isUserActive && !modalOpenRef.current && Math.random() < 0.55) {
           const pick = EXEC_DECISIONS[Math.floor(Math.random() * EXEC_DECISIONS.length)];
           triggerDecisionId = pick.id;
@@ -2007,7 +2115,7 @@ export default function App() {
       }
 
       setState((prev) => {
-        const inc = calculateIncome(prev, { tradeTier, nowMs: nowSrv });
+        const inc = calculateIncome(prev, { tradeTier: activeTradeTier, nowMs: nowSrv });
         const capPool = Math.max(0, inc.net * getTaxPoolCapSeconds(prev));
         const prevPool = prev.taxPool || 0;
         const nextTaxPool =
@@ -2158,7 +2266,7 @@ export default function App() {
       } else if (triggerDecisionId) {
         const dec = EXEC_DECISIONS.find((d) => d.id === triggerDecisionId);
         if (dec) {
-          const quote = getExecDecisionQuote(curSnap, dec.id, tradeTier, nowSrv);
+          const quote = getExecDecisionQuote(curSnap, dec.id, activeTradeTier, nowSrv);
           let decisionHandled = false;
           setDialog({
             title: `Cabinet Briefing: ${dec.title}`,
@@ -2188,7 +2296,7 @@ export default function App() {
                 onClick: () => {
                   if (decisionHandled) return;
                   const nowExec = Date.now() + serverOffsetMsRef.current;
-                  const res = resolveExecutiveDecision(stateRef.current, dec.id, 0, tradeTier, nowExec);
+                  const res = resolveExecutiveDecision(stateRef.current, dec.id, 0, activeTradeTier, nowExec);
                   if (!res.ok) {
                     addToast(res.summary);
                     return;
@@ -2199,7 +2307,7 @@ export default function App() {
                   playSfx('win', !!res.state.set.sfx);
                   triggerBuzz(16, !!res.state.set.vib);
                   setState((prev) => {
-                    const recheck = resolveExecutiveDecision(prev, dec.id, 0, tradeTier, nowExec);
+                    const recheck = resolveExecutiveDecision(prev, dec.id, 0, activeTradeTier, nowExec);
                     return recheck.ok ? recheck.state : prev;
                   });
                   scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
@@ -2213,14 +2321,14 @@ export default function App() {
                 onClick: () => {
                   if (decisionHandled) return;
                   const nowExec = Date.now() + serverOffsetMsRef.current;
-                  const res = resolveExecutiveDecision(stateRef.current, dec.id, 1, tradeTier, nowExec);
+                  const res = resolveExecutiveDecision(stateRef.current, dec.id, 1, activeTradeTier, nowExec);
                   if (res.ok) {
                     decisionHandled = true;
                     stateRef.current = res.state;
                     saveLocal(res.state);
                     playSfx('coin', !!res.state.set.sfx);
                     setState((prev) => {
-                      const recheck = resolveExecutiveDecision(prev, dec.id, 1, tradeTier, nowExec);
+                      const recheck = resolveExecutiveDecision(prev, dec.id, 1, activeTradeTier, nowExec);
                       return recheck.ok ? recheck.state : prev;
                     });
                     scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
@@ -2496,7 +2604,6 @@ export default function App() {
       updateAvailable,
       authResolved,
       needsOnboarding,
-      tradeTier,
       addToast,
       saveLocal,
       scheduleSaveLocal,
@@ -2507,7 +2614,7 @@ export default function App() {
       handleKicked,
     ]);
 
-  // Helper to commit state + persist + sync (keeps setState updater pure)
+  // Helper to commit state + persist + sync without double-invoking updater
   const updateState = useCallback(
     (updater: (prev: GameState) => GameState, syncDelay = SYNC_COALESCE_DEBOUNCE_MS) => {
       if (isGameplayBlocked()) return;
@@ -2515,7 +2622,7 @@ export default function App() {
       const immediateNext = updater(stateRef.current);
       stateRef.current = immediateNext;
       saveLocal(immediateNext, targetUid);
-      setState(updater);
+      setState(immediateNext);
       scheduleCloudSync(syncDelay);
     },
     [isGameplayBlocked, saveLocal, scheduleCloudSync],
@@ -3619,7 +3726,10 @@ export default function App() {
     }
   }, [saveLocal]);
   const handleOpenLoginGate = useCallback(() => setGateOpen(true), []);
-  const handleOpenSettings = useCallback(() => setSettingsOpen(true), []);
+  const handleOpenSettings = useCallback(() => {
+    setPerfStats(perfStatsRef.current);
+    setSettingsOpen(true);
+  }, []);
   const handleCloseSettings = useCallback(() => setSettingsOpen(false), []);
   const handleCloseNotifs = useCallback(() => setNotifsOpen(false), []);
   const handleCloseProfile = useCallback(() => setProfileView(null), []);
@@ -4194,27 +4304,26 @@ export default function App() {
         />
 
         <div className="main">
-          {(!isMobile || tab === 'build') && (
-            <HeroPanel
-              state={state}
-              graphics={graphicsSettings}
-              tradeTier={tradeTier}
-              serverOffsetMs={serverOffsetMs}
-              showCity={!isMobile || tab === 'build'}
-              selectedBuildingId={selectedBuildingId}
-              focusRequest={focusRequest}
-              onCollectTax={handleCollectTax}
-              onActivateGemBoost={handleActivateGemBoost}
-              onSelectBuilding={handleSelectBuilding}
-              onBuyBuilding={handleBuyBuilding}
-              onUpgradeBuilding={handleUpgradeBuilding}
-              onDemolishBuilding={handleDemolishBuilding}
-              onSetBuildingPolicy={handleSetBuildingPolicy}
-              onChangeTimeMode={handleChangeTimeMode}
-              onChangeWeather={handleChangeWeather}
-              onPerfStats={setPerfStats}
-            />
-          )}
+          <HeroPanel
+            state={state}
+            graphics={graphicsSettings}
+            tradeTier={tradeTier}
+            serverOffsetMs={serverOffsetMs}
+            showCity={!isMobile || tab === 'build'}
+            hiddenMobile={isMobile && tab !== 'build'}
+            selectedBuildingId={selectedBuildingId}
+            focusRequest={focusRequest}
+            onCollectTax={handleCollectTax}
+            onActivateGemBoost={handleActivateGemBoost}
+            onSelectBuilding={handleSelectBuilding}
+            onBuyBuilding={handleBuyBuilding}
+            onUpgradeBuilding={handleUpgradeBuilding}
+            onDemolishBuilding={handleDemolishBuilding}
+            onSetBuildingPolicy={handleSetBuildingPolicy}
+            onChangeTimeMode={handleChangeTimeMode}
+            onChangeWeather={handleChangeWeather}
+            onPerfStats={handlePerfStats}
+          />
 
           <div className="card">
             <div className="tabs">

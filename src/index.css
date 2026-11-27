@@ -756,10 +756,12 @@ h2, .tabs b {
 .medal {
   width: 38px;
   height: 42px;
+  flex: none;
   clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
   display: grid;
   place-items: center;
   font: 700 14px var(--d);
+  font-variant-numeric: tabular-nums;
   color: var(--mu);
   background: rgba(255, 255, 255, 0.08);
 }
@@ -1276,7 +1278,20 @@ input[type=range]::-webkit-slider-thumb {
 .stkbtn b { position: absolute; left: 4px; top: 2px; font: 700 10.5px var(--d); color: var(--gold); }
 
 /* Chat & GDP Chart */
-.onl { width: 8px; height: 8px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 8px var(--mint); flex: none; display: inline-block; }
+.onl {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--mint);
+  box-shadow: 0 0 8px var(--mint);
+  flex: none;
+  display: inline-block;
+  transition: opacity 0.2s ease;
+}
+.onl.off {
+  opacity: 0;
+  box-shadow: none;
+}
 .chbox { display: flex; flex-direction: column; border-radius: 18px; background: var(--clay2); box-shadow: var(--sm), var(--in); overflow: hidden; }
 .chhd { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); font: 700 14px var(--d); }
 .chhd small { color: var(--mu); font-weight: 600; font-size: 11px; margin-left: auto; }
@@ -2167,15 +2182,28 @@ body.update-locked {
 /* ==================== 3D CITY VIEWPORT & INSPECTOR ==================== */
 .tabular-nums,
 .inc .num,
+.pill b,
+#col,
+.st b,
+#cloudPill,
 .hero-macro-cell b,
 .econ-tile b {
   font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1023px) {
+  .hero-col.is-hidden-mobile {
+    display: none;
+  }
 }
 
 .city3d-shell {
   display: grid;
   gap: 8px;
   margin-top: 12px;
+}
+.city3d-shell.is-hidden {
+  display: none;
 }
 
 .city3d-viewport {

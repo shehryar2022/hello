@@ -78,6 +78,112 @@ function formatWhen(ms: number): string {
   return WHEN_FORMATTER.format(new Date(ms));
 }
 
+interface LeaderboardRowProps {
+  p: PlayerProfile;
+  rankIndex: number;
+  me: boolean;
+  isOnline: boolean;
+  subTier: '' | 'daily' | 'weekly' | 'monthly';
+  lbMode: LeaderboardMode;
+  unitLabel: string;
+  onOpenProfile: (uid: string) => void;
+  onStartGift: (uid: string) => void;
+  onOpenDm: (uid: string, name: string, cc: string) => void;
+}
+
+const LeaderboardRow: React.FC<LeaderboardRowProps> = memo(({
+  p,
+  rankIndex,
+  me,
+  isOnline,
+  subTier,
+  lbMode,
+  unitLabel,
+  onOpenProfile,
+  onStartGift,
+  onOpenDm,
+}) => {
+  const rk = RANKS[Math.max(1, Math.min(MAX_RANK, p.rank || 1))] || RANKS[1];
+  const subLabel = subTier
+    ? SUBSCRIPTIONS.find((x) => x.id === subTier)?.periodLabel || subTier
+    : '';
+  const metricVal = computeLeaderboardMetrics(p)[lbMode];
+
+  return (
+    <div
+      className={`row pcard ${me ? 'me' : ''} ${subTier ? `sub-card sub-card--${subTier}` : ''}`}
+      data-testid={`lb-row-${p.id}`}
+    >
+      <div className={`medal m${rankIndex + 1}`}>{rankIndex + 1}</div>
+      <div style={{ minWidth: 0 }}>
+        <h2 style={{ display: 'flex', gap: 7, alignItems: 'center' }}>
+          <span style={{ width: 24, height: 17, flex: 'none', display: 'inline-block' }}>
+            <CountryFlag code={p.countryCode} alt={p.countryCode} />
+          </span>
+          {!me && <i className={`onl${isOnline ? '' : ' off'}`} aria-hidden="true" />}
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.username}</span>
+          {rk.id > 0 && (
+            <span className="rank-badge" style={{ '--c': rk.c } as React.CSSProperties} title={rk.n}>
+              <RankEmblem rank={rk.id} size={18} />
+            </span>
+          )}
+          {subTier && (
+            <span className={`sub-crest sub-crest--${subTier}`} title={`${subLabel} Subscriber`}>
+              <span className="sub-crest-ic">
+                <SubIcon tier={subTier} size={11} />
+              </span>
+              <span>{subLabel}</span>
+            </span>
+          )}
+        </h2>
+        <p>
+          {p.countryName} · {unitLabel}{' '}
+          {lbMode === 'buildingDev' || lbMode === 'production' || lbMode === 'contribution'
+            ? formatNumber(metricVal)
+            : `₨ ${formatNumber(metricVal)}`}
+          {me ? ' · you' : ''}
+        </p>
+      </div>
+      <div className="tbtn" style={{ gridAutoFlow: 'column' }}>
+        <button
+          type="button"
+          className="btn sm"
+          style={{ minWidth: 0 }}
+          title="Profile"
+          aria-label={`View ${p.username} profile`}
+          onClick={() => onOpenProfile(p.id)}
+        >
+          <IdCard size={15} />
+        </button>
+        {!me && (
+          <>
+            <button
+              type="button"
+              className="btn sm mint"
+              style={{ minWidth: 0 }}
+              title="Gift"
+              aria-label={`Gift ${p.username}`}
+              onClick={() => onStartGift(p.id)}
+            >
+              <Gift size={15} />
+            </button>
+            <button
+              type="button"
+              className="btn sm"
+              style={{ minWidth: 0 }}
+              title="Message"
+              aria-label={`Message ${p.username}`}
+              onClick={() => onOpenDm(p.id, p.username, p.countryCode)}
+            >
+              <Mail size={15} />
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+});
+
 export const PlayersTab: React.FC<PlayersTabProps> = memo(({
   state,
   uid,
@@ -234,85 +340,22 @@ export const PlayersTab: React.FC<PlayersTabProps> = memo(({
                 {pagedLb.map((p, idx) => {
                   const globalIdx = (safePage - 1) * PAGE_SIZE + idx;
                   const me = p.id === uid;
-                  const rk = RANKS[Math.max(1, Math.min(MAX_RANK, p.rank || 1))] || RANKS[1];
                   const isOnline = !me && isPlayerOnline(p.seen, nowSrv);
                   const subTier = isProfileSubActive(p, nowSrv);
-                  const subLabel = subTier
-                    ? SUBSCRIPTIONS.find((x) => x.id === subTier)?.periodLabel || subTier
-                    : '';
-                  const metricVal = computeLeaderboardMetrics(p)[lbMode];
                   return (
-                    <div
+                    <LeaderboardRow
                       key={p.id}
-                      className={`row pcard ${me ? 'me' : ''} ${subTier ? `sub-card sub-card--${subTier}` : ''}`}
-                    >
-                      <div className={`medal m${globalIdx + 1}`}>{globalIdx + 1}</div>
-                      <div style={{ minWidth: 0 }}>
-                        <h2 style={{ display: 'flex', gap: 7, alignItems: 'center' }}>
-                          <span style={{ width: 24, height: 17, flex: 'none', display: 'inline-block' }}>
-                            <CountryFlag code={p.countryCode} alt={p.countryCode} />
-                          </span>
-                          {isOnline && <i className="onl" />}
-                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.username}</span>
-                          {rk.id > 0 && (
-                            <span className="rank-badge" style={{ '--c': rk.c } as React.CSSProperties} title={rk.n}>
-                              <RankEmblem rank={rk.id} size={18} />
-                            </span>
-                          )}
-                          {subTier && (
-                            <span className={`sub-crest sub-crest--${subTier}`} title={`${subLabel} Subscriber`}>
-                              <span className="sub-crest-ic">
-                                <SubIcon tier={subTier} size={11} />
-                              </span>
-                              <span>{subLabel}</span>
-                            </span>
-                          )}
-                        </h2>
-                        <p>
-                          {p.countryName} · {activeModeMeta.unit}{' '}
-                          {lbMode === 'buildingDev' || lbMode === 'production' || lbMode === 'contribution'
-                            ? formatNumber(metricVal)
-                            : `₨ ${formatNumber(metricVal)}`}
-                          {me ? ' · you' : ''}
-                        </p>
-                      </div>
-                      <div className="tbtn" style={{ gridAutoFlow: 'column' }}>
-                        <button
-                          type="button"
-                          className="btn sm"
-                          style={{ minWidth: 0 }}
-                          title="Profile"
-                          aria-label={`View ${p.username} profile`}
-                          onClick={() => onOpenProfile(p.id)}
-                        >
-                          <IdCard size={15} />
-                        </button>
-                        {!me && (
-                          <>
-                            <button
-                              type="button"
-                              className="btn sm mint"
-                              style={{ minWidth: 0 }}
-                              title="Gift"
-                              aria-label={`Gift ${p.username}`}
-                              onClick={() => onStartGift(p.id)}
-                            >
-                              <Gift size={15} />
-                            </button>
-                            <button
-                              type="button"
-                              className="btn sm"
-                              style={{ minWidth: 0 }}
-                              title="Message"
-                              aria-label={`Message ${p.username}`}
-                              onClick={() => onOpenDm(p.id, p.username, p.countryCode)}
-                            >
-                              <Mail size={15} />
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
+                      p={p}
+                      rankIndex={globalIdx}
+                      me={me}
+                      isOnline={isOnline}
+                      subTier={subTier}
+                      lbMode={lbMode}
+                      unitLabel={activeModeMeta.unit}
+                      onOpenProfile={onOpenProfile}
+                      onStartGift={onStartGift}
+                      onOpenDm={onOpenDm}
+                    />
                   );
                 })}
               </div>

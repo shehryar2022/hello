@@ -39,6 +39,7 @@ interface HeroPanelProps {
   tradeTier: number;
   serverOffsetMs?: number;
   showCity: boolean;
+  hiddenMobile?: boolean;
   selectedBuildingId: string | null;
   focusRequest?: { id: string; seq: number } | null;
   onCollectTax: (e: React.MouseEvent<HTMLButtonElement>) => void;
@@ -59,6 +60,7 @@ export const HeroPanel: React.FC<HeroPanelProps> = memo(({
   tradeTier,
   serverOffsetMs = 0,
   showCity,
+  hiddenMobile = false,
   selectedBuildingId,
   focusRequest,
   onCollectTax,
@@ -91,7 +93,7 @@ export const HeroPanel: React.FC<HeroPanelProps> = memo(({
   ];
 
   return (
-    <div className="list">
+    <div className={`list hero-col${hiddenMobile ? ' is-hidden-mobile' : ''}`}>
       <div className="card hero">
         <div className="inc">
           <span className="lab">

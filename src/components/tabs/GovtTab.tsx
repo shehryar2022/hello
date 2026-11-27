@@ -522,7 +522,7 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
           </div>
           <div className="gxc">
             {gx.log.map((m, idx) => (
-              <p key={idx} className="dim">
+              <p key={`${m}-${gx.log.length - idx}`} className="dim">
                 {m}
               </p>
             ))}

@@ -118,15 +118,20 @@ const City3DInner: React.FC<City3DProps> = ({
         },
         onHoverBuilding: (id, clientX, clientY) => {
           if (!id || !host) {
-            setHoverTip(null);
+            setHoverTip((prev) => (prev === null ? prev : null));
             return;
           }
           const rect = host.getBoundingClientRect();
-          setHoverTip({
-            id,
-            x: Math.max(80, Math.min(rect.width - 80, clientX - rect.left)),
-            y: Math.max(48, clientY - rect.top - 12),
-          });
+          const nextX = Math.max(80, Math.min(rect.width - 80, clientX - rect.left));
+          const nextY = Math.max(48, clientY - rect.top - 12);
+          setHoverTip((prev) =>
+            prev &&
+            prev.id === id &&
+            Math.abs(prev.x - nextX) < 4 &&
+            Math.abs(prev.y - nextY) < 4
+              ? prev
+              : { id, x: nextX, y: nextY },
+          );
         },
         onPerfStats: (stats) => callbacksRef.current.onPerfStats(stats),
         onWebglLostChange: (lost) => setWebglLost(lost),
@@ -143,10 +148,31 @@ const City3DInner: React.FC<City3DProps> = ({
     };
   }, []);
 
-  // Push game state changes imperatively into 3D scene
+  // Compact key so 1Hz simulation clock ticks do not trigger unnecessary 3D scene rebuilds
+  const citySyncSignature = useMemo(() => {
+    const bEntries = Object.entries(state.b || {})
+      .filter(([, count]) => (count || 0) > 0)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([id, count]) => `${id}:${count}`)
+      .join(',');
+    const lvlEntries = Object.entries(state.gx?.lvl || {})
+      .filter(([, lv]) => (lv || 1) > 1)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([id, lv]) => `${id}:${lv}`)
+      .join(',');
+    const queueIds = (state.queue || [])
+      .map((q) => `${q.buildingId}@${q.finishAt}`)
+      .join(',');
+    return `${bEntries}|${lvlEntries}|${queueIds}|${state.cityTimeMode || 'auto'}|${state.cityWeather || 'clear'}`;
+  }, [state.b, state.gx?.lvl, state.queue, state.cityTimeMode, state.cityWeather]);
+
+  const latestStateRef = useRef(state);
+  latestStateRef.current = state;
+
+  // Push game state changes imperatively into 3D scene only when visual 3D state changes
   useEffect(() => {
-    engineRef.current?.syncState(state);
-  }, [state]);
+    engineRef.current?.syncState(latestStateRef.current);
+  }, [citySyncSignature]);
 
   useEffect(() => {
     engineRef.current?.applyGraphicsSettings(graphics);
@@ -154,6 +180,7 @@ const City3DInner: React.FC<City3DProps> = ({
 
   useEffect(() => {
     engineRef.current?.setVisible(visible);
+    if (!visible) setHoverTip(null);
   }, [visible]);
 
   useEffect(() => {
@@ -241,10 +268,12 @@ const City3DInner: React.FC<City3DProps> = ({
     engineRef.current?.setCameraPreset(preset);
   };
 
-  if (!visible) return null;
-
   return (
-    <div className={`city3d-shell${expanded ? ' is-expanded' : ''}`} data-testid="city-3d">
+    <div
+      className={`city3d-shell${expanded ? ' is-expanded' : ''}${visible ? '' : ' is-hidden'}`}
+      data-testid="city-3d"
+      aria-hidden={!visible}
+    >
       <div className="sky city3d-viewport">
         {webglError || webglLost ? (
           <div className="city3d-fallback" data-testid="city3d-fallback">

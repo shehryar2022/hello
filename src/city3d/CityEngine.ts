@@ -37,6 +37,9 @@ const _quat = new THREE.Quaternion();
 const _euler = new THREE.Euler();
 const _scale = new THREE.Vector3();
 const _color = new THREE.Color();
+const _sunsetColor = new THREE.Color(0xd97d6b);
+const _nightColor = new THREE.Color(0x13102e);
+const _overcastColor = new THREE.Color(0x4f5b75);
 const _rayMouse = new THREE.Vector2();
 
 const BUILDING_BY_ID = Object.fromEntries(BUILDINGS.map((b) => [b.id, b]));
@@ -702,17 +705,25 @@ export class CityEngine {
   }
 
   public setVisible(visible: boolean): void {
+    const wasVisible = this.visible;
     this.visible = visible;
+    if (!wasVisible && visible && !this.disposed) {
+      this.lastTickMs = performance.now();
+      this.handleResize();
+    }
   }
 
   private handleResize(): void {
-    if (this.disposed) return;
-    const w = Math.max(280, this.container.clientWidth || 300);
-    const h = Math.max(200, this.container.clientHeight || 220);
+    if (this.disposed || !this.visible) return;
+    const rawW = this.container.clientWidth;
+    const rawH = this.container.clientHeight;
+    if (rawW < 10 || rawH < 10) return;
+    const w = Math.max(280, rawW);
+    const h = Math.max(200, rawH);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
-    if (!this.paused && this.visible) {
+    if (!this.paused) {
       this.renderer.render(this.scene, this.camera);
     }
   }
@@ -837,16 +848,16 @@ export class CityEngine {
     const isOvercast =
       this.settings.weatherEffects && (this.weatherMode === 'overcast' || isRain);
 
-    // Sky & fog color blend
+    // Sky & fog color blend (reuses pre-allocated scratch colors; 0 per-frame allocations)
     _color.setHex(0x88b4e6); // crisp clear day
     if (sunsetFactor > 0.05) {
-      _color.lerp(new THREE.Color(0xd97d6b), sunsetFactor * 0.72);
+      _color.lerp(_sunsetColor, sunsetFactor * 0.72);
     }
     if (nightFactor > 0.05) {
-      _color.lerp(new THREE.Color(0x13102e), nightFactor * 0.94);
+      _color.lerp(_nightColor, nightFactor * 0.94);
     }
     if (isOvercast) {
-      _color.lerp(new THREE.Color(0x4f5b75), 0.48);
+      _color.lerp(_overcastColor, 0.48);
     }
 
     (this.scene.background as THREE.Color).copy(_color);
@@ -1009,7 +1020,7 @@ export class CityEngine {
       const frameTimeMs = Math.max(0.5, performance.now() - renderStart);
 
       // FPS & adaptive optimization telemetry (throttled ~1Hz to React)
-      const measuredFps = Math.min(144, Math.round(1000 / Math.max(8, now - (this.lastStatsPushMs || now - 16) > 0 ? Math.max(frameTimeMs, minIntervalMs) : 16)));
+      const measuredFps = Math.min(144, Math.round(1000 / Math.max(8, frameTimeMs, minIntervalMs)));
       this.fpsSamples.push(measuredFps);
       if (this.fpsSamples.length > 20) this.fpsSamples.shift();
 

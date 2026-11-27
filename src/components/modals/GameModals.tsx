@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { memo, useEffect, useState } from 'react';
 import { AlertTriangle, Copy, Trash2 } from 'lucide-react';
 import { FIREBASE_CONFIG, isFirebaseConfigured } from '../../firebase/config';
 import { formatErrorLogReport, type AppErrorEntry } from '../../firebase/errorLog';
@@ -51,7 +51,7 @@ function useEscapeClose(active: boolean, onClose: () => void) {
   }, [active, onClose]);
 }
 
-export const ProfileModal: React.FC<ProfileModalProps> = ({
+export const ProfileModal: React.FC<ProfileModalProps> = memo(({
   profile,
   isMe,
   uid,
@@ -159,7 +159,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
       </div>
     </div>
   );
-};
+});
 
 interface SettingsModalProps {
   open: boolean;
@@ -177,7 +177,7 @@ interface SettingsModalProps {
   onClose: () => void;
 }
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({
+export const SettingsModal: React.FC<SettingsModalProps> = memo(({
   open,
   state,
   graphics,
@@ -285,7 +285,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       </div>
     </div>
   );
-};
+}, (prev, next) => {
+  if (!prev.open && !next.open) return true;
+  return (
+    prev.open === next.open &&
+    prev.state.set === next.state.set &&
+    prev.graphics === next.graphics &&
+    prev.perfStats === next.perfStats &&
+    prev.uid === next.uid &&
+    prev.email === next.email &&
+    prev.errorCount === next.errorCount &&
+    prev.onToggleSetting === next.onToggleSetting &&
+    prev.onApplyGraphics === next.onApplyGraphics &&
+    prev.onOpenAuth === next.onOpenAuth &&
+    prev.onOpenErrorLog === next.onOpenErrorLog &&
+    prev.onRequestReset === next.onRequestReset &&
+    prev.onClose === next.onClose
+  );
+});
 
 interface NotificationsModalProps {
   open: boolean;
@@ -294,7 +311,7 @@ interface NotificationsModalProps {
   onSelectNotification: (n: NotificationItem) => void;
 }
 
-export const NotificationsModal: React.FC<NotificationsModalProps> = ({
+export const NotificationsModal: React.FC<NotificationsModalProps> = memo(({
   open,
   notifications,
   onClose,
@@ -343,7 +360,7 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
       </div>
     </div>
   );
-};
+});
 
 interface OnboardingModalProps {
   open: boolean;
@@ -353,7 +370,7 @@ interface OnboardingModalProps {
   onSignOut: () => void;
 }
 
-export const OnboardingModal: React.FC<OnboardingModalProps> = ({
+export const OnboardingModal: React.FC<OnboardingModalProps> = memo(({
   open,
   defaultCountryCode,
   onCheckUsername,
@@ -470,7 +487,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
       </div>
     </div>
   );
-};
+});
 
 export interface DialogConfig {
   title: string;
@@ -482,7 +499,7 @@ export interface DialogConfig {
   }>;
 }
 
-export const DialogModal: React.FC<{ dialog: DialogConfig | null; onClose: () => void }> = ({
+export const DialogModal: React.FC<{ dialog: DialogConfig | null; onClose: () => void }> = memo(({
   dialog,
   onClose,
 }) => {
@@ -496,7 +513,7 @@ export const DialogModal: React.FC<{ dialog: DialogConfig | null; onClose: () =>
         <div className="acts">
           {dialog.actions.map((a, i) => (
             <button
-              key={i}
+              key={`${a.label}-${i}`}
               type="button"
               className={`btn ${a.variant || ''}`}
               onClick={a.onClick}
@@ -508,7 +525,7 @@ export const DialogModal: React.FC<{ dialog: DialogConfig | null; onClose: () =>
       </div>
     </div>
   );
-};
+});
 
 interface ErrorLogModalProps {
   open: boolean;
@@ -521,7 +538,7 @@ interface ErrorLogModalProps {
   onClose: () => void;
 }
 
-export const ErrorLogModal: React.FC<ErrorLogModalProps> = ({
+export const ErrorLogModal: React.FC<ErrorLogModalProps> = memo(({
   open,
   errors,
   uid,
@@ -658,4 +675,4 @@ export const ErrorLogModal: React.FC<ErrorLogModalProps> = ({
       </div>
     </div>
   );
-};
+});
