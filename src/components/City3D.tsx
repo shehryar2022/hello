@@ -5,17 +5,53 @@ import type { GameState } from '../game/types';
 import { BuildingIcon, Hammer, RefreshCw } from './GameIcons';
 
 const CSZ: Record<string, number> = {
-  farm: 32, solar: 32, water: 28, stadium: 32, airport: 34, port: 30, rail: 30, mine: 28,
-  hosp: 24, univ: 26, pow: 26, fact: 28, tech: 22, bank: 22, data: 22, space: 20,
-  hydro: 28, stock: 24, evplant: 28, fusion: 24,
-  transit: 28, semicon: 24, logistics: 30, quantum: 22,
+  farms: 32,
+  greenhouses: 28,
+  food_plant: 28,
+  textile_mills: 26,
+  factories: 28,
+  steel_plants: 30,
+  solar_plants: 30,
+  wind_farms: 28,
+  power_stations: 28,
+  roads: 28,
+  railways: 30,
+  ports: 30,
+  airports: 34,
+  markets: 26,
+  shopping_centers: 28,
+  business_districts: 24,
+  research_centers: 24,
+  tech_parks: 24,
+  data_centers: 24,
+  training_centers: 26,
+  hospitals: 26,
+  universities: 26,
 };
 
 const CHM: Record<string, number> = {
-  farm: 0.5, solar: 0.38, water: 0.6, stadium: 0.62, airport: 0.32, port: 0.52, rail: 0.5,
-  mine: 0.58, hosp: 0.88, univ: 0.8, pow: 0.9, fact: 0.92, tech: 1.12, bank: 1.2, data: 1.1, space: 1.5,
-  hydro: 0.65, stock: 1.15, evplant: 0.95, fusion: 1.45,
-  transit: 0.62, semicon: 1.15, logistics: 0.82, quantum: 1.55,
+  farms: 0.45,
+  greenhouses: 0.52,
+  food_plant: 0.72,
+  textile_mills: 0.78,
+  factories: 0.94,
+  steel_plants: 1.05,
+  solar_plants: 0.36,
+  wind_farms: 0.74,
+  power_stations: 0.92,
+  roads: 0.34,
+  railways: 0.55,
+  ports: 0.58,
+  airports: 0.38,
+  markets: 0.58,
+  shopping_centers: 0.85,
+  business_districts: 1.38,
+  research_centers: 1.05,
+  tech_parks: 1.18,
+  data_centers: 1.28,
+  training_centers: 0.72,
+  hospitals: 0.9,
+  universities: 0.95,
 };
 
 interface City3DProps {
@@ -125,7 +161,7 @@ const City3DInner: React.FC<City3DProps> = ({ state, visible, burstKey, onBuildi
 
     const puffTimer = window.setInterval(() => {
       if (document.hidden || !cityRef.current || document.body.classList.contains('modal-open')) return;
-      const emitterIds = ['fact', 'pow', 'mine'].filter((id) => (bRef.current[id] || 0) > 0);
+      const emitterIds = ['factories', 'power_stations', 'steel_plants'].filter((id) => (bRef.current[id] || 0) > 0);
       if (!emitterIds.length) return;
       const pickId = emitterIds[Math.floor(Math.random() * emitterIds.length)];
       if (Math.random() < 0.7) {
@@ -249,7 +285,7 @@ const City3DInner: React.FC<City3DProps> = ({ state, visible, burstKey, onBuildi
     const mult = gxLevelMult(state, def.id);
     setTip({
       id: def.id,
-      text: `${def.n} · Lv ${lvl}${lvl ? ` · +${formatRate(def.inc * lvl * mult)}/s` : ' · not built'}`,
+      text: `${def.n} · ${lvl ? `${lvl} built · +${formatRate(def.inc * lvl * mult)}/s` : 'Not built yet'}`,
       x: Math.max(85, Math.min(r.width - 85, e.clientX - r.left)),
       y: Math.max(44, e.clientY - r.top),
       open: true,
@@ -288,12 +324,12 @@ const City3DInner: React.FC<City3DProps> = ({ state, visible, burstKey, onBuildi
 
       <div className={cityClass} ref={cityRef}>
         <i className="road" style={{ left: -124, top: -1, width: 248, height: 2 }} />
-        <i className="road" style={{ left: -124, top: -43, width: 248, height: 2 }} />
-        <i className="road" style={{ left: -124, top: 41, width: 248, height: 2 }} />
-        <i className="road" style={{ top: -108, left: 21, width: 2, height: 216 }} />
+        <i className="road" style={{ left: -124, top: -39, width: 248, height: 2 }} />
+        <i className="road" style={{ left: -124, top: 37, width: 248, height: 2 }} />
+        <i className="road" style={{ top: -108, left: 19, width: 2, height: 216 }} />
         <i className="car" style={{ left: 0, top: -2, animation: 'carx 5.5s linear infinite' }} />
-        <i className="car cb" style={{ left: 0, top: -44, animation: 'carx 7.5s linear infinite reverse' }} />
-        <i className="car" style={{ left: 22, top: 0, width: 4, height: 8, animation: 'cary 6.5s linear infinite' }} />
+        <i className="car cb" style={{ left: 0, top: -40, animation: 'carx 7.5s linear infinite reverse' }} />
+        <i className="car" style={{ left: 20, top: 0, width: 4, height: 8, animation: 'cary 6.5s linear infinite' }} />
 
         {BUILDINGS.map((d, i) => {
           const l = state.b[d.id] || 0;
@@ -347,7 +383,7 @@ const City3DInner: React.FC<City3DProps> = ({ state, visible, burstKey, onBuildi
       {builtTotal === 0 && (
         <span className="dim-hint">
           <Hammer size={13} color="#ffc23d" />
-          <span>Build your first farm below</span>
+          <span>Construct your first Farms or Markets below</span>
         </span>
       )}
     </div>

@@ -61,7 +61,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 }) => {
   useEscapeClose(Boolean(profile), onClose);
   if (!profile) return null;
-  const rk = RANKS[profile.rank || 0] || RANKS[0];
+  const rk = RANKS[Math.max(1, Math.min(10, profile.rank || 1))] || RANKS[1];
   const subTier = isProfileSubActive(profile, Date.now());
   const subDef = subTier ? SUBSCRIPTIONS.find((x) => x.id === subTier) : null;
 

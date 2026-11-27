@@ -1,21 +1,33 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { GOV_CHANGE_CD_MS, GOVS, POLICY_PRESETS } from '../../game/constants';
+import { GOV_CHANGE_CD_MS, GOVS, NATIONAL_POLICIES, POLICY_PRESETS } from '../../game/constants';
 import {
-  calculateIncome,
+  canChangePolicyStance,
+  canCommitFiscalReform,
+  computeEconomySnapshot,
   currentWorldEvent,
+  extractFiscalDraft,
   formatNumber,
+  getFiscalCommitCost,
+  getFiscalCooldownLeftMs,
   getGovDefinition,
+  getPolicyCooldownLeftMs,
+  getPolicyStance,
   getRecommendedPolicyHint,
+  hasFiscalDraftChanges,
+  presetToFiscalDraft,
   targetHappiness,
   taxInfo,
 } from '../../game/rules';
-import type { GameState } from '../../game/types';
+import type { GameState, PolicyCategoryId } from '../../game/types';
 import {
+  CheckCircle2,
+  Clock,
   Cloud,
   Coins,
   Globe,
   GovTypeIcon,
   Landmark,
+  PolicyCategoryIcon,
   PolicyIcon,
   RefreshCw,
   SlidersHorizontal,
@@ -26,8 +38,8 @@ interface PolicyTabProps {
   state: GameState;
   uid: string | null;
   serverOffsetMs: number;
-  onPolicyChange: (key: keyof GameState, value: number) => void;
-  onApplyPreset: (presetId: 'balanced' | 'revenue' | 'welfare') => void;
+  onCommitFiscalReform: (draft: Partial<Record<keyof GameState, number>>) => boolean;
+  onChangePolicyStance: (catId: PolicyCategoryId, stance: 0 | 1 | 2) => void;
   onChangeGov: (govId: string) => void;
   onResetGame: () => void;
   onSaveCloudNow: () => void;
@@ -43,15 +55,15 @@ const TAX_SLIDERS: Array<{
 }> = [
   { key: 'tax', label: 'Income tax', min: 5, max: 45, desc: 'Higher tax = more cash, unhappy people.', color: 'var(--gold)' },
   { key: 'fuel', label: 'Fuel tax', min: 0, max: 50, desc: 'Extra revenue from fuel — but the public hates it.', color: '#ff9a4d' },
-  { key: 'carbon', label: 'Carbon tax', min: 0, max: 30, desc: 'Big revenue — Solar, Hydro, Fusion & Green Subsidies offset penalty.', color: '#8bbd8b' },
+  { key: 'carbon', label: 'Carbon tax', min: 0, max: 30, desc: 'Big revenue — Solar, Wind & Green Subsidies offset penalty.', color: '#8bbd8b' },
   { key: 'luxury', label: 'Luxury tax', min: 0, max: 25, desc: 'Taxes the rich. Good revenue, small happiness hit.', color: '#e0b81a' },
-  { key: 'corp', label: 'Corporate tax', min: 0, max: 30, desc: 'Taxes businesses; Stock Exchanges amplify revenue.', color: '#c97a3d' },
-  { key: 'gst', label: 'Sales tax (GST)', min: 0, max: 25, desc: 'Taxes every purchase. Mild public anger.', color: '#4cc9ff' },
+  { key: 'corp', label: 'Corporate tax', min: 0, max: 30, desc: 'Taxes businesses; Business Districts amplify revenue.', color: '#c97a3d' },
+  { key: 'gst', label: 'Sales tax (GST)', min: 0, max: 25, desc: 'Taxes retail sales; Shopping Centers amplify yield.', color: '#4cc9ff' },
   { key: 'prop', label: 'Property tax', min: 0, max: 15, desc: 'Scales with population. Biggest happiness hit.', color: '#ff6fa3' },
-  { key: 'duty', label: 'Import duty', min: 0, max: 30, desc: 'Customs on imports. Each Port boosts the revenue.', color: '#a07bff' },
-  { key: 'tourism', label: 'Tourism levy', min: 0, max: 20, desc: 'Visitor tax boosted by Airports & Stadiums; tiny happiness cost.', color: '#38bdf8' },
-  { key: 'digital', label: 'Digital economy tax', min: 0, max: 20, desc: 'Online commerce levy boosted by Tech Parks, Data Centers & Fabs.', color: '#a78bfa' },
-  { key: 'wealth', label: 'Ultra-wealth levy', min: 0, max: 20, desc: 'Taxes top fortunes; boosted by Central Banks with minimal evasion.', color: '#f472b6' },
+  { key: 'duty', label: 'Import duty', min: 0, max: 30, desc: 'Customs on imports; Ports & Airports boost yield.', color: '#a07bff' },
+  { key: 'tourism', label: 'Tourism levy', min: 0, max: 20, desc: 'Visitor tax boosted by Airports & Shopping Centers.', color: '#38bdf8' },
+  { key: 'digital', label: 'Digital economy tax', min: 0, max: 20, desc: 'Online commerce levy boosted by Tech Parks & Data Centers.', color: '#a78bfa' },
+  { key: 'wealth', label: 'Ultra-wealth levy', min: 0, max: 20, desc: 'Taxes top fortunes; Business Districts amplify revenue.', color: '#f472b6' },
 ];
 
 const SPENDING_SLIDERS: Array<{
@@ -65,105 +77,73 @@ const SPENDING_SLIDERS: Array<{
   { key: 'wel', label: 'Welfare spending', min: 0, max: 50, desc: 'Costs a share of income, raises happiness & approval.', color: 'var(--mint)' },
   { key: 'edu', label: 'Education', min: 0, max: 30, desc: 'Long-term: raises income and happiness.', color: 'var(--cy)' },
   { key: 'rd', label: 'R&D innovation grant', min: 0, max: 25, desc: 'Funds science to lift national income & slight happiness.', color: '#60a5fa' },
-  { key: 'green', label: 'Green energy subsidy', min: 0, max: 25, desc: 'Boosts happiness, cuts carbon penalty & powers Solar/Hydro/Fusion.', color: '#4ade80' },
-  { key: 'transitSub', label: 'Public transit subsidy', min: 0, max: 25, desc: 'Boosts happiness & multiplies Metro Transit + Railway Hub output.', color: '#22d3ee' },
+  { key: 'green', label: 'Green energy subsidy', min: 0, max: 25, desc: 'Boosts happiness, cuts carbon penalty & powers Solar/Wind.', color: '#4ade80' },
+  { key: 'transitSub', label: 'Public transit subsidy', min: 0, max: 25, desc: 'Boosts happiness & multiplies Roads + Railways output.', color: '#22d3ee' },
 ];
 
 export const PolicyTab: React.FC<PolicyTabProps> = memo(({
   state,
   uid,
   serverOffsetMs,
-  onPolicyChange,
-  onApplyPreset,
+  onCommitFiscalReform,
+  onChangePolicyStance,
   onChangeGov,
   onResetGame,
   onSaveCloudNow,
 }) => {
-  const [draft, setDraft] = useState<Partial<Record<keyof GameState, number>>>({});
-  const timersRef = useRef<Partial<Record<string, number>>>({});
-  const draftRef = useRef<Partial<Record<keyof GameState, number>>>({});
-  draftRef.current = draft;
+  const [draft, setDraft] = useState<Record<string, number>>(() => extractFiscalDraft(state));
+  const committedSig = useMemo(() => JSON.stringify(extractFiscalDraft(state)), [state]);
+  const prevCommittedSigRef = useRef<string>(committedSig);
 
-  const clearAllDraftTimers = useCallback(() => {
-    for (const key of Object.keys(timersRef.current)) {
-      const tid = timersRef.current[key];
-      if (tid) window.clearTimeout(tid);
-      delete timersRef.current[key];
-    }
-  }, []);
-
-  useEffect(() => clearAllDraftTimers, [clearAllDraftTimers]);
-
-  // Clear local draft entries once committed props match or remote reset happens
   useEffect(() => {
-    setDraft((prev) => {
-      const keys = Object.keys(prev) as Array<keyof GameState>;
-      if (!keys.length) return prev;
-      let changed = false;
-      const next = { ...prev };
-      for (const k of keys) {
-        if (Number(state[k] || 0) === next[k] && !timersRef.current[k as string]) {
-          delete next[k];
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [state]);
+    if (prevCommittedSigRef.current !== committedSig) {
+      prevCommittedSigRef.current = committedSig;
+      setDraft(extractFiscalDraft(state));
+    }
+  }, [committedSig, state]);
 
-  const effectiveState = useMemo(
-    () => (Object.keys(draft).length ? ({ ...state, ...draft } as GameState) : state),
-    [state, draft],
-  );
+  const effectiveState = useMemo(() => ({ ...state, ...draft } as GameState), [state, draft]);
 
   const nowSrv = (state.t || Date.now()) + serverOffsetMs;
   const ti = useMemo(() => taxInfo(effectiveState), [effectiveState]);
-  const inc = useMemo(() => calculateIncome(effectiveState, { nowMs: nowSrv }), [effectiveState, nowSrv]);
+  const snap = useMemo(() => computeEconomySnapshot(effectiveState, { nowMs: nowSrv }), [effectiveState, nowSrv]);
   const gov = useMemo(() => getGovDefinition(effectiveState), [effectiveState]);
   const govCd = Math.max(0, (state.govT || 0) + GOV_CHANGE_CD_MS - nowSrv);
   const worldEv = currentWorldEvent(nowSrv);
-  const targHap = useMemo(() => Math.round(targetHappiness(effectiveState)), [effectiveState]);
+  const targHap = useMemo(() => Math.round(targetHappiness(effectiveState, nowSrv)), [effectiveState, nowSrv]);
   const recPreset = useMemo(() => getRecommendedPolicyHint(effectiveState), [effectiveState]);
 
-  const flushSlider = useCallback(
-    (key: keyof GameState, value?: number) => {
-      const kStr = key as string;
-      const tid = timersRef.current[kStr];
-      if (tid) {
-        window.clearTimeout(tid);
-        delete timersRef.current[kStr];
-      }
-      const nextVal = value ?? draftRef.current[key];
-      if (typeof nextVal === 'number' && Number(state[key] || 0) !== nextVal) {
-        onPolicyChange(key, nextVal);
-      }
-    },
-    [onPolicyChange, state],
-  );
+  const hasChanges = useMemo(() => hasFiscalDraftChanges(state, draft), [state, draft]);
+  const fiscalCost = useMemo(() => getFiscalCommitCost(state), [state]);
+  const fiscalCdMs = getFiscalCooldownLeftMs(state, nowSrv);
+  const commitCheck = useMemo(() => canCommitFiscalReform(state, draft, nowSrv), [state, draft, nowSrv]);
 
-  const handleSliderInput = useCallback(
-    (key: keyof GameState, val: number) => {
-      setDraft((prev) => ({ ...prev, [key]: val }));
-      const kStr = key as string;
-      const prevTimer = timersRef.current[kStr];
-      if (prevTimer) window.clearTimeout(prevTimer);
-      timersRef.current[kStr] = window.setTimeout(() => {
-        delete timersRef.current[kStr];
-        onPolicyChange(key, val);
-      }, 75);
-    },
-    [onPolicyChange],
-  );
+  const handleSliderInput = useCallback((key: keyof GameState, val: number) => {
+    setDraft((prev) => ({ ...prev, [key as string]: val }));
+  }, []);
+
+  const handleRevertDraft = useCallback(() => {
+    setDraft(extractFiscalDraft(state));
+  }, [state]);
+
+  const handleCommit = useCallback(() => {
+    const ok = onCommitFiscalReform(draft);
+    if (ok) {
+      setDraft(extractFiscalDraft({ ...state, ...draft } as GameState));
+    }
+  }, [draft, onCommitFiscalReform, state]);
 
   const renderSlider = (s: (typeof TAX_SLIDERS)[number]) => {
-    const val = draft[s.key] ?? Number(state[s.key] || 0);
+    const val = draft[s.key as string] ?? Number(state[s.key] || 0);
     const pct = Math.max(0, Math.min(100, ((val - s.min) / (s.max - s.min)) * 100));
+    const dirty = val !== Math.round(Number(state[s.key] || 0));
     return (
       <div key={s.key} className="sl" style={{ '--ac': s.color } as React.CSSProperties}>
         <div>
           <span>
             <PolicyIcon k={s.key as string} size={15} />
             {s.label}
+            {dirty && <em className="ok" style={{ fontStyle: 'normal', fontSize: 11, marginLeft: 4 }}>(draft)</em>}
           </span>
           <b className="f">{val}%</b>
         </div>
@@ -175,9 +155,6 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
           aria-label={s.label}
           style={{ '--p': `${pct}%` } as React.CSSProperties}
           onChange={(e) => handleSliderInput(s.key, Number(e.target.value))}
-          onPointerUp={(e) => flushSlider(s.key, Number(e.currentTarget.value))}
-          onBlur={(e) => flushSlider(s.key, Number(e.currentTarget.value))}
-          onKeyUp={(e) => flushSlider(s.key, Number(e.currentTarget.value))}
         />
         <p className="dim">{s.desc}</p>
       </div>
@@ -187,8 +164,84 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
   return (
     <div>
       <div className="gxh" style={{ marginTop: 0 }}>
+        <Landmark size={15} color="#a58cff" />
+        <span>National Policy Directives (9 Categories)</span>
+      </div>
+      <p className="dim" style={{ marginBottom: 10 }}>
+        Each national policy sets permanent sector rules with clear trade-offs and a <b>5-minute cooldown</b> per category to prevent rapid bonus flipping.
+      </p>
+
+      <div className="pol-grid">
+        {NATIONAL_POLICIES.map((cat) => {
+          const activeStance = getPolicyStance(state, cat.id);
+          const cdMs = getPolicyCooldownLeftMs(state, cat.id, nowSrv);
+          const cdSec = Math.ceil(cdMs / 1000);
+          return (
+            <div key={cat.id} className="pol-card" data-testid={`policy-card-${cat.id}`}>
+              <div className="pol-head">
+                <div className="pol-head-title">
+                  <PolicyCategoryIcon id={cat.id} size={20} />
+                  <div>
+                    <b>{cat.name}</b>
+                    <small>{cat.desc}</small>
+                  </div>
+                </div>
+                {cdSec > 0 && (
+                  <span className="lv" style={{ color: 'var(--cy)', borderColor: 'rgba(92, 203, 255, 0.4)', background: 'rgba(92, 203, 255, 0.12)' }}>
+                    <Clock size={11} />
+                    {cdSec}s
+                  </span>
+                )}
+              </div>
+
+              <div className="pol-opts">
+                {cat.options.map((opt) => {
+                  const isActive = activeStance === opt.stance;
+                  const check = canChangePolicyStance(state, cat.id, opt.stance, nowSrv);
+                  return (
+                    <button
+                      key={opt.stance}
+                      type="button"
+                      className={`pol-opt${isActive ? ' on' : ''}`}
+                      disabled={!isActive && !check.ok}
+                      title={isActive ? 'Active policy' : check.reason}
+                      onClick={() => {
+                        if (!isActive) onChangePolicyStance(cat.id, opt.stance);
+                      }}
+                    >
+                      <div className="pol-opt-top">
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                          {isActive && <CheckCircle2 size={13} color="#3fe0b0" />}
+                          <span>{opt.label}</span>
+                        </span>
+                        <span style={{ color: isActive ? 'var(--mint)' : opt.cost > 0 ? 'var(--gold)' : 'var(--mu)', fontSize: 11.5 }}>
+                          {isActive ? 'Active' : opt.cost > 0 ? `₨ ${formatNumber(opt.cost)}` : 'Free'}
+                        </span>
+                      </div>
+                      <div className="pol-tags">
+                        {opt.pros.map((p) => (
+                          <span key={p} className="pol-pro">
+                            {p}
+                          </span>
+                        ))}
+                        {opt.cons.map((c) => (
+                          <span key={c} className="pol-con">
+                            {c}
+                          </span>
+                        ))}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="gxh">
         <Sparkles size={15} color="#ffc23d" />
-        <span>Quick Policy Presets</span>
+        <span>Draft &amp; Commit Fiscal Reform</span>
       </div>
       <div className="preset-grid">
         {POLICY_PRESETS.map((preset) => {
@@ -198,11 +251,7 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
               key={preset.id}
               type="button"
               className={`preset-btn${isRec ? ' rec-card' : ''}`}
-              onClick={() => {
-                clearAllDraftTimers();
-                setDraft({});
-                onApplyPreset(preset.id);
-              }}
+              onClick={() => setDraft((prev) => presetToFiscalDraft(prev, preset.id))}
             >
               <b>
                 {preset.label}
@@ -222,20 +271,20 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
       <div className="gxc" style={{ marginBottom: 12 }}>
         <p style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <SlidersHorizontal size={15} color="#5ccbff" />
-          <b>Live Fiscal Breakdown</b>
+          <b>{hasChanges ? 'Preview Fiscal Impact (Draft)' : 'Live Fiscal Breakdown'}</b>
         </p>
         <div className="fiscal-grid">
           <div className="fiscal-cell">
             <small>Gross / min</small>
-            <b style={{ color: 'var(--gold)' }}>₨ {formatNumber(inc.gross * 60)}</b>
+            <b style={{ color: 'var(--gold)' }}>₨ {formatNumber(snap.buildingGross * 60)}</b>
           </div>
           <div className="fiscal-cell">
-            <small>City Upkeep</small>
-            <b style={{ color: 'var(--pink)' }}>−{Math.round(inc.upkeepRate * 100)}%</b>
+            <small>Maint &amp; Wages / min</small>
+            <b style={{ color: 'var(--pink)' }}>−₨ {formatNumber((snap.maintCost + snap.salaryCost) * 60)}</b>
           </div>
           <div className="fiscal-cell">
-            <small>Policy Spend</small>
-            <b style={{ color: 'var(--cy)' }}>−{Math.round(inc.policySpendShare * 100)}%</b>
+            <small>Policy Spend / min</small>
+            <b style={{ color: 'var(--cy)' }}>−₨ {formatNumber(snap.welfareCost * 60)}</b>
           </div>
           <div className="fiscal-cell">
             <small>Tax Evasion</small>
@@ -243,7 +292,7 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
           </div>
           <div className="fiscal-cell">
             <small>Net / min</small>
-            <b style={{ color: 'var(--mint)' }}>₨ {formatNumber(inc.net * 60)}</b>
+            <b style={{ color: 'var(--mint)' }}>₨ {formatNumber(snap.net * 60)}</b>
           </div>
           <div className="fiscal-cell">
             <small>Target Happiness</small>
@@ -254,9 +303,42 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
         </div>
       </div>
 
+      {(hasChanges || fiscalCdMs > 0) && (
+        <div className="fiscal-commit" data-testid="fiscal-commit-bar">
+          <div>
+            <b style={{ fontSize: 13.5, display: 'block' }}>
+              {hasChanges ? 'Pending Fiscal Draft Ready' : 'Fiscal Reform Cooldown'}
+            </b>
+            <small className="dim">
+              {fiscalCdMs > 0
+                ? `Next reform allowed in ${Math.ceil(fiscalCdMs / 1000)}s`
+                : `Fee: ₨ ${formatNumber(fiscalCost)} Coins · 45s cooldown after commit`}
+            </small>
+          </div>
+          <div className="fiscal-commit-acts">
+            {hasChanges && (
+              <button type="button" className="btn sm" onClick={handleRevertDraft}>
+                Revert
+              </button>
+            )}
+            <button
+              type="button"
+              className={`btn sm ${commitCheck.ok ? 'mint' : 'no'}`}
+              disabled={!commitCheck.ok}
+              title={commitCheck.reason}
+              onClick={handleCommit}
+            >
+              {fiscalCdMs > 0
+                ? `Wait ${Math.ceil(fiscalCdMs / 1000)}s`
+                : `Commit Reform · ₨ ${formatNumber(fiscalCost)}`}
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="gxh">
         <Coins size={15} color="#ffc23d" />
-        <span>Tax Policies</span>
+        <span>Tax Rates</span>
       </div>
       {TAX_SLIDERS.map(renderSlider)}
 
@@ -345,8 +427,8 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
 }, (prev, next) => {
   if (
     prev.uid !== next.uid ||
-    prev.onPolicyChange !== next.onPolicyChange ||
-    prev.onApplyPreset !== next.onApplyPreset ||
+    prev.onCommitFiscalReform !== next.onCommitFiscalReform ||
+    prev.onChangePolicyStance !== next.onChangePolicyStance ||
     prev.onChangeGov !== next.onChangeGov ||
     prev.onResetGame !== next.onResetGame ||
     prev.onSaveCloudNow !== next.onSaveCloudNow
@@ -365,6 +447,8 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
     p.b !== n.b ||
     p.stk !== n.stk ||
     p.tech !== n.tech ||
+    p.milestones !== n.milestones ||
+    p.boosterCd !== n.boosterCd ||
     (p.gx.blk > 0) !== (n.gx.blk > 0) ||
     p.gx.pb !== n.gx.pb ||
     p.gx.ph !== n.gx.ph ||
@@ -384,6 +468,14 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
   const pNow = (p.t || 0) + prev.serverOffsetMs;
   const nNow = (n.t || 0) + next.serverOffsetMs;
   if (currentWorldEvent(pNow) !== null || currentWorldEvent(nNow) !== null) return false;
+  if (getFiscalCooldownLeftMs(p, pNow) > 0 || getFiscalCooldownLeftMs(n, nNow) > 0) {
+    return Math.floor(pNow / 1000) === Math.floor(nNow / 1000);
+  }
+  for (const cat of NATIONAL_POLICIES) {
+    if (getPolicyCooldownLeftMs(p, cat.id, pNow) > 0 || getPolicyCooldownLeftMs(n, cat.id, nNow) > 0) {
+      return Math.floor(pNow / 1000) === Math.floor(nNow / 1000);
+    }
+  }
   const pCdHours = Math.max(0, Math.ceil(((p.govT || 0) + GOV_CHANGE_CD_MS - pNow) / 3_600_000));
   const nCdHours = Math.max(0, Math.ceil(((n.govT || 0) + GOV_CHANGE_CD_MS - nNow) / 3_600_000));
   return pCdHours === nCdHours;

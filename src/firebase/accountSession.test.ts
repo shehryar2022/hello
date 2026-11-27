@@ -42,7 +42,7 @@ test('UID-specific localStorage keys strictly isolate accounts and offline saves
 
 test('authenticated account NEVER reads legacy shared cet_save_v1, offline save, or another UID save', () => {
   const richAccountA = { ...freshState(), cash: 9_999_999, gems: 420, rank: 8 };
-  richAccountA.b.quantum = 12;
+  richAccountA.b.data_centers = 12;
 
   const legacyShared = { ...freshState(), cash: 555_555, gems: 77 };
   const offlineData = { ...freshState(), cash: 123_456, gems: 12 };
@@ -58,7 +58,7 @@ test('authenticated account NEVER reads legacy shared cet_save_v1, offline save,
   assert.ok(loadedA);
   assert.equal(loadedA.cash, 9_999_999);
   assert.equal(loadedA.gems, 420);
-  assert.equal(loadedA.b.quantum, 12);
+  assert.equal(loadedA.b.data_centers, 12);
 
   // Account B (new Google user with no local save) MUST return null — never legacy/offline/Account A
   const loadedB = readAccountSave('uidB', storage);
@@ -90,18 +90,18 @@ test('buildInitialCloudState initializes freshState() when saves/{uid} is absent
   assert.equal(brandNew.cash, expectedFresh.cash);
   assert.equal(brandNew.gems, expectedFresh.gems);
   assert.equal(brandNew.rank, expectedFresh.rank);
-  assert.deepEqual(brandNew.provinces, expectedFresh.provinces);
+  assert.equal('provinces' in brandNew, false);
   assert.equal(brandNew.country[0], 'JP');
   assert.equal(brandNew.country[1], 'Japan');
 
   const existingCloud = buildInitialCloudState(
-    { cash: 88_000, gems: 19, b: { ...expectedFresh.b, fact: 4 } },
+    { cash: 88_000, gems: 19, b: { ...expectedFresh.b, factories: 4 } },
     'US',
     'United States',
   );
   assert.equal(existingCloud.cash, 88_000);
   assert.equal(existingCloud.gems, 19);
-  assert.equal(existingCloud.b.fact, 4);
+  assert.equal(existingCloud.b.factories, 4);
   assert.equal(existingCloud.country[0], 'US');
 });
 
@@ -110,8 +110,8 @@ test('buildOnboardingSeedState always starts cleanly from freshState() regardles
   const clean = freshState();
   assert.equal(seed.cash, clean.cash);
   assert.equal(seed.gems, clean.gems);
-  assert.equal(seed.rank, 0);
-  assert.equal(seed.b.farm, 0);
+  assert.equal(seed.rank, 1);
+  assert.equal(seed.b.farms, 0);
   assert.equal(seed.country[0], 'DE');
 });
 

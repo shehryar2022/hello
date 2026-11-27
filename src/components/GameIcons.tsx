@@ -1,20 +1,17 @@
 import React, { memo, useId, useState } from 'react';
 import {
+  Activity,
   Anchor,
-  Atom,
   Award,
   Banknote,
-  BatteryCharging,
+  BarChart3,
   Bell,
   Bird,
-  Boxes,
-  Bug,
+  Briefcase,
   Building2,
   Bus,
   Calendar,
   CalendarDays,
-  CandlestickChart,
-  Cat,
   CheckCircle2,
   Clock,
   Cloud,
@@ -23,7 +20,6 @@ import {
   Cpu,
   Crown,
   Dog,
-  Droplets,
   Factory,
   Feather,
   Fish,
@@ -42,12 +38,9 @@ import {
   Leaf,
   Lock,
   Mail,
-  MapPinned,
   MessageSquare,
-  Microchip,
   Orbit,
   Package,
-  Pickaxe,
   Plane,
   Rabbit,
   RefreshCw,
@@ -58,15 +51,17 @@ import {
   Server,
   Shield,
   ShoppingBag,
+  ShoppingCart,
   SlidersHorizontal,
   Smile,
   Smartphone,
   Sparkles,
+  Sprout,
   Star,
+  Store,
   Sun,
   Target,
   TrainFront,
-  TramFront,
   TrendingUp,
   Trophy,
   Turtle,
@@ -75,12 +70,19 @@ import {
   Vote,
   Waves,
   Wheat,
+  Wind,
   Wrench,
   Zap,
 } from 'lucide-react';
 import { RANKS, RARITY_META, STICKERS } from '../game/constants';
 import { flagLargeUrl, flagUrl, sanitizeCountryCode } from '../game/rules';
-import type { NotificationItem, SubscriptionTierId, TabId } from '../game/types';
+import type {
+  BoosterId,
+  NotificationItem,
+  PolicyCategoryId,
+  SubscriptionTierId,
+  TabId,
+} from '../game/types';
 
 export const CashCoinIcon: React.FC<{ size?: number; className?: string }> = memo(({ size = 18, className }) => {
   const gradId = useId();
@@ -160,8 +162,6 @@ export const TabIcon: React.FC<{ tab: TabId; size?: number }> = ({ tab, size = 1
       return <Trophy size={size} strokeWidth={2.1} />;
     case 'shop':
       return <ShoppingBag size={size} strokeWidth={2.1} />;
-    case 'provinces':
-      return <MapPinned size={size} strokeWidth={2.1} />;
   }
 };
 
@@ -172,58 +172,65 @@ export const BuildingIcon: React.FC<{ id: string; size?: number; color?: string 
 }) => {
   const props = { size, strokeWidth: 2, color };
   switch (id) {
-    case 'farm':
+    // Agriculture
+    case 'farms':
       return <Wheat {...props} />;
-    case 'fact':
+    case 'greenhouses':
+      return <Sprout {...props} />;
+    case 'food_plant':
+      return <Package {...props} />;
+    // Industry
+    case 'textile_mills':
+      return <ShoppingBag {...props} />;
+    case 'factories':
       return <Factory {...props} />;
-    case 'pow':
-      return <Zap {...props} />;
-    case 'tech':
-      return <Cpu {...props} />;
-    case 'port':
-      return <Anchor {...props} />;
-    case 'bank':
-      return <Landmark {...props} />;
-    case 'mine':
-      return <Pickaxe {...props} />;
-    case 'hosp':
-      return <HeartPulse {...props} />;
-    case 'stadium':
-      return <Trophy {...props} />;
-    case 'airport':
-      return <Plane {...props} />;
-    case 'solar':
+    case 'steel_plants':
+      return <Hammer {...props} />;
+    // Energy
+    case 'solar_plants':
       return <Sun {...props} />;
-    case 'water':
-      return <Droplets {...props} />;
-    case 'univ':
-      return <GraduationCap {...props} />;
-    case 'rail':
+    case 'wind_farms':
+      return <Wind {...props} />;
+    case 'power_stations':
+      return <Zap {...props} />;
+    // Infrastructure
+    case 'roads':
+      return <Compass {...props} />;
+    case 'railways':
       return <TrainFront {...props} />;
-    case 'data':
+    case 'ports':
+      return <Anchor {...props} />;
+    case 'airports':
+      return <Plane {...props} />;
+    // Commercial
+    case 'markets':
+      return <Store {...props} />;
+    case 'shopping_centers':
+      return <ShoppingCart {...props} />;
+    case 'business_districts':
+      return <Building2 {...props} />;
+    // Technology
+    case 'research_centers':
+      return <FlaskConical {...props} />;
+    case 'tech_parks':
+      return <Cpu {...props} />;
+    case 'data_centers':
       return <Server {...props} />;
-    case 'space':
-      return <Rocket {...props} />;
-    case 'hydro':
-      return <Waves {...props} />;
-    case 'stock':
-      return <CandlestickChart {...props} />;
-    case 'evplant':
-      return <BatteryCharging {...props} />;
-    case 'fusion':
-      return <Atom {...props} />;
-    case 'transit':
-      return <TramFront {...props} />;
-    case 'semicon':
-      return <Microchip {...props} />;
-    case 'logistics':
-      return <Boxes {...props} />;
-    case 'quantum':
-      return <Orbit {...props} />;
+    // Healthcare & Education
+    case 'training_centers':
+      return <BookIconFallback {...props} />;
+    case 'hospitals':
+      return <HeartPulse {...props} />;
+    case 'universities':
+      return <GraduationCap {...props} />;
     default:
       return <Building2 {...props} />;
   }
 };
+
+const BookIconFallback: React.FC<{ size: number; strokeWidth: number; color: string }> = (props) => (
+  <School {...props} />
+);
 
 export const InfraIcon: React.FC<{ id: string; size?: number }> = ({ id, size = 24 }) => {
   const props = { size, strokeWidth: 2 };
@@ -264,28 +271,56 @@ export const GovTypeIcon: React.FC<{ id: string; size?: number }> = ({ id, size 
   }
 };
 
-export const BoosterIcon: React.FC<{ id: string; size?: number }> = ({ id, size = 24 }) => {
+export const BoosterIcon: React.FC<{ id: BoosterId | string; size?: number }> = ({ id, size = 24 }) => {
   const props = { size, strokeWidth: 2 };
   switch (id) {
-    case 'quick_profit':
+    case 'prod_boost':
+      return <Factory {...props} />;
+    case 'income_boost':
       return <TrendingUp {...props} />;
-    case 'tax_surge':
+    case 'build_speed_boost':
+      return <Hammer {...props} />;
+    case 'research_boost':
+      return <FlaskConical {...props} />;
+    case 'tax_boost':
       return <Coins {...props} />;
-    case 'happy_days':
-      return <Smile {...props} />;
-    case 'civic_rally':
-      return <Vote {...props} />;
-    case 'boom_surge':
+    case 'emp_boost':
+      return <Briefcase {...props} />;
+    case 'growth_boost':
       return <Rocket {...props} />;
-    case 'golden_treasury':
-      return <Crown {...props} />;
     default:
       return <Zap {...props} />;
   }
 };
 
+export const PolicyCategoryIcon: React.FC<{ id: PolicyCategoryId | string; size?: number }> = ({ id, size = 18 }) => {
+  const props = { size, strokeWidth: 2 };
+  switch (id) {
+    case 'p_tax':
+      return <Coins {...props} />;
+    case 'p_ind':
+      return <Factory {...props} />;
+    case 'p_agr':
+      return <Wheat {...props} />;
+    case 'p_edu':
+      return <GraduationCap {...props} />;
+    case 'p_hlth':
+      return <HeartPulse {...props} />;
+    case 'p_emp':
+      return <Briefcase {...props} />;
+    case 'p_trd':
+      return <Anchor {...props} />;
+    case 'p_nrg':
+      return <Sun {...props} />;
+    case 'p_inf':
+      return <TrainFront {...props} />;
+    default:
+      return <SlidersHorizontal {...props} />;
+  }
+};
+
 export const SubIcon: React.FC<{ tier: SubscriptionTierId; size?: number }> = ({ tier, size = 24 }) => {
-  if (tier === 'daily') return <Calendar size={size} strokeWidth={2} />;
+  if (tier === 'daily') return <Clock size={size} strokeWidth={2} />;
   if (tier === 'weekly') return <CalendarDays size={size} strokeWidth={2} />;
   return <Crown size={size} strokeWidth={2} />;
 };
@@ -335,9 +370,9 @@ export const RankEmblem: React.FC<{ rank: number; size?: number; className?: str
   size = 24,
   className,
 }) => {
-  const def = RANKS[rank] || RANKS[0];
-  if (!rank || rank <= 0) return null;
-  const color = def.c || '#ffd700';
+  const safeRank = Math.max(1, Math.min(10, Math.floor(rank || 1)));
+  const def = RANKS[safeRank] || RANKS[1];
+  const color = def.c || '#94a3b8';
 
   return (
     <svg
@@ -361,7 +396,7 @@ export const RankEmblem: React.FC<{ rank: number; size?: number; className?: str
         fill={color}
         fillOpacity="0.18"
       />
-      {rank <= 3 && (
+      {safeRank <= 3 && (
         <path
           d="M11 18l5-6.5L21 18l-5 3.2L11 18z"
           fill={color}
@@ -371,7 +406,7 @@ export const RankEmblem: React.FC<{ rank: number; size?: number; className?: str
           strokeLinejoin="round"
         />
       )}
-      {rank >= 4 && rank <= 6 && (
+      {safeRank >= 4 && safeRank <= 6 && (
         <path
           d="M16 9l2.1 4.2 4.6.7-3.3 3.2.8 4.6-4.2-2.2-4.2 2.2.8-4.6-3.3-3.2 4.6-.7L16 9z"
           fill={color}
@@ -381,13 +416,13 @@ export const RankEmblem: React.FC<{ rank: number; size?: number; className?: str
           strokeLinejoin="round"
         />
       )}
-      {rank >= 7 && rank <= 9 && (
+      {safeRank >= 7 && safeRank <= 9 && (
         <>
           <circle cx="16" cy="15.5" r="5" fill={color} fillOpacity="0.3" stroke={color} strokeWidth="1.6" />
           <path d="M16 10.5v10M11 15.5h10" stroke="#fff" strokeWidth="1.4" strokeLinecap="round" />
         </>
       )}
-      {rank >= 10 && (
+      {safeRank >= 10 && (
         <path
           d="M9.5 19.5l1.5-7 3.5 3 1.5-5 1.5 5 3.5-3 1.5 7h-13z"
           fill={color}
@@ -405,7 +440,7 @@ function stickerIconElement(id: string, color: string, size: number) {
   switch (id) {
     case 'bee':
     case 'ant':
-      return <Bug {...props} />;
+      return <Sprout {...props} />;
     case 'crab':
     case 'octo':
       return <Waves {...props} />;
@@ -427,7 +462,7 @@ function stickerIconElement(id: string, color: string, size: number) {
       return <Leaf {...props} />;
     case 'lion':
     case 'tiger':
-      return <Cat {...props} />;
+      return <Award {...props} />;
     case 'falcon':
     case 'owl':
     case 'peacock':
@@ -552,21 +587,27 @@ export const NotifIcon: React.FC<{ type: NotificationItem['type']; size?: number
 };
 
 export {
+  Activity,
   Award,
   Banknote,
+  BarChart3,
   Bell,
+  Briefcase,
   Calendar,
   CheckCircle2,
   Clock,
   Cloud,
   Coins,
+  Cpu,
   Crown,
+  Factory,
   Flame,
   FlaskConical,
   Gem,
   Gift,
   Globe,
   Hammer,
+  HeartPulse,
   IdCard,
   Landmark,
   Lock,
@@ -586,6 +627,7 @@ export {
   Users,
   Volume2,
   Vote,
+  Wheat,
   Wrench,
   Zap,
 };

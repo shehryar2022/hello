@@ -1,5 +1,6 @@
 import React, { memo, useEffect, useMemo, useState } from 'react';
 import {
+  BUILDING_CATEGORIES,
   BUILDINGS,
   GOV_DAY_SEC,
   GX_GOV_BUILDINGS,
@@ -11,10 +12,12 @@ import {
 } from '../../game/constants';
 import {
   canUnlockTech,
+  computeEconomySnapshot,
   formatNumber,
   getDevelopmentDiscount,
   getProjectSpeedMult,
   getRecommendedTech,
+  getResearchCostMult,
   gxAverageCondition,
   gxRepairCost,
   gxUpgradeCost,
@@ -22,8 +25,10 @@ import {
   techCount,
   totalBuildings,
 } from '../../game/rules';
-import type { GameState, GovtSubTab, GovProject, ProjectType } from '../../game/types';
+import type { BuildingCategory, GameState, GovtSubTab, GovProject, ProjectType } from '../../game/types';
+import { GdpChart } from '../GdpChart';
 import {
+  BarChart3,
   Bell,
   BuildingIcon,
   CheckCircle2,
@@ -96,13 +101,18 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
   const activeCount = useMemo(() => projects.filter((p) => p.status === 'active').length, [projects]);
   const disc = useMemo(() => getDevelopmentDiscount(state, nowSrv), [state, nowSrv]);
   const projSpeed = useMemo(() => getProjectSpeedMult(state, nowSrv), [state, nowSrv]);
+  const researchCostMult = useMemo(() => getResearchCostMult(state, nowSrv), [state, nowSrv]);
   const researchedCount = useMemo(() => techCount(state), [state]);
   const readyTechCount = useMemo(
-    () => TECH_TREE.filter((t) => canUnlockTech(state, t.id).ok).length,
-    [state],
+    () => TECH_TREE.filter((t) => canUnlockTech(state, t.id, nowSrv).ok).length,
+    [state, nowSrv],
   );
   const techRec = useMemo(() => getRecommendedTech(state), [state]);
   const ownedBuildings = useMemo(() => totalBuildings(state), [state]);
+  const econSnap = useMemo(
+    () => (subTab === 'stats' ? computeEconomySnapshot(state, { nowMs: nowSrv }) : null),
+    [state, subTab, nowSrv],
+  );
 
   const dismissStorageKey = `cet_cleared_proj_${uid || 'offline'}`;
   const [hiddenPastIds, setHiddenPastIds] = useState<string[]>(() => {
@@ -155,6 +165,10 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
           <FlaskConical size={14} />
           <span>Research Lab</span>
           {readyTechCount > 0 && <em>{readyTechCount}</em>}
+        </button>
+        <button type="button" className={subTab === 'stats' ? 'on' : ''} onClick={() => onChangeSubTab('stats')}>
+          <BarChart3 size={14} />
+          <span>Economy Stats</span>
         </button>
       </div>
 
@@ -514,6 +528,7 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
             </span>
             <b>
               {researchedCount} / {TECH_TREE.length} Unlocked · {ownedBuildings} Buildings
+              {researchCostMult < 1 ? ` · −${Math.round((1 - researchCostMult) * 100)}% cost` : ''}
             </b>
           </div>
 
@@ -526,7 +541,7 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
           <div className="list g2">
             {TECH_TREE.map((t) => {
               const unlocked = hasTech(state, t.id);
-              const check = canUnlockTech(state, t.id);
+              const check = canUnlockTech(state, t.id, nowSrv);
               const catColor = t.cat === 'economy' ? '#ffc23d' : t.cat === 'civic' ? '#3fe0b0' : '#5ccbff';
               const metReq = ownedBuildings >= t.reqBuildings;
               const recReason = !unlocked ? techRec[t.id] : undefined;
@@ -542,13 +557,13 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
                   <div style={{ minWidth: 0 }}>
                     <h2>
                       <span>{t.n}</span>
-                      <span className="lv" style={{ background: unlocked ? 'var(--mint)' : catColor, color: '#05161f' }}>
+                      <span className="lv" style={{ borderColor: unlocked ? 'var(--mint)' : catColor, color: unlocked ? 'var(--mint)' : catColor, background: 'rgba(255,255,255,0.06)' }}>
                         {t.cat.toUpperCase()}
                       </span>
                       {recReason && (
                         <span className="rec-badge">
                           <Sparkles size={10} />
-                          <span>Recommended · {recReason}</span>
+                          <span>{recReason}</span>
                         </span>
                       )}
                     </h2>
@@ -562,7 +577,7 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
                     )}
                   </div>
                   {unlocked ? (
-                    <span className="lv" style={{ background: 'var(--mint)', color: '#04332a' }}>
+                    <span className="lv" style={{ borderColor: 'var(--mint)', color: 'var(--mint)', background: 'rgba(63,224,176,0.14)' }}>
                       Active
                     </span>
                   ) : (
@@ -573,12 +588,108 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
                       title={check.reason}
                       onClick={(e) => onUnlockTech(t.id, e)}
                     >
-                      ₨ {formatNumber(t.cost)}
+                      ₨ {formatNumber(check.cost)}
                     </button>
                   )}
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {subTab === 'stats' && econSnap && (
+        <div data-testid="economy-stats-view">
+          <div className="econ-stats">
+            <div className="econ-tile">
+              <small>Real National GDP</small>
+              <b style={{ color: 'var(--gold)' }}>₨ {formatNumber(econSnap.realGdp)}</b>
+              <span>Backed by capital, flow &amp; human capital</span>
+            </div>
+            <div className="econ-tile">
+              <small>Net Income / min</small>
+              <b style={{ color: 'var(--mint)' }}>₨ {formatNumber(econSnap.net * 60)}</b>
+              <span>Gross ₨ {formatNumber(econSnap.buildingGross * 60)}/m</span>
+            </div>
+            <div className="econ-tile">
+              <small>Operating Costs / min</small>
+              <b style={{ color: 'var(--pink)' }}>
+                −₨ {formatNumber((econSnap.maintCost + econSnap.salaryCost + econSnap.welfareCost) * 60)}
+              </b>
+              <span>
+                Maint {formatNumber(econSnap.maintCost * 60)} · Wages {formatNumber(econSnap.salaryCost * 60)}
+              </span>
+            </div>
+            <div className="econ-tile">
+              <small>Power Grid Balance</small>
+              <b style={{ color: econSnap.energyRatio >= 1 ? 'var(--mint)' : 'var(--pink)' }}>
+                {econSnap.energySupply} / {econSnap.energyDemand} MW
+              </b>
+              <span>Grid efficiency ×{econSnap.energyFactor.toFixed(2)}</span>
+            </div>
+            <div className="econ-tile">
+              <small>National Employment</small>
+              <b style={{ color: econSnap.employmentRate >= 0.65 ? 'var(--mint)' : 'var(--gold)' }}>
+                {Math.round(econSnap.employmentRate * 100)}%
+              </b>
+              <span>
+                {formatNumber(econSnap.jobsCreated)} / {formatNumber(econSnap.laborPool)} jobs filled
+              </span>
+            </div>
+            <div className="econ-tile">
+              <small>Inflation &amp; Trade</small>
+              <b style={{ color: econSnap.inflationRate <= 3.5 ? 'var(--mint)' : 'var(--gold)' }}>
+                {econSnap.inflationRate.toFixed(1)}% CPI
+              </b>
+              <span>
+                Export +{Math.round(econSnap.tradeExportBonus * 100)}% · CPI ×{econSnap.inflationDrag.toFixed(2)}
+              </span>
+            </div>
+          </div>
+
+          <GdpChart history={state.hist} currentGdp={econSnap.realGdp} />
+
+          <div className="gxc" style={{ marginTop: 12 }}>
+            <p style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <BarChart3 size={15} color="#5ccbff" />
+              <b>Sector Output Breakdown (per min)</b>
+            </p>
+            <div className="sector-bars">
+              {(() => {
+                const cats = BUILDING_CATEGORIES.filter((c) => c.id !== 'all') as Array<{
+                  id: Exclude<BuildingCategory, 'all'>;
+                  label: string;
+                }>;
+                const colors: Record<Exclude<BuildingCategory, 'all'>, string> = {
+                  agriculture: '#37e6a0',
+                  industry: '#ff9a1f',
+                  energy: '#ffe066',
+                  infrastructure: '#60a5fa',
+                  commercial: '#f472b6',
+                  technology: '#3fd2ff',
+                  healthcare_edu: '#a78bfa',
+                };
+                const maxVal = Math.max(
+                  1,
+                  ...cats.map((c) => (econSnap.sectorIncome[c.id] || 0) * 60),
+                );
+                return cats.map((c) => {
+                  const perMin = (econSnap.sectorIncome[c.id] || 0) * 60;
+                  const pct = Math.max(0, Math.min(100, Math.round((perMin / maxVal) * 100)));
+                  return (
+                    <div key={c.id} className="sector-row">
+                      <div className="sector-row-top">
+                        <span>{c.label}</span>
+                        <b style={{ color: colors[c.id] }}>₨ {formatNumber(perMin)}/m</b>
+                      </div>
+                      <div className="sector-track">
+                        <b style={{ width: `${perMin > 0 ? Math.max(3, pct) : 0}%`, background: colors[c.id] }} />
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
           </div>
         </div>
       )}
@@ -606,6 +717,8 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
     p.b !== n.b ||
     p.tech !== n.tech ||
     p.sub !== n.sub ||
+    p.rank !== n.rank ||
+    p.boosterCd !== n.boosterCd ||
     p.gx.lvl !== n.gx.lvl ||
     p.gx.cond !== n.gx.cond ||
     p.gx.blk !== n.gx.blk ||
@@ -625,6 +738,17 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
   }
   if (prev.subTab === 'projects') {
     return prev.liveProjectProgress === next.liveProjectProgress;
+  }
+  if (prev.subTab === 'stats') {
+    return (
+      p.hist === n.hist &&
+      Math.round(p.hap) === Math.round(n.hap) &&
+      Math.round(p.pop) === Math.round(n.pop) &&
+      p.gov === n.gov &&
+      p.tax === n.tax &&
+      p.activeFx === n.activeFx &&
+      p.boost === n.boost
+    );
   }
   return true;
 });

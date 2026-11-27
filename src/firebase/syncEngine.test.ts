@@ -16,15 +16,8 @@ import {
 } from './syncEngine';
 import { isSessionStillValid } from './accountSession';
 import { filterAndSortLeaderboard } from './presence';
-import {
-  applyAllocateProvinceBudget,
-  applyUnlockProvince,
-  buildProvinceLeaderboardEntries,
-  buildProvinceLeaderboardFingerprint,
-  selectBestProvinceLeaderboardEntries,
-} from '../game/province';
 import { cleanSavePayload, freshState, migrateState } from '../game/rules';
-import type { GameState, PlayerProfile, ProvinceLeaderboardEntry } from '../game/types';
+import type { GameState, PlayerProfile } from '../game/types';
 
 test('1. Sync status state machine enforces truthful Saving / Saved / Syncing / Offline / Sync Error invariants', () => {
   assert.deepEqual(
@@ -283,82 +276,11 @@ test('7. Fingerprinting eliminates idle writes (Spark efficiency) while catching
   assert.notEqual(buildPublicMetricsFingerprint(sRich, undefined, 0, 1_002_000), pub1);
 });
 
-test('8. Province unlock, budget allocation, and best-province global leaderboard maintain 1 entry per player across all 6 categories', () => {
-  const rich = { ...freshState(), cash: 5_000_000_000 };
-  const unlocked = applyUnlockProvince(
-    rich,
-    { name: 'Coastal Zone', desc: 'Port hub', flagId: 'harbor_stripes', color: '#3fd2ff' },
-    Date.UTC(2026, 0, 6),
-  );
-  assert.equal(unlocked.ok, true);
-  assert.ok(unlocked.unlocked);
-
-  const allocated = applyAllocateProvinceBudget(
-    unlocked.state,
-    unlocked.unlocked!.id,
-    'industry',
-    10_000_000,
-    Date.UTC(2026, 0, 6),
-  );
-  assert.equal(allocated.ok, true);
-
-  const p1Entries = buildProvinceLeaderboardEntries(allocated.state, 'uid_1', 'PlayerOne', 'PK', Date.UTC(2026, 0, 6));
-  assert.equal(p1Entries.length, 2);
-  const lbHash1 = buildProvinceLeaderboardFingerprint(p1Entries);
-  assert.ok(lbHash1.length > 0);
-
-  // Simulated rival player entries
-  const rivalEntries: ProvinceLeaderboardEntry[] = [
-    {
-      entryId: 'uid_2_prov_1',
-      ownerUid: 'uid_2',
-      ownerName: 'Rival',
-      countryCode: 'US',
-      provId: 'prov_1',
-      slot: 1,
-      name: 'Rival Capital',
-      flagId: 'crest_star',
-      color: '#ffc93c',
-      gdp: 900_000,
-      pop: 15,
-      hap: 82,
-      dev: 20,
-      emp: 80,
-      overallScore: 420,
-      updatedMs: Date.UTC(2026, 0, 6),
-    },
-    {
-      entryId: 'uid_2_prov_2',
-      ownerUid: 'uid_2',
-      ownerName: 'Rival',
-      countryCode: 'US',
-      provId: 'prov_2',
-      slot: 2,
-      name: 'Rival Tech',
-      flagId: 'civic_wheel',
-      color: '#37e6a0',
-      gdp: 2_500_000,
-      pop: 9,
-      hap: 90,
-      dev: 35,
-      emp: 85,
-      overallScore: 510,
-      updatedMs: Date.UTC(2026, 0, 6),
-    },
-  ];
-
-  const combined = [...p1Entries, ...rivalEntries];
-  for (const cat of ['overall', 'gdp', 'hap', 'dev', 'pop', 'emp'] as const) {
-    const ranked = selectBestProvinceLeaderboardEntries(combined, cat);
-    assert.equal(ranked.length, 2, `Category ${cat} must return exactly 1 best province per unique player`);
-    const owners = new Set(ranked.map((e) => e.ownerUid));
-    assert.equal(owners.size, 2);
-    if (cat === 'pop') {
-      assert.equal(ranked.find((e) => e.ownerUid === 'uid_2')?.provId, 'prov_1');
-    } else {
-      assert.equal(ranked.find((e) => e.ownerUid === 'uid_2')?.provId, 'prov_2');
-    }
-  }
+test('8. Fingerprinting tracks rank, buildings, policy, and subscription state transitions', () => {
+  const s1 = freshState();
+  const h1 = buildMeaningfulSaveFingerprint(s1);
+  const sPromoted = { ...s1, rank: 2, tech: { p_tax: 1 }, b: { ...s1.b, farms: 6 } };
+  assert.notEqual(buildMeaningfulSaveFingerprint(sPromoted), h1);
 });
 
 test('9. Multi-player live leaderboard filter sorts accurately and error classifier handles offline/quota/perm cleanly', () => {
@@ -379,7 +301,7 @@ test('9. Multi-player live leaderboard filter sorts accurately and error classif
   assert.equal(classifySyncError({ code: 'deadline-exceeded', message: 'timeout' }, true).kind, 'transient');
 });
 
-test('10. Existing player saves migrate & clean safely without resetting balances or provinces', () => {
+test('10. Existing player saves migrate & clean safely without resetting balances while consolidating legacy provinces', () => {
   const legacySave = {
     cash: 12_345_678,
     gems: 42,
@@ -412,13 +334,13 @@ test('10. Existing player saves migrate & clean safely without resetting balance
   };
   const migrated = migrateState(legacySave);
   const cleaned = cleanSavePayload(migrated) as Partial<GameState>;
-  assert.equal(cleaned.cash, 12_345_678);
+  assert.equal(cleaned.cash, 12_345_678 + 24_000);
   assert.equal(cleaned.gems, 42);
   assert.equal(cleaned.rank, 4);
-  assert.equal(cleaned.b?.farm, 10);
+  assert.equal(cleaned.b?.farms, 10);
+  assert.equal(cleaned.b?.tech_parks, 5);
   assert.equal(cleaned.sub?.tier, 'weekly');
-  assert.equal(cleaned.provinces?.length, 1);
-  assert.equal(cleaned.provinces?.[0]?.name, 'Sindh Valley');
+  assert.equal('provinces' in cleaned, false);
 });
 
 test('11. Measured coalesced sync latency & Spark write efficiency benchmark', async () => {

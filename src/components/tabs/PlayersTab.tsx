@@ -155,7 +155,7 @@ export const PlayersTab: React.FC<PlayersTabProps> = memo(({
               <div className="list">
                 {leaderboard.map((p, idx) => {
                   const me = p.id === uid;
-                  const rk = RANKS[p.rank || 0] || RANKS[0];
+                  const rk = RANKS[Math.max(1, Math.min(10, p.rank || 1))] || RANKS[1];
                   const isOnline = !me && isPlayerOnline(p.seen, nowSrv);
                   const subTier = isProfileSubActive(p, nowSrv);
                   const subLabel = subTier
@@ -251,7 +251,7 @@ export const PlayersTab: React.FC<PlayersTabProps> = memo(({
           <div className="chlist" ref={listRef}>
             {globalChat.length ? (
               globalChat.map((m) => {
-                const rk = RANKS[m.rank || 0] || RANKS[0];
+                const rk = RANKS[Math.max(1, Math.min(10, m.rank || 1))] || RANKS[1];
                 const senderProfile = leaderboard.find((p) => p.id === m.uid);
                 const subTier = isProfileSubActive(senderProfile, nowSrv);
                 return (

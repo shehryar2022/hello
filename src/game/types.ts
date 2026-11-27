@@ -1,7 +1,6 @@
 export type TabId =
   | 'build'
   | 'gov'
-  | 'provinces'
   | 'policy'
   | 'rivals'
   | 'stickers'
@@ -12,12 +11,19 @@ export type TabId =
 export type PlayersSubTab = 'lb' | 'chat' | 'dm';
 export type GiftsSubTab = 'in' | 'out' | 'hist' | 'find';
 export type ShopSubTab = 'rank' | 'sub' | 'boost';
-export type GovtSubTab = 'infra' | 'projects' | 'research';
-export type ProvincesSubTab = 'overview' | 'manage' | 'leaderboard';
+export type GovtSubTab = 'infra' | 'projects' | 'research' | 'stats';
 
 export type CountryTuple = [code: string, name: string, realGdp?: number];
 
-export type BuildingCategory = 'all' | 'industry' | 'civic' | 'tech';
+export type BuildingCategory =
+  | 'all'
+  | 'agriculture'
+  | 'industry'
+  | 'energy'
+  | 'infrastructure'
+  | 'commercial'
+  | 'technology'
+  | 'healthcare_edu';
 
 export interface BuildingDef {
   id: string;
@@ -26,7 +32,15 @@ export interface BuildingDef {
   c: string;
   cat: Exclude<BuildingCategory, 'all'>;
   cost: number;
+  costScale: number;
+  buildSec: number;
   inc: number;
+  maint: number;
+  jobs: number;
+  energy: number; // +MW generated or -MW consumed
+  hapDelta: number;
+  reqRank: number;
+  reqBuildings?: number;
   d: string;
 }
 
@@ -36,21 +50,96 @@ export interface RankDef {
   e: string;
   c: string;
   cost: number;
+  minGdp: number;
+  minBuildings: number;
+  minHap: number;
+  minTech: number;
+  incomeBonusPct: number;
+  d: string;
 }
 
-export type BoosterFxType = 'income25' | 'income50' | 'income75' | 'tax15x' | 'hap10' | 'rally';
+export type BoosterId =
+  | 'prod_boost'
+  | 'income_boost'
+  | 'build_speed_boost'
+  | 'research_boost'
+  | 'tax_boost'
+  | 'emp_boost'
+  | 'growth_boost';
 
 export interface BoosterDef {
-  id: string;
+  id: BoosterId;
   n: string;
   e: string;
   tier: 'common' | 'rare';
   cost: number;
   cd: number; // cooldown seconds
-  dur: number; // duration seconds (0 for instant / next-collect)
+  dur: number; // duration seconds (0 for next-collect instant trigger)
+  dailyLimit: number;
+  effectLabel: string;
   d: string;
-  fx: BoosterFxType;
   isIncomeBoost?: boolean;
+}
+
+export type PolicyCategoryId =
+  | 'p_tax'
+  | 'p_ind'
+  | 'p_agr'
+  | 'p_edu'
+  | 'p_hlth'
+  | 'p_emp'
+  | 'p_trd'
+  | 'p_nrg'
+  | 'p_inf';
+
+export interface PolicyOptionDef {
+  stance: 0 | 1 | 2;
+  label: string;
+  cost: number;
+  pros: string[];
+  cons: string[];
+  summary: string;
+}
+
+export interface PolicyCategoryDef {
+  id: PolicyCategoryId;
+  name: string;
+  desc: string;
+  options: [PolicyOptionDef, PolicyOptionDef, PolicyOptionDef];
+}
+
+export interface ConstructionSlot {
+  buildingId: string;
+  qty: number;
+  finishAt: number;
+  totalSec: number;
+}
+
+export interface EconomySnapshot {
+  gross: number;
+  net: number;
+  buildingGross: number;
+  maintCost: number;
+  salaryCost: number;
+  welfareCost: number;
+  energySupply: number;
+  energyDemand: number;
+  energyRatio: number;
+  energyFactor: number;
+  jobsCreated: number;
+  laborPool: number;
+  employmentRate: number;
+  inflationRate: number;
+  inflationDrag: number;
+  tradeExportBonus: number;
+  tradeImportDrag: number;
+  consumerDemandMult: number;
+  prodMult: number;
+  buildSpeedMult: number;
+  researchCostMult: number;
+  researchSpeedMult: number;
+  realGdp: number;
+  sectorIncome: Record<Exclude<BuildingCategory, 'all'>, number>;
 }
 
 export type TechCategory = 'economy' | 'civic' | 'infra';
@@ -129,7 +218,7 @@ export interface SubscriptionDef {
   id: SubscriptionTierId;
   n: string;
   e: string;
-  periodLabel: '2 Hours' | '3 Days' | 'Weekly';
+  periodLabel: '2 Hours' | '3 Days' | '7 Days';
   durationLabel: string;
   currency: 'coins';
   cost: number;
@@ -210,9 +299,6 @@ export interface GameState {
   sub?: SubscriptionState;
   subPromo?: SubPromoState;
   tech?: Record<string, number>;
-  provinces?: Province[];
-  provBudgetLog?: ProvinceBudgetLogEntry[];
-  provTxs?: string[];
 }
 
 export interface PlayerStats {
@@ -338,132 +424,3 @@ export interface QuestDef {
   g: number;
   r: number;
 }
-
-export type ProvinceBudgetCategory =
-  | 'infrastructure'
-  | 'education'
-  | 'healthcare'
-  | 'security'
-  | 'welfare'
-  | 'industry';
-
-export type ProvinceExpenseArea =
-  | 'infrastructure'
-  | 'healthcare'
-  | 'education'
-  | 'security'
-  | 'publicServices';
-
-export type ProvinceLeaderboardCategory = 'gdp' | 'hap' | 'dev' | 'pop' | 'emp' | 'overall';
-
-export interface ProvinceBudgetMap {
-  infrastructure: number;
-  education: number;
-  healthcare: number;
-  security: number;
-  welfare: number;
-  industry: number;
-}
-
-export interface ProvinceLevels {
-  infrastructure: number;
-  education: number;
-  healthcare: number;
-  security: number;
-  welfare: number;
-  businessActivity: number;
-}
-
-export interface Province {
-  id: string;
-  slot: number;
-  name: string;
-  desc: string;
-  flagId: string;
-  color: string;
-  unlockedAt: number;
-  paidPrice: number;
-  gdp: number;
-  pop: number;
-  hap: number;
-  dev: number;
-  emp: number;
-  prod: number;
-  budget: ProvinceBudgetMap;
-  allocTotal: number;
-  lvls: ProvinceLevels;
-  lastMaint: number;
-  fundingRatio: number;
-}
-
-export interface ProvinceBudgetLogEntry {
-  t: number;
-  provId: string;
-  provName: string;
-  cat: string;
-  amt: number;
-  kind: 'alloc' | 'rebal' | 'unlock';
-}
-
-export interface ProvinceCustomizationInput {
-  name: string;
-  desc?: string;
-  flagId: string;
-  color: string;
-}
-
-export interface WeeklyProvinceDiscount {
-  weekIndex: number;
-  cycleWeek: 1 | 2 | 3 | 4;
-  targetSlot: 2 | 3 | 4 | 5;
-  discountPct: number;
-  basePrice: number;
-  discountedPrice: number;
-  startsAtMs: number;
-  endsAtMs: number;
-  msLeft: number;
-}
-
-export interface ProvinceUnlockQuote {
-  maxReached: boolean;
-  ownedCount: number;
-  maxProvinces: number;
-  nextSlot: number;
-  basePrice: number;
-  discountPct: number;
-  discountApplied: boolean;
-  finalPrice: number;
-  canAfford: boolean;
-  remainingCash: number;
-  activeOffer: WeeklyProvinceDiscount;
-  upcomingOffer: WeeklyProvinceDiscount;
-}
-
-export interface ProvinceMaintenanceBreakdown {
-  total: number;
-  infrastructure: number;
-  healthcare: number;
-  education: number;
-  security: number;
-  publicServices: number;
-}
-
-export interface ProvinceLeaderboardEntry {
-  entryId: string;
-  ownerUid: string;
-  ownerName: string;
-  countryCode: string;
-  provId: string;
-  slot: number;
-  name: string;
-  flagId: string;
-  color: string;
-  gdp: number;
-  pop: number;
-  hap: number;
-  dev: number;
-  emp: number;
-  overallScore: number;
-  updatedMs: number;
-}
-

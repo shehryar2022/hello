@@ -7,71 +7,61 @@ const app = getApps().length > 0 ? getApp() : initializeApp();
 const adminDb = getFirestore(app);
 const adminAuth = getAuth(app);
 
-const MAX_PROVINCES = 10;
-const PROVINCE_UNLOCK_PRICES = [
-  0,
-  250_000_000,
-  400_000_000,
-  650_000_000,
-  1_000_000_000,
-  1_500_000_000,
-  2_200_000_000,
-  3_200_000_000,
-  4_500_000_000,
-  6_000_000_000,
-] as const;
-
-const PROVINCE_DISCOUNT_EPOCH_MS = Date.UTC(2026, 0, 5, 0, 0, 0);
-const PROVINCE_WEEK_MS = 7 * 86_400_000;
-const PROVINCE_WEEKLY_SCHEDULE = [
-  { cycleWeek: 1, targetSlot: 2, discountPct: 20 },
-  { cycleWeek: 2, targetSlot: 3, discountPct: 20 },
-  { cycleWeek: 3, targetSlot: 4, discountPct: 20 },
-  { cycleWeek: 4, targetSlot: 5, discountPct: 25 },
-] as const;
-
-const VALID_FLAGS = new Set([
-  'crest_star', 'nordic_cross', 'rising_sun', 'twin_peaks',
-  'royal_chevron', 'emerald_tri', 'harbor_stripes', 'imperial_diamond',
-  'civic_wheel', 'aurora_arc', 'shield_quarter', 'citadel_gate',
-]);
-
-const VALID_COLORS = new Set([
-  '#3fd2ff', '#37e6a0', '#ffc93c', '#ff6ba8', '#a56bff',
-  '#3b82f6', '#fb923c', '#2dd4bf', '#f43f5e', '#e879f9',
-]);
-
-const BUDGET_CATEGORIES = new Set([
-  'infrastructure', 'education', 'healthcare', 'security', 'welfare', 'industry',
-]);
-
-function sanitizeName(raw: unknown): string {
-  return String(raw ?? '')
-    .replace(/<[^>]*>/g, '')
-    .replace(/[^A-Za-z0-9 '&\-]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 24)
-    .trim();
+interface ServerRankRule {
+  id: number;
+  name: string;
+  cost: number;
+  minGdp: number;
+  minBuildings: number;
+  minHap: number;
+  minTech: number;
 }
 
-function sanitizeDesc(raw: unknown): string {
-  return String(raw ?? '')
-    .replace(/<[^>]*>/g, '')
-    .replace(/[\u0000-\u001f\u007f]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 120);
-}
+const RANK_RULES: Record<number, ServerRankRule> = {
+  2: { id: 2, name: 'Citizen', cost: 25_000, minGdp: 40_000, minBuildings: 6, minHap: 50, minTech: 0 },
+  3: { id: 3, name: 'Entrepreneur', cost: 150_000, minGdp: 220_000, minBuildings: 14, minHap: 52, minTech: 0 },
+  4: { id: 4, name: 'Business Owner', cost: 750_000, minGdp: 1_200_000, minBuildings: 24, minHap: 55, minTech: 1 },
+  5: { id: 5, name: 'Industrialist', cost: 3_500_000, minGdp: 6_000_000, minBuildings: 36, minHap: 56, minTech: 2 },
+  6: { id: 6, name: 'Millionaire', cost: 15_000_000, minGdp: 25_000_000, minBuildings: 50, minHap: 58, minTech: 3 },
+  7: { id: 7, name: 'Tycoon', cost: 60_000_000, minGdp: 110_000_000, minBuildings: 68, minHap: 60, minTech: 4 },
+  8: { id: 8, name: 'Billionaire', cost: 240_000_000, minGdp: 450_000_000, minBuildings: 88, minHap: 62, minTech: 5 },
+  9: { id: 9, name: 'Economic Leader', cost: 900_000_000, minGdp: 1_800_000_000, minBuildings: 115, minHap: 65, minTech: 6 },
+  10: { id: 10, name: 'National Legend', cost: 3_500_000_000, minGdp: 7_500_000_000, minBuildings: 150, minHap: 68, minTech: 6 },
+};
 
-function getServerWeeklyDiscount(nowMs: number) {
-  const weekIndex = Math.max(0, Math.floor((nowMs - PROVINCE_DISCOUNT_EPOCH_MS) / PROVINCE_WEEK_MS));
-  const sched = PROVINCE_WEEKLY_SCHEDULE[weekIndex % PROVINCE_WEEKLY_SCHEDULE.length];
-  return {
-    weekIndex,
-    ...sched,
-  };
-}
+const BUILDING_COSTS: Record<string, { cost: number; inc: number; jobs: number }> = {
+  farms: { cost: 150, inc: 0.9, jobs: 12 },
+  greenhouses: { cost: 950, inc: 3.8, jobs: 18 },
+  food_plant: { cost: 3_800, inc: 13.5, jobs: 34 },
+  textile_mills: { cost: 1_100, inc: 4.5, jobs: 42 },
+  factories: { cost: 5_500, inc: 21, jobs: 68 },
+  steel_plants: { cost: 28_000, inc: 94, jobs: 115 },
+  solar_plants: { cost: 2_800, inc: 8.2, jobs: 16 },
+  wind_farms: { cost: 12_000, inc: 33, jobs: 26 },
+  power_stations: { cost: 52_000, inc: 136, jobs: 58 },
+  roads: { cost: 2_200, inc: 6.8, jobs: 28 },
+  railways: { cost: 22_000, inc: 68, jobs: 72 },
+  ports: { cost: 68_000, inc: 205, jobs: 120 },
+  airports: { cost: 210_000, inc: 585, jobs: 185 },
+  markets: { cost: 650, inc: 2.5, jobs: 24 },
+  shopping_centers: { cost: 16_000, inc: 52, jobs: 82 },
+  business_districts: { cost: 145_000, inc: 430, jobs: 210 },
+  research_centers: { cost: 38_000, inc: 102, jobs: 64 },
+  tech_parks: { cost: 115_000, inc: 335, jobs: 145 },
+  data_centers: { cost: 340_000, inc: 1_060, jobs: 95 },
+  training_centers: { cost: 4_200, inc: 12, jobs: 38 },
+  hospitals: { cost: 19_500, inc: 48, jobs: 96 },
+  universities: { cost: 88_000, inc: 225, jobs: 135 },
+};
+
+const DOCTRINE_IDS = new Set([
+  'smart_grid',
+  'eco_catalysis',
+  'healthcare_act',
+  'auto_customs',
+  'civil_corps',
+  'sovereign_vault',
+]);
 
 async function verifyBearerUid(authHeader: string | undefined): Promise<string | null> {
   if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
@@ -91,13 +81,52 @@ function setCors(res: { setHeader: (k: string, v: string) => void }) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 }
 
+function computeServerNationalMetrics(saveData: Record<string, unknown>, walletCash: number) {
+  const b = (saveData.b && typeof saveData.b === 'object' ? saveData.b : {}) as Record<string, unknown>;
+  const gx = (saveData.gx && typeof saveData.gx === 'object' ? saveData.gx : {}) as Record<string, unknown>;
+  const lvlMap = (gx.lvl && typeof gx.lvl === 'object' ? gx.lvl : {}) as Record<string, unknown>;
+  const techMap = (saveData.tech && typeof saveData.tech === 'object' ? saveData.tech : {}) as Record<string, unknown>;
+
+  let buildingsTotal = 0;
+  let capitalEquity = 0;
+  let jobsCreated = 0;
+  let baseFlow = 2;
+
+  for (const [id, spec] of Object.entries(BUILDING_COSTS)) {
+    const count = Math.max(0, Math.min(10_000, Math.floor(Number(b[id]) || 0)));
+    if (count <= 0) continue;
+    buildingsTotal += count;
+    const lvl = Math.max(1, Math.min(5, Math.floor(Number(lvlMap[id]) || 1)));
+    capitalEquity += spec.cost * count * (1 + (lvl - 1) * 0.45) * 1.15;
+    jobsCreated += spec.jobs * count;
+    baseFlow += spec.inc * count * (1 + (lvl - 1) * 0.35);
+  }
+
+  let doctrines = 0;
+  for (const k of DOCTRINE_IDS) {
+    if (Number(techMap[k] || 0) > 0) doctrines += 1;
+  }
+
+  const pop = Math.max(1, Math.min(100_000, Number(saveData.pop) || 48));
+  const hap = Math.max(0, Math.min(100, Number(saveData.hap) || 0));
+  const humanCapital = pop * 220 + jobsCreated * 45 + doctrines * 150_000;
+  const treasuryComponent = Math.min(1e12, Math.max(0, walletCash) * 0.35);
+  const realGdp = Math.max(
+    1000,
+    Math.min(1e13, Math.floor(capitalEquity + baseFlow * 180 + humanCapital + treasuryComponent)),
+  );
+
+  return { buildingsTotal, doctrines, hap, realGdp };
+}
+
 /**
- * Server-authoritative Province unlock endpoint:
+ * Server-authoritative National Rank Promotion endpoint:
  * - Verifies Firebase ID token.
- * - Computes progressive price + UTC server-time weekly discount independently of client values.
- * - Enforces <= 10 limit, unique Province names, idempotent txId ledger, and atomic wallet + save cash deduction.
+ * - Checks sequential progression (`currentRank + 1 === targetRank`).
+ * - Recomputes Real National GDP, total buildings, happiness, and doctrines server-side.
+ * - Atomically deducts Coins from private wallet + save and updates public player profile.
  */
-export const unlockProvince = onRequest(async (req, res) => {
+export const verifyNationalRankPromotion = onRequest(async (req, res) => {
   setCors(res);
   if (req.method === 'OPTIONS') {
     res.status(204).send('');
@@ -114,324 +143,83 @@ export const unlockProvince = onRequest(async (req, res) => {
     return;
   }
 
-  const body = (req.body || {}) as {
-    txId?: unknown;
-    name?: unknown;
-    desc?: unknown;
-    flagId?: unknown;
-    color?: unknown;
-    sid?: unknown;
-  };
-
-  const txId = String(body.txId ?? '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
-  const name = sanitizeName(body.name);
-  const desc = sanitizeDesc(body.desc);
-  const flagId = String(body.flagId ?? '');
-  const color = String(body.color ?? '').toLowerCase();
+  const body = (req.body || {}) as { targetRank?: unknown; sid?: unknown };
+  const targetRank = Math.floor(Number(body.targetRank));
   const sid = String(body.sid ?? '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 128);
-
-  if (!txId || name.length < 2 || !VALID_FLAGS.has(flagId) || !VALID_COLORS.has(color)) {
-    res.status(400).json({ error: 'Invalid customization or transaction ID' });
+  const rule = RANK_RULES[targetRank];
+  if (!rule) {
+    res.status(400).json({ ok: false, error: 'INVALID_RANK' });
     return;
   }
 
   try {
-    const nowMs = Date.now();
-    const offer = getServerWeeklyDiscount(nowMs);
-
     const out = await adminDb.runTransaction(async (tx) => {
-      const txRef = adminDb.doc(`players/${uid}/provinceTxs/${txId}`);
       const saveRef = adminDb.doc(`saves/${uid}`);
       const walletRef = adminDb.doc(`players/${uid}/private/wallet`);
       const playerRef = adminDb.doc(`players/${uid}`);
 
-      const [txSnap, saveSnap, walletSnap, playerSnap] = await Promise.all([
-        tx.get(txRef),
+      const [saveSnap, walletSnap, playerSnap] = await Promise.all([
         tx.get(saveRef),
         tx.get(walletRef),
         tx.get(playerRef),
       ]);
 
-      if (txSnap.exists) {
-        throw new Error('ALREADY_PROCESSED');
-      }
       if (!saveSnap.exists || !walletSnap.exists || !playerSnap.exists) {
         throw new Error('PLAYER_NOT_READY');
       }
 
       const saveData = (saveSnap.data()?.save || {}) as Record<string, unknown>;
-      const provinces = Array.isArray(saveData.provinces)
-        ? (saveData.provinces as Array<Record<string, unknown>>)
-        : [];
-      if (provinces.length >= MAX_PROVINCES) {
-        throw new Error('MAX_PROVINCES_REACHED');
+      const currentRank = Math.max(1, Math.min(10, Math.floor(Number(saveData.rank) || 1)));
+      if (targetRank !== currentRank + 1) {
+        throw new Error('RANK_ORDER_INVALID');
       }
-
-      const duplicateName = provinces.some(
-        (p) => String(p.name || '').trim().toLowerCase() === name.toLowerCase(),
-      );
-      if (duplicateName) {
-        throw new Error('DUPLICATE_NAME');
-      }
-
-      const nextSlot = provinces.length + 1;
-      if (provinces.some((p) => Number(p.slot) === nextSlot)) {
-        throw new Error('SLOT_TAKEN');
-      }
-
-      const basePrice = PROVINCE_UNLOCK_PRICES[nextSlot - 1] ?? 0;
-      const discountApplied = offer.targetSlot === nextSlot;
-      const discountPct = discountApplied ? offer.discountPct : 0;
-      const finalPrice = discountApplied
-        ? Math.max(0, Math.floor((basePrice * (100 - discountPct)) / 100))
-        : basePrice;
 
       const walletCash = Math.max(0, Math.floor(Number(walletSnap.data()?.cash || 0)));
-      if (walletCash < finalPrice) {
-        throw new Error('INSUFFICIENT_CASH');
-      }
+      const metrics = computeServerNationalMetrics(saveData, walletCash);
 
-      const nextCash = walletCash - finalPrice;
+      if (metrics.realGdp < rule.minGdp) throw new Error('INSUFFICIENT_GDP');
+      if (metrics.buildingsTotal < rule.minBuildings) throw new Error('INSUFFICIENT_BUILDINGS');
+      if (metrics.hap < rule.minHap) throw new Error('INSUFFICIENT_HAPPINESS');
+      if (metrics.doctrines < rule.minTech) throw new Error('INSUFFICIENT_DOCTRINES');
+      if (walletCash < rule.cost) throw new Error('INSUFFICIENT_CASH');
+
+      const nextCash = walletCash - rule.cost;
       const prevRev = Math.max(1, Math.floor(Number(walletSnap.data()?.rev || 1)));
-      const newProv = {
-        id: `prov_${nextSlot}`,
-        slot: nextSlot,
-        name,
-        desc,
-        flagId,
-        color,
-        unlockedAt: nowMs,
-        paidPrice: finalPrice,
-        gdp: 50_000 * nextSlot,
-        pop: Number((6 + (nextSlot - 1) * 2.5).toFixed(2)),
-        hap: 62,
-        dev: 1,
-        emp: 68,
-        prod: 50,
-        budget: {
-          infrastructure: 0,
-          education: 0,
-          healthcare: 0,
-          security: 0,
-          welfare: 0,
-          industry: 0,
-        },
-        allocTotal: 0,
-        lvls: {
-          infrastructure: 15,
-          education: 15,
-          healthcare: 15,
-          security: 15,
-          welfare: 15,
-          businessActivity: 15,
-        },
-        lastMaint: 0,
-        fundingRatio: 100,
-      };
-
-      const nextTxs = [
-        ...(Array.isArray(saveData.provTxs) ? (saveData.provTxs as string[]) : []),
-        txId,
-      ].slice(-30);
-
-      const nextLog = [
-        ...(Array.isArray(saveData.provBudgetLog) ? (saveData.provBudgetLog as unknown[]) : []),
-        {
-          t: nowMs,
-          provId: newProv.id,
-          provName: newProv.name,
-          cat: 'charter',
-          amt: finalPrice,
-          kind: 'unlock',
-        },
-      ].slice(-20);
-
-      tx.set(txRef, {
-        uid,
-        txId,
-        kind: 'unlock',
-        provId: newProv.id,
-        slot: nextSlot,
-        finalPrice,
-        discountPct,
-        createdAt: FieldValue.serverTimestamp(),
-      });
+      const nextRev = Math.min(1e9, prevRev + 1);
+      const nextMetrics = computeServerNationalMetrics(saveData, nextCash);
 
       tx.update(walletRef, {
         cash: nextCash,
-        rev: prevRev + 1,
+        rev: nextRev,
         sid: sid || walletSnap.data()?.sid || 'fn',
         t: FieldValue.serverTimestamp(),
       });
 
       tx.update(playerRef, {
         cash: nextCash,
-        gdp: Math.max(1, nextCash),
+        gdp: nextMetrics.realGdp,
+        rank: targetRank,
         lastSeen: FieldValue.serverTimestamp(),
       });
 
       tx.update(saveRef, {
         'save.cash': nextCash,
-        'save.provinces': [...provinces, newProv],
-        'save.provTxs': nextTxs,
-        'save.provBudgetLog': nextLog,
+        'save.rank': targetRank,
       });
 
       return {
-        province: newProv,
-        paidPrice: finalPrice,
-        basePrice,
-        discountPct,
+        rank: targetRank,
+        rankName: rule.name,
         nextCash,
+        walletRev: nextRev,
+        gdp: nextMetrics.realGdp,
       };
     });
 
     res.status(200).json({ ok: true, ...out });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'UNLOCK_FAILED';
-    const status =
-      msg === 'ALREADY_PROCESSED' || msg === 'SLOT_TAKEN'
-        ? 409
-        : msg === 'INSUFFICIENT_CASH' || msg === 'MAX_PROVINCES_REACHED' || msg === 'DUPLICATE_NAME'
-          ? 400
-          : 500;
+    const msg = err instanceof Error ? err.message : 'RANK_PROMOTION_FAILED';
+    const status = msg === 'PLAYER_NOT_READY' ? 409 : 400;
     res.status(status).json({ ok: false, error: msg });
-  }
-});
-
-/**
- * Server-authoritative budget allocation endpoint:
- * Deducts exact allocation from player wallet & save cash atomically into a specific Province category reserve.
- */
-export const allocateProvinceBudget = onRequest(async (req, res) => {
-  setCors(res);
-  if (req.method === 'OPTIONS') {
-    res.status(204).send('');
-    return;
-  }
-  if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Method not allowed' });
-    return;
-  }
-
-  const uid = await verifyBearerUid(req.headers.authorization);
-  if (!uid) {
-    res.status(401).json({ error: 'Unauthorized' });
-    return;
-  }
-
-  const body = (req.body || {}) as {
-    txId?: unknown;
-    provId?: unknown;
-    category?: unknown;
-    amount?: unknown;
-    sid?: unknown;
-  };
-  const txId = String(body.txId ?? '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
-  const provId = String(body.provId ?? '');
-  const category = String(body.category ?? '');
-  const amount = Math.floor(Number(body.amount));
-  const sid = String(body.sid ?? '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 128);
-
-  if (
-    !txId ||
-    !/^prov_([1-9]|10)$/.test(provId) ||
-    !BUDGET_CATEGORIES.has(category) ||
-    !Number.isFinite(amount) ||
-    amount < 1 ||
-    amount > 1e12
-  ) {
-    res.status(400).json({ error: 'Invalid allocation parameters' });
-    return;
-  }
-
-  try {
-    const nowMs = Date.now();
-    const out = await adminDb.runTransaction(async (tx) => {
-      const txRef = adminDb.doc(`players/${uid}/provinceTxs/${txId}`);
-      const saveRef = adminDb.doc(`saves/${uid}`);
-      const walletRef = adminDb.doc(`players/${uid}/private/wallet`);
-      const playerRef = adminDb.doc(`players/${uid}`);
-
-      const [txSnap, saveSnap, walletSnap, playerSnap] = await Promise.all([
-        tx.get(txRef),
-        tx.get(saveRef),
-        tx.get(walletRef),
-        tx.get(playerRef),
-      ]);
-
-      if (txSnap.exists) throw new Error('ALREADY_PROCESSED');
-      if (!saveSnap.exists || !walletSnap.exists || !playerSnap.exists) throw new Error('PLAYER_NOT_READY');
-
-      const walletCash = Math.max(0, Math.floor(Number(walletSnap.data()?.cash || 0)));
-      if (walletCash < amount) throw new Error('INSUFFICIENT_CASH');
-
-      const saveData = (saveSnap.data()?.save || {}) as Record<string, unknown>;
-      const provinces = Array.isArray(saveData.provinces)
-        ? (saveData.provinces as Array<Record<string, unknown>>)
-        : [];
-      const idx = provinces.findIndex((p) => String(p.id) === provId);
-      if (idx < 0) throw new Error('PROVINCE_NOT_FOUND');
-
-      const target = provinces[idx];
-      const budget = { ...(target.budget as Record<string, number>) };
-      const nextCatVal = (budget[category] || 0) + amount;
-      if (nextCatVal > 1e12) throw new Error('RESERVE_CAP_REACHED');
-
-      budget[category] = nextCatVal;
-      const updated = {
-        ...target,
-        budget,
-        allocTotal: Math.min(1e13, Number(target.allocTotal || 0) + amount),
-      };
-      const nextProvinces = provinces.map((p, i) => (i === idx ? updated : p));
-      const nextCash = walletCash - amount;
-      const prevRev = Math.max(1, Math.floor(Number(walletSnap.data()?.rev || 1)));
-
-      tx.set(txRef, {
-        uid,
-        txId,
-        kind: 'alloc',
-        provId,
-        slot: Number(target.slot || 1),
-        finalPrice: amount,
-        discountPct: 0,
-        createdAt: FieldValue.serverTimestamp(),
-      });
-      tx.update(walletRef, {
-        cash: nextCash,
-        rev: prevRev + 1,
-        sid: sid || walletSnap.data()?.sid || 'fn',
-        t: FieldValue.serverTimestamp(),
-      });
-      tx.update(playerRef, {
-        cash: nextCash,
-        gdp: Math.max(1, nextCash),
-        lastSeen: FieldValue.serverTimestamp(),
-      });
-      tx.update(saveRef, {
-        'save.cash': nextCash,
-        'save.provinces': nextProvinces,
-        'save.provTxs': [...(Array.isArray(saveData.provTxs) ? (saveData.provTxs as string[]) : []), txId].slice(-30),
-        'save.provBudgetLog': [
-          ...(Array.isArray(saveData.provBudgetLog) ? (saveData.provBudgetLog as unknown[]) : []),
-          {
-            t: nowMs,
-            provId,
-            provName: String(target.name || 'Province'),
-            cat: category,
-            amt: amount,
-            kind: 'alloc',
-          },
-        ].slice(-20),
-      });
-
-      return { nextCash, province: updated };
-    });
-
-    res.status(200).json({ ok: true, ...out });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'ALLOC_FAILED';
-    res.status(msg === 'ALREADY_PROCESSED' ? 409 : 400).json({ ok: false, error: msg });
   }
 });

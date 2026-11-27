@@ -2,11 +2,12 @@ import React, { memo, useMemo } from 'react';
 import { BOOSTERS, RANKS, SUBSCRIPTIONS } from '../../game/constants';
 import {
   canBuyBooster,
-  canBuyRank,
   canBuySubscription,
   formatNumber,
   getActiveShopIncomeBooster,
   getActiveSubscription,
+  getBoosterActivationInfo,
+  getRankEligibility,
   getRecommendedBoosters,
   getRecommendedShopItems,
   getSubscriptionPrice,
@@ -17,6 +18,7 @@ import {
   BoosterIcon,
   Calendar,
   CashCoinIcon,
+  CheckCircle2,
   Coins,
   GemDiamondIcon,
   RankEmblem,
@@ -72,7 +74,8 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
   onBuyBooster,
 }) => {
   const nowMs = (state.t || Date.now()) + serverOffsetMs;
-  const currentRank = RANKS[state.rank || 0] || RANKS[0];
+  const currentRankNum = Math.max(1, Math.min(10, Math.floor(state.rank || 1)));
+  const currentRank = RANKS[currentRankNum] || RANKS[1];
   const activeIncomeBoost = useMemo(() => getActiveShopIncomeBooster(state, nowMs), [state, nowMs]);
   const activeSub = useMemo(() => getActiveSubscription(state, nowMs), [state, nowMs]);
   const canClaimDaily = !!activeSub && activeSub.lastClaimDay !== dayKey;
@@ -109,22 +112,31 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
 
       {subTab === 'rank' ? (
         <div>
-          <div className="tradelim">
-            <span>
-              Current Rank:
-              {currentRank.id > 0 && <RankEmblem rank={currentRank.id} size={18} />}
-              <b>{currentRank.n}</b>
+          <div className="rk-hero">
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+              <RankEmblem rank={currentRank.id} size={30} />
+              <span>
+                <small className="dim" style={{ display: 'block', fontSize: 11 }}>
+                  Current Sovereign Rank ({currentRank.id}/10)
+                </small>
+                <b style={{ fontSize: 15 }}>{currentRank.n}</b>
+              </span>
             </span>
-            <span>
-              Bonus <b className="ok">+{state.rank || 0}%</b> income (+1% per tier)
+            <span style={{ textAlign: 'right' }}>
+              <small className="dim" style={{ display: 'block', fontSize: 11 }}>
+                Permanent Income Bonus
+              </small>
+              <b className="ok" style={{ fontSize: 15 }}>
+                +{currentRank.incomeBonusPct}% income
+              </b>
             </span>
           </div>
 
           <div className="list g2">
             {RANKS.slice(1).map((r) => {
-              const owned = (state.rank || 0) >= r.id;
-              const check = canBuyRank(state, r.id);
-              const isNext = r.id === (state.rank || 0) + 1;
+              const elig = getRankEligibility(state, r.id);
+              const owned = elig.alreadyOwned;
+              const isNext = r.id === currentRankNum + 1;
               const isRec = shopRec.nextRankId === r.id;
 
               return (
@@ -138,31 +150,58 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
                   </div>
                   <div style={{ minWidth: 0 }}>
                     <h2>
-                      <span>{r.n}</span>
-                      <span className="lv">+{r.id}%</span>
+                      <span>
+                        {r.id}. {r.n}
+                      </span>
+                      <span className="lv">+{r.incomeBonusPct}% inc</span>
                     </h2>
                     {isRec && (
                       <div style={{ marginTop: 3 }}>
                         <span className="rec-badge">
                           <Sparkles size={10} />
-                          <span>Recommended · {shopRec.rankReason}</span>
+                          <span>{shopRec.rankReason}</span>
                         </span>
                       </div>
                     )}
-                    <p>Prestige tier {r.id} · Permanent +1% income boost</p>
+                    <p>{r.d}</p>
+                    {!owned && r.id > 1 && (
+                      <div className="rk-reqs">
+                        <span className={`rk-req ${elig.missingGdp === 0 ? 'met' : 'miss'}`}>
+                          {elig.missingGdp === 0 ? <CheckCircle2 size={11} /> : <span className="rk-dot" />}
+                          <span>GDP ₨ {formatNumber(r.minGdp)}</span>
+                        </span>
+                        <span className={`rk-req ${elig.missingBuildings === 0 ? 'met' : 'miss'}`}>
+                          {elig.missingBuildings === 0 ? <CheckCircle2 size={11} /> : <span className="rk-dot" />}
+                          <span>{r.minBuildings} Bldgs</span>
+                        </span>
+                        {r.minHap > 0 && (
+                          <span className={`rk-req ${elig.missingHap === 0 ? 'met' : 'miss'}`}>
+                            {elig.missingHap === 0 ? <CheckCircle2 size={11} /> : <span className="rk-dot" />}
+                            <span>{r.minHap}% Hap</span>
+                          </span>
+                        )}
+                        {r.minTech > 0 && (
+                          <span className={`rk-req ${elig.missingTech === 0 ? 'met' : 'miss'}`}>
+                            {elig.missingTech === 0 ? <CheckCircle2 size={11} /> : <span className="rk-dot" />}
+                            <span>{r.minTech} Tech</span>
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                   {owned ? (
-                    <span className="lv" style={{ background: 'var(--mint)', color: '#04332a' }}>
-                      Owned
+                    <span className="lv" style={{ borderColor: 'var(--mint)', color: 'var(--mint)', background: 'rgba(63,224,176,0.14)' }}>
+                      Unlocked
                     </span>
                   ) : (
                     <button
                       type="button"
-                      className={`btn sm ${check.ok ? 'gold' : 'no'}`}
-                      disabled={!check.ok}
+                      className={`btn sm ${elig.eligible ? 'gold' : 'no'}`}
+                      disabled={!elig.eligible}
+                      title={elig.reason}
                       onClick={(e) => onBuyRank(r.id, e)}
                     >
-                      {isNext ? `₨ ${formatNumber(r.cost)}` : 'Locked'}
+                      {isNext ? `Promote · ₨ ${formatNumber(r.cost)}` : `Rank ${r.id - 1} req`}
                     </button>
                   )}
                 </div>
@@ -209,7 +248,7 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
               </span>
             </div>
             <p className="dim" style={{ marginTop: 4 }}>
-              Premium national charters purchased with Coins (100K / 1M / 10M Coins) for +4% to +12% income, 3%–10% build discount, +5%–15% project speed, and daily stipends.
+              Three Coin-funded national charters: 2 Hours (100K), 3 Days (1M), or 7 Days (10M Coins). No duplicate deductions or stacking exploits.
             </p>
             {activeSub ? (
               <div style={{ marginTop: 8 }}>
@@ -251,7 +290,7 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
               </div>
             ) : (
               <p className="dim" style={{ marginTop: 6 }}>
-                No active subscription yet — choose 2 Hours (100K), 3 Days (1M), or Weekly (10M) below.
+                No active subscription — choose 2 Hours (100K), 3 Days (1M), or 7 Days (10M) below.
               </p>
             )}
           </div>
@@ -293,12 +332,12 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
                       {isRec && !price.promoActive && (
                         <span className="rec-badge">
                           <Sparkles size={10} />
-                          <span>Recommended · {shopRec.subReason}</span>
+                          <span>{shopRec.subReason}</span>
                         </span>
                       )}
                     </h2>
                     <p>
-                      {sub.d} · Animated Leaderboard Crest
+                      {sub.d} · Leaderboard Crest
                       {price.promoActive && ` · Deal ends in ${formatSubRemaining(price.msLeft)}`}
                     </p>
                     {shortfall > 0 && (
@@ -308,7 +347,7 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
                     )}
                   </div>
                   {isCurrent ? (
-                    <span className="lv" style={{ background: 'var(--mint)', color: '#04332a' }}>
+                    <span className="lv" style={{ borderColor: 'var(--mint)', color: 'var(--mint)', background: 'rgba(63,224,176,0.14)' }}>
                       Active
                     </span>
                   ) : (
@@ -364,35 +403,39 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
           <div className="gxc" style={{ marginBottom: 10 }}>
             <p style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <Coins size={15} color="#ffc23d" />
-              <b>Balanced Shop Boosters</b>
+              <b>National Boosters (7 Categories)</b>
             </p>
             <p className="dim">
-              Only <b>1 income multiplier booster</b> can be active at a time (no stacking). Combined temporary
-              multipliers are capped at <b>×2.5</b>, and Tax Surge bonus is capped at <b>2 min of base income</b>.
+              Only <b>1 income multiplier booster</b> (Income Boost or Growth Boost) can run at a time, combined temporary multipliers are capped at <b>×2.5</b>, and each booster enforces daily activation limits &amp; cooldowns.
             </p>
             {activeIncomeBoost.active && (
               <p className="ok" style={{ marginTop: 4 }}>
-                Active: ×{activeIncomeBoost.mult} ({activeIncomeBoost.leftSec}s left)
+                Income Multiplier Active: ×{activeIncomeBoost.mult} ({activeIncomeBoost.leftSec}s left)
               </p>
             )}
             {!!state.activeFx?.taxSurge && (
               <p className="ok" style={{ marginTop: 4 }}>
-                Tax Surge Ready: +35% bonus on your next Collect tax (capped at 2m base income)
+                Tax Collection Boost Primed: +30% bonus on your next Collect tax (capped at 2m base income)
               </p>
             )}
           </div>
 
           <div className="list g2">
             {BOOSTERS.map((b) => {
+              const info = getBoosterActivationInfo(state, b.id, nowMs);
               const check = canBuyBooster(state, b, nowMs);
               const recReason = boosterRec[b.id];
-              const label = check.cooldownLeftSec > 0
-                ? `${check.cooldownLeftSec}s CD`
-                : b.isIncomeBoost && activeIncomeBoost.active
-                  ? 'Active limit'
-                  : b.fx === 'tax15x' && state.activeFx?.taxSurge
-                    ? 'Ready'
-                    : `₨ ${formatNumber(b.cost)}`;
+              const label = info.active && b.dur > 0
+                ? `Active ${info.activeLeftSec}s`
+                : check.cooldownLeftSec > 0
+                  ? `${check.cooldownLeftSec}s CD`
+                  : b.isIncomeBoost && activeIncomeBoost.active
+                    ? 'Income Active'
+                    : b.id === 'tax_boost' && state.activeFx?.taxSurge
+                      ? 'Primed'
+                      : info.usedToday >= info.dailyLimit
+                        ? `Limit ${info.usedToday}/${info.dailyLimit}`
+                        : `₨ ${formatNumber(b.cost)}`;
 
               return (
                 <div
@@ -403,18 +446,25 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
                   <div className="em">
                     <BoosterIcon id={b.id} size={23} />
                   </div>
-                  <div>
+                  <div style={{ minWidth: 0 }}>
                     <h2>
-                      {b.n}
-                      <span className="lv">{b.tier === 'rare' ? 'Rare' : 'Common'}</span>
+                      <span>{b.n}</span>
+                      <span className="lv">{b.effectLabel}</span>
                       {recReason && (
                         <span className="rec-badge">
                           <Sparkles size={10} />
-                          <span>Recommended · {recReason}</span>
+                          <span>{recReason}</span>
                         </span>
                       )}
                     </h2>
                     <p>{b.d}</p>
+                    <div className="bst-meta">
+                      <span>
+                        Daily: <b style={{ color: info.usedToday >= info.dailyLimit ? 'var(--pink)' : 'var(--tx)' }}>{info.usedToday}/{info.dailyLimit}</b>
+                      </span>
+                      <span>Cooldown: {Math.round(b.cd / 60)}m</span>
+                      {info.active && b.dur > 0 && <span className="ok">{info.activeLeftSec}s remaining</span>}
+                    </div>
                   </div>
                   <button
                     type="button"
@@ -470,21 +520,25 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
   const pPromoActive = (p.subPromo?.exp || 0) > pNow;
   const nPromoActive = (n.subPromo?.exp || 0) > nNow;
   if (pPromoActive !== nPromoActive) return false;
-  if (prev.subTab === 'rank') return true;
+  if (prev.subTab === 'rank') {
+    return Math.round(p.hap) === Math.round(n.hap) && Math.round(p.pop) === Math.round(n.pop);
+  }
   if (prev.subTab === 'sub') {
     if (pSubActive || nSubActive || pPromoActive || nPromoActive) {
       return Math.floor(pNow / 1000) === Math.floor(nNow / 1000);
     }
     return true;
   }
-  // subTab === 'boost': only re-render per second when a booster or cooldown is counting down
-  const pBoostActive = getActiveShopIncomeBooster(p, pNow).active;
-  const nBoostActive = getActiveShopIncomeBooster(n, nNow).active;
-  if (pBoostActive || nBoostActive) return false;
-  const cds = n.boosterCd || {};
-  const minNow = Math.min(pNow, nNow);
-  for (const exp of Object.values(cds)) {
-    if ((exp || 0) > minNow) return false;
+  // subTab === 'boost': re-render per second when any booster or cooldown is counting down
+  if (getActiveShopIncomeBooster(p, pNow).active || getActiveShopIncomeBooster(n, nNow).active) {
+    return Math.floor(pNow / 1000) === Math.floor(nNow / 1000);
+  }
+  for (const b of BOOSTERS) {
+    const pInfo = getBoosterActivationInfo(p, b.id, pNow);
+    const nInfo = getBoosterActivationInfo(n, b.id, nNow);
+    if (pInfo.active || nInfo.active || pInfo.cooldownLeftSec > 0 || nInfo.cooldownLeftSec > 0) {
+      return Math.floor(pNow / 1000) === Math.floor(nNow / 1000);
+    }
   }
   return true;
 });

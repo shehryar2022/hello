@@ -37,14 +37,11 @@ import {
   sanitizeStats,
   totalBuildings,
 } from '../game/rules';
-import { selectBestProvinceLeaderboardEntries } from '../game/province';
 import type {
   GameState,
   PlayerProfile,
   PlayerStats,
   ProjectType,
-  ProvinceLeaderboardCategory,
-  ProvinceLeaderboardEntry,
   TradeOffer,
 } from '../game/types';
 import {
@@ -239,9 +236,9 @@ export async function createPlayerProfile(
       const cash = capValue(cleanedSave.cash, 1e13);
       const gems = capValue(cleanedSave.gems, 1e9);
       const stk = cleanStickersMap(cleanedSave.stk);
-      const gdpVal = Math.max(1, Math.min(cash, capValue(calculateGdp(baseState), 1e13)));
+      const gdpVal = Math.max(1, capValue(calculateGdp(baseState), 1e13));
       const levelVal = Math.max(1, Math.min(10_000_000, Math.floor(playerLevel(baseState))));
-      const rankVal = Math.max(0, Math.min(MAX_RANK, Math.floor(Number(baseState.rank) || 0)));
+      const rankVal = Math.max(1, Math.min(MAX_RANK, Math.floor(Number(baseState.rank) || 1)));
 
       if (pSnap.exists()) {
         const wData = wSnap.exists() ? wSnap.data() : null;
@@ -344,7 +341,7 @@ export async function syncSaveToCloud(params: {
   const cash = capValue(cleanedSave.cash, 1e13);
   const gems = capValue(cleanedSave.gems, 1e9);
   const stk = cleanStickersMap(cleanedSave.stk);
-  const gdpVal = Math.max(1, Math.min(cash, capValue(calculateGdp(state), 1e13)));
+  const gdpVal = Math.max(1, capValue(calculateGdp(state), 1e13));
 
   let result!: {
     accepted: boolean;
@@ -487,6 +484,11 @@ export async function syncSaveToCloud(params: {
           onKicked();
           throw makeError('aborted', 'Another session is active');
         }
+        const sSnapFallback = await getDoc(doc(db, 'saves', uid)).catch(() => null);
+        const serverSaveFallback =
+          sSnapFallback && sSnapFallback.exists()
+            ? (sSnapFallback.data()?.save as Partial<GameState> | undefined)
+            : undefined;
         return {
           accepted: false,
           wallet: {
@@ -495,6 +497,7 @@ export async function syncSaveToCloud(params: {
             stk: cleanStickersMap(wData.stk),
             rev: curRev,
           },
+          serverSave: serverSaveFallback,
         };
       }
       nextRev = Math.min(1e9, curRev + 1);
@@ -658,11 +661,11 @@ export async function createGiftOffer(params: {
     const newGems = wGems - og;
     const prevStats = sanitizeStats(meData.stats);
     tx.update(meRef, {
-      gdp: Math.max(1, newCash),
+      gdp: Math.max(1, Number(meData.gdp) || newCash, newCash),
       cash: newCash,
       gems: newGems,
       level: Math.max(1, Math.min(10_000_000, Math.floor(Number(meData.level) || 1))),
-      rank: Math.max(0, Math.min(MAX_RANK, Math.floor(Number(meData.rank) || 0))),
+      rank: Math.max(1, Math.min(MAX_RANK, Math.floor(Number(meData.rank) || 1))),
       lastSeen: serverTimestamp(),
       stats: sanitizeStats(prevStats, {
         tradesSent: prevStats.tradesSent + 1,
@@ -751,11 +754,11 @@ export async function acceptGiftOffer(
       const md = meSnap.data();
       const prevStats = sanitizeStats(md.stats);
       tx.update(meRef, {
-        gdp: Math.max(1, newCash),
+        gdp: Math.max(1, Number(md.gdp) || newCash, newCash),
         cash: newCash,
         gems: newGems,
         level: Math.max(1, Math.min(10_000_000, Math.floor(Number(md.level) || 1))),
-        rank: Math.max(0, Math.min(MAX_RANK, Math.floor(Number(md.rank) || 0))),
+        rank: Math.max(1, Math.min(MAX_RANK, Math.floor(Number(md.rank) || 1))),
         lastSeen: serverTimestamp(),
         stats: sanitizeStats(prevStats, {
           completedTrades: prevStats.completedTrades + 1,
@@ -1081,7 +1084,7 @@ export async function syncPublicProfileMetrics(params: {
   const { state, pubStats, nowSrvMs = Date.now() } = params;
   const cash = capValue(state.cash, 1e13);
   const gems = capValue(state.gems, 1e9);
-  const gdp = Math.max(1, Math.min(cash, capValue(calculateGdp(state), 1e13)));
+  const gdp = Math.max(1, capValue(calculateGdp(state), 1e13));
   const activeSub = getActiveSubscription(state, nowSrvMs);
   const payload: Record<string, unknown> = {
     gdp,
@@ -1258,187 +1261,46 @@ export function buildQueryHelpers() {
       query(collection(db, 'globalChat'), orderBy('createdAt', 'desc'), limit(25)),
     dmQuery: (uidA: string, uidB: string) =>
       query(collection(db, 'dms', pairIdFor(uidA, uidB), 'messages'), orderBy('createdAt', 'desc'), limit(25)),
-    provinceLeaderboardQuery: (category: ProvinceLeaderboardCategory, limitCount = 100) => {
-      const field = LEADERBOARD_ORDER_FIELD[category] || 'overallScore';
-      return query(
-        collection(db, 'provinceLeaderboard'),
-        orderBy(field, 'desc'),
-        limit(Math.max(1, Math.min(100, limitCount))),
-      );
-    },
   };
 }
 
-export async function recordProvinceTxAndSyncOnline(params: {
-  expectedUid?: string;
-  txId: string;
-  kind: 'unlock' | 'alloc';
-  provId: string;
-  slot: number;
-  finalPrice: number;
-  discountPct: number;
-  nextState: GameState;
-  pubStats: PlayerStats | undefined;
-  completedTradesCount: number;
-  rev: number;
+export async function promoteRankOnline(params: {
+  targetRank: number;
   sid: string;
-  onKicked: () => void;
-}): Promise<{ walletRev: number }> {
-  const { expectedUid, txId, kind, provId, slot, finalPrice, discountPct, nextState, pubStats, completedTradesCount, rev, sid, onKicked } = params;
-  const activeUid = requireUid(expectedUid);
-  const cleanedSave = cleanSavePayload(nextState);
-  const cash = capValue(cleanedSave.cash, 1e13);
-  const gems = capValue(cleanedSave.gems, 1e9);
-  const stk = cleanStickersMap(cleanedSave.stk);
-  const gdpVal = Math.max(1, Math.min(cash, capValue(calculateGdp(nextState), 1e13)));
-  let nextRevOut = Math.max(1, rev + 1);
-
-  await runSessionTx(
-    sid,
-    onKicked,
-    async (tx, uid) => {
-      const txRef = doc(db, 'players', uid, 'provinceTxs', txId);
-      const wRef = doc(db, 'players', uid, 'private', 'wallet');
-      const pRef = doc(db, 'players', uid);
-      const [txSnap, wSnap, pSnap] = await Promise.all([tx.get(txRef), tx.get(wRef), tx.get(pRef)]);
-
-      if (txSnap.exists()) {
-        throw makeError('already-exists', 'Transaction already processed');
-      }
-      if (!pSnap.exists()) {
-        throw makeError('failed-precondition', 'Player profile not initialized');
-      }
-
-      const wData = wSnap.exists() ? wSnap.data() : null;
-      const curRev = wData && Number.isFinite(Number(wData.rev)) ? Math.max(0, Math.floor(Number(wData.rev))) : 0;
-      const nextRev = Math.min(1e9, curRev + 1);
-      nextRevOut = nextRev;
-
-      tx.set(txRef, {
-        uid,
-        txId,
-        kind,
-        provId,
-        slot: Math.max(1, Math.min(10, Math.floor(slot))),
-        finalPrice: Math.max(0, Math.floor(finalPrice)),
-        discountPct: Math.max(0, Math.min(40, Math.floor(discountPct))),
-        createdAt: serverTimestamp(),
-      });
-
-      tx.set(wRef, {
-        cash,
-        gems,
-        stk,
-        rev: nextRev,
-        sid,
-        t: serverTimestamp(),
-      });
-
-      const existingStats = (pSnap.data()?.stats as Partial<PlayerStats> | undefined) ?? pubStats;
-      const mergedStats = sanitizeStats(existingStats, {
-        buildings: totalBuildings(nextState),
-        completedTrades: Math.max(
-          existingStats?.completedTrades || 0,
-          pubStats?.completedTrades || 0,
-          completedTradesCount,
-        ),
-      });
-      const activeSub = getActiveSubscription(nextState, Date.now());
-      tx.update(pRef, {
-        gdp: gdpVal,
-        cash,
-        gems,
-        level: capValue(playerLevel(nextState), 10_000_000) || 1,
-        rank: capValue(nextState.rank, MAX_RANK),
-        subTier: activeSub ? activeSub.def.id : '',
-        subExp: activeSub ? capValue(activeSub.exp, 1e13) : 0,
-        lastSeen: serverTimestamp(),
-        stats: mergedStats,
-      });
-
-      tx.set(doc(db, 'saves', uid), { save: cleanedSave });
-    },
-    true,
-    `players/provinceTxs/${txId}`,
-    false,
-    activeUid,
-  );
-
-  return { walletRev: nextRevOut };
-}
-
-export async function syncProvinceLeaderboardEntries(
-  entries: ProvinceLeaderboardEntry[],
-  expectedUid?: string,
-): Promise<void> {
-  if (!entries.length || !auth?.currentUser?.uid) return;
-  const uid = requireUid(expectedUid);
-  const batch = writeBatch(db);
-  for (const e of entries.slice(0, 10)) {
-    const entryId = `${uid}_${e.provId}`;
-    batch.set(doc(db, 'provinceLeaderboard', entryId), {
-      ownerUid: uid,
-      ownerName: e.ownerName.slice(0, 16) || 'Player',
-      countryCode: sanitizeCountryCode(e.countryCode),
-      provId: e.provId,
-      slot: Math.max(1, Math.min(10, Math.floor(e.slot))),
-      name: e.name.slice(0, 24),
-      flagId: e.flagId.slice(0, 32),
-      color: e.color,
-      gdp: Math.max(0, Math.min(1e13, Math.round(e.gdp))),
-      pop: Number(Math.max(0.5, Math.min(10_000, e.pop)).toFixed(2)),
-      hap: Number(Math.max(0, Math.min(100, e.hap)).toFixed(1)),
-      dev: Number(Math.max(1, Math.min(100, e.dev)).toFixed(1)),
-      emp: Number(Math.max(0, Math.min(100, e.emp)).toFixed(1)),
-      overallScore: Math.max(0, Math.min(1000, Math.round(e.overallScore))),
-      updatedAt: serverTimestamp(),
-    });
+}): Promise<{ usedServer: boolean; nextCash?: number; walletRev?: number; gdp?: number }> {
+  const fnBase =
+    typeof import.meta !== 'undefined' && import.meta.env
+      ? (import.meta.env.VITE_FUNCTIONS_BASE_URL as string | undefined)
+      : undefined;
+  if (!fnBase || !auth?.currentUser) {
+    return { usedServer: false };
   }
-  await batch.commit();
-}
-
-const LEADERBOARD_ORDER_FIELD: Record<ProvinceLeaderboardCategory, string> = {
-  overall: 'overallScore',
-  gdp: 'gdp',
-  hap: 'hap',
-  dev: 'dev',
-  pop: 'pop',
-  emp: 'emp',
-};
-
-export function normalizeProvinceLeaderboardDoc(
-  id: string,
-  raw: Record<string, unknown>,
-): ProvinceLeaderboardEntry {
-  return {
-    entryId: id,
-    ownerUid: String(raw.ownerUid || ''),
-    ownerName: String(raw.ownerName || 'Player'),
-    countryCode: String(raw.countryCode || 'PK'),
-    provId: String(raw.provId || 'prov_1'),
-    slot: Number(raw.slot || 1),
-    name: String(raw.name || 'Province'),
-    flagId: String(raw.flagId || 'crest_star'),
-    color: String(raw.color || '#3fd2ff'),
-    gdp: Number(raw.gdp || 0),
-    pop: Number(raw.pop || 1),
-    hap: Number(raw.hap || 60),
-    dev: Number(raw.dev || 1),
-    emp: Number(raw.emp || 68),
-    overallScore: Number(raw.overallScore || 0),
-    updatedMs: timestampToMs(raw.updatedAt),
-  };
-}
-
-export async function fetchProvinceLeaderboard(
-  category: ProvinceLeaderboardCategory,
-  limitCount = 100,
-): Promise<ProvinceLeaderboardEntry[]> {
-  if (!auth?.currentUser?.uid) return [];
-  const snap = await getDocs(buildQueryHelpers().provinceLeaderboardQuery(category, limitCount));
-  const mapped: ProvinceLeaderboardEntry[] = snap.docs.map((d) =>
-    normalizeProvinceLeaderboardDoc(d.id, d.data() as Record<string, unknown>),
-  );
-  return selectBestProvinceLeaderboardEntries(mapped, category);
+  try {
+    const token = await auth.currentUser.getIdToken();
+    const res = await fetch(`${fnBase.replace(/\/$/, '')}/verifyNationalRankPromotion`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ targetRank: params.targetRank, sid: params.sid }),
+    });
+    if (!res.ok) return { usedServer: false };
+    const data = (await res.json()) as {
+      ok?: boolean;
+      nextCash?: number;
+      walletRev?: number;
+      gdp?: number;
+    };
+    if (!data?.ok) return { usedServer: false };
+    return {
+      usedServer: true,
+      nextCash: data.nextCash,
+      walletRev: data.walletRev,
+      gdp: data.gdp,
+    };
+  } catch {
+    return { usedServer: false };
+  }
 }
 

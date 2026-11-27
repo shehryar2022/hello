@@ -7,8 +7,6 @@ export const SYNC_MAX_WAIT_MS = 1_400;
 export const SYNC_TAIL_DRAIN_MS = 150;
 export const PUBLIC_METRICS_FAST_INTERVAL_MS = 3_500;
 export const PASSIVE_FULL_SAVE_INTERVAL_MS = 15_000;
-export const PROV_LB_COALESCE_MS = 1_500;
-export const PROV_LB_MIN_INTERVAL_MS = 2_500;
 export const MAX_TRANSIENT_RETRIES = 3;
 
 export type CloudSyncPhase = 'idle' | 'syncing' | 'saving' | 'saved' | 'offline' | 'error';
@@ -97,10 +95,10 @@ export function buildPublicMetricsFingerprint(
   nowSrvMs: number,
 ): string {
   const cash = Math.max(0, Math.floor(Number(state.cash) || 0));
-  const gdp = Math.max(1, Math.min(cash, Math.floor(calculateGdp(state))));
+  const gdp = Math.max(1, Math.floor(calculateGdp(state)));
   const gems = Math.max(0, Math.floor(Number(state.gems) || 0));
   const lvl = Math.max(1, Math.floor(playerLevel(state)));
-  const rank = Math.max(0, Math.floor(Number(state.rank) || 0));
+  const rank = Math.max(1, Math.floor(Number(state.rank) || 1));
   const bTotal = totalBuildings(state);
   const trades = Math.max(pubStats?.completedTrades || 0, completedTradesCount);
   const sub = getActiveSubscription(state, nowSrvMs);
@@ -112,23 +110,10 @@ export function buildPublicMetricsFingerprint(
  * Builds a fingerprint of meaningful save state (`saves/{uid}`) excluding noisy
  * 1-second tick timestamps (`t`) and fractional `day` drift when nothing material changed.
  * Ensures idle tabs execute 0 unnecessary Firestore writes while any cash/taxPool/
- * building/province/policy/quest/sub change is captured promptly.
+ * building/policy/quest/sub change is captured promptly.
  */
 export function buildMeaningfulSaveFingerprint(state: GameState): string {
   const cleaned = cleanSavePayload(state) as Partial<GameState>;
-  const provSummary = (cleaned.provinces || []).map((p) => ({
-    id: p.id,
-    n: p.name,
-    f: p.flagId,
-    c: p.color,
-    g: Math.round(p.gdp),
-    h: Math.round(p.hap * 10),
-    d: Math.round(p.dev * 10),
-    e: Math.round(p.emp * 10),
-    p: Math.round(p.pop * 100),
-    b: p.budget,
-    l: p.lvls,
-  }));
   return JSON.stringify({
     cash: Math.floor(Number(cleaned.cash) || 0),
     gems: Math.floor(Number(cleaned.gems) || 0),
@@ -163,7 +148,6 @@ export function buildMeaningfulSaveFingerprint(state: GameState): string {
     milestones: cleaned.milestones,
     claimed: cleaned.claimed,
     country: state.country,
-    provinces: provSummary,
     gxCond: cleaned.gx?.cond,
     gxExpN: cleaned.gx?.exp?.n || 0,
     set: cleaned.set,
@@ -226,7 +210,6 @@ export function resolveWalletRevisionConflict(params: {
     ? {
         ...localState,
         ...serverSave,
-        provinces: Array.isArray(serverSave?.provinces) ? serverSave.provinces : localState.provinces,
       }
     : localState;
 

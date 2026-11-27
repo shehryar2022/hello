@@ -1,5 +1,5 @@
 import React from 'react';
-import { TAB_META } from '../game/constants';
+import { RANKS, TAB_META } from '../game/constants';
 import { formatNumber } from '../game/rules';
 import type { GameState, PlayerProfile, TabId } from '../game/types';
 import {
@@ -41,7 +41,8 @@ export const TopBar = React.memo<TopBarProps>(({
   onOpenAuth,
 }) => {
   const dt = new Date(2000, 0, 1 + Math.floor(state.day));
-  const dateLabel = `${MONTH_YEAR_FORMATTER.format(dt)} · GDP Rank #${rankPosition}`;
+  const rankDef = RANKS[Math.max(1, Math.min(10, state.rank || 1))] || RANKS[1];
+  const dateLabel = `${MONTH_YEAR_FORMATTER.format(dt)} · ${rankDef.n} · #${rankPosition}`;
   const cc = state.country?.[0];
 
   return (
@@ -57,13 +58,13 @@ export const TopBar = React.memo<TopBarProps>(({
       </div>
 
       <div className="pill res">
-        <b title="Cash">
+        <b title="Coins">
           <i>
             <CashCoinIcon size={20} />
           </i>
           <span data-testid="hud-cash">{formatNumber(state.cash)}</span>
         </b>
-        <b className="g" title="Diamonds">
+        <b className="g" title="Gems">
           <i>
             <GemDiamondIcon size={19} />
           </i>

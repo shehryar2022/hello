@@ -39,7 +39,6 @@ import { GiftsTab } from './components/tabs/GiftsTab';
 import { GovtTab } from './components/tabs/GovtTab';
 import { PlayersTab } from './components/tabs/PlayersTab';
 import { PolicyTab } from './components/tabs/PolicyTab';
-import { ProvincesTab } from './components/tabs/ProvincesTab';
 import { QuestsTab } from './components/tabs/QuestsTab';
 import { ShopTab } from './components/tabs/ShopTab';
 import { StickersTab } from './components/tabs/StickersTab';
@@ -63,20 +62,17 @@ import {
   dayKeyFor,
   endSenderOffer,
   fetchPlayerProfile,
-  fetchProvinceLeaderboard,
   finishGovProject,
   markNotificationsRead,
   normalizeProject,
-  normalizeProvinceLeaderboardDoc,
   payGovProjectStage,
-  recordProvinceTxAndSyncOnline,
+  promoteRankOnline,
   rejectGiftOffer,
   searchPlayersByUsername,
   sendDirectMessage,
   sendGlobalChatMessage,
   sendHeartbeat,
   settleExpiredTrades,
-  syncProvinceLeaderboardEntries,
   syncPublicProfileMetrics,
   syncSaveToCloud,
   tickGovProject,
@@ -115,8 +111,6 @@ import {
   computeSyncRetryBackoffMs,
   MAX_TRANSIENT_RETRIES,
   PASSIVE_FULL_SAVE_INTERVAL_MS,
-  PROV_LB_COALESCE_MS,
-  PROV_LB_MIN_INTERVAL_MS,
   PUBLIC_METRICS_FAST_INTERVAL_MS,
   resolveWalletRevisionConflict,
   SYNC_COALESCE_DEBOUNCE_MS,
@@ -151,11 +145,12 @@ import {
   applyBuyRank,
   applyBuySubscription,
   applyChangeGov,
+  applyChangePolicyStance,
   applyClaimQuest,
   applyCollectTax,
+  applyCommitFiscalReform,
   applyFixInfra,
   applyOfflineEarnings,
-  applyPolicyPreset,
   applyUnlockTech,
   applyUpgradeBuilding,
   buyStickerCrate,
@@ -179,13 +174,13 @@ import {
   getTaxPoolCapSeconds,
   migrateState,
   playerLevel,
-  POLICY_BOUNDS,
   resolveExecutiveDecision,
   rollWeeklySubPromo,
   rotateDailyQuestsIfNeeded,
   selectDailyQuestIds,
   shouldRunOfflineEntryCheck,
   targetHappiness,
+  tickConstructionQueue,
   tierOfCompletedTrades,
   type DailyOfflineCheckResult,
 } from './game/rules';
@@ -201,16 +196,6 @@ import {
   VERSION_BROADCAST_CHANNEL,
   VERSION_POLL_INTERVAL_MS,
 } from './game/versionCheck';
-import {
-  applyAllocateProvinceBudget,
-  applyCustomizeProvince,
-  applyRebalanceProvinceBudget,
-  applyUnlockProvince,
-  buildProvinceLeaderboardEntries,
-  buildProvinceLeaderboardFingerprint,
-  selectBestProvinceLeaderboardEntries,
-  stepProvincesTick,
-} from './game/province';
 import { playSfx, triggerBuzz } from './game/sound';
 import type {
   ChatMessage,
@@ -223,12 +208,8 @@ import type {
   NotificationItem,
   PlayerProfile,
   PlayersSubTab,
+  PolicyCategoryId,
   ProjectType,
-  ProvinceBudgetCategory,
-  ProvinceCustomizationInput,
-  ProvinceLeaderboardCategory,
-  ProvinceLeaderboardEntry,
-  ProvincesSubTab,
   ShopSubTab,
   SubscriptionTierId,
   TabId,
@@ -261,12 +242,6 @@ export default function App() {
 
   const [tab, setTab] = useState<TabId>('build');
   const [govtSubTab, setGovtSubTab] = useState<GovtSubTab>('infra');
-  const [provincesSubTab, setProvincesSubTab] = useState<ProvincesSubTab>('overview');
-  const [selectedProvinceId, setSelectedProvinceId] = useState<string>('prov_1');
-  const [provUnlockBusy, setProvUnlockBusy] = useState(false);
-  const [provLbCat, setProvLbCat] = useState<ProvinceLeaderboardCategory>('overall');
-  const [provLbEntries, setProvLbEntries] = useState<ProvinceLeaderboardEntry[]>([]);
-  const [provLbLoading, setProvLbLoading] = useState(false);
   const [playersSubTab, setPlayersSubTab] = useState<PlayersSubTab>('lb');
   const [giftsSubTab, setGiftsSubTab] = useState<GiftsSubTab>('in');
   const [shopSubTab, setShopSubTab] = useState<ShopSubTab>('rank');
@@ -363,7 +338,6 @@ export default function App() {
   const cloudSyncTimerRef = useRef<number | null>(null);
   const syncRetryTimerRef = useRef<number | null>(null);
   const cloudRetryTailTimerRef = useRef<number | null>(null);
-  const provLbSyncTimerRef = useRef<number | null>(null);
   const firstDirtyAtRef = useRef<number | null>(null);
   const cloudScheduledFireAtRef = useRef<number | null>(null);
   const mutationSeqRef = useRef<number>(0);
@@ -375,7 +349,6 @@ export default function App() {
   const cloudSyncBusyRef = useRef<boolean>(false);
   const cloudDirtyRef = useRef<boolean>(false);
   const pendingDirtyRef = useRef<boolean>(false);
-  const provLbPendingRef = useRef<boolean>(false);
   const isOnlineRef = useRef<boolean>(typeof navigator === 'undefined' ? true : navigator.onLine !== false);
   const syncErrorRef = useRef<{ active: boolean; label: string }>({ active: false, label: '' });
   const localSaveTimerRef = useRef<number | null>(null);
@@ -408,20 +381,14 @@ export default function App() {
   const projLastSyncRef = useRef<Record<string, number>>({});
   const projPrevTickMsRef = useRef<Record<string, number>>({});
   const lastCityTapRef = useRef<number>(0);
+  const cityTapTimesRef = useRef<number[]>([]);
   const settlingTradesRef = useRef<boolean>(false);
   const markingNotifIdsRef = useRef<Set<string>>(new Set());
   const tradesRef = useRef<TradeOffer[]>([]);
   tradesRef.current = trades;
   const lastSettledTradeCheckRef = useRef<number>(0);
-  const provUnlockBusyRef = useRef<boolean>(false);
-  const provAllocBusyRef = useRef<boolean>(false);
   const subBuyBusyRef = useRef<boolean>(false);
   const lastExpiredSubKeyRef = useRef<string>('');
-  const lastProvLbSyncAtRef = useRef<number>(0);
-  const lastProvLbHashRef = useRef<string>('');
-  const provLbCacheRef = useRef<
-    Partial<Record<ProvinceLeaderboardCategory, { entries: ProvinceLeaderboardEntry[]; fetchedAt: number }>>
-  >({});
   const rankPositionRef = useRef<number>(1);
   const modalOpenRef = useRef<boolean>(false);
   const anyModalOpen = Boolean(
@@ -563,7 +530,6 @@ export default function App() {
       if (cloudSyncTimerRef.current) window.clearTimeout(cloudSyncTimerRef.current);
       if (syncRetryTimerRef.current) window.clearTimeout(syncRetryTimerRef.current);
       if (cloudRetryTailTimerRef.current) window.clearTimeout(cloudRetryTailTimerRef.current);
-      if (provLbSyncTimerRef.current) window.clearTimeout(provLbSyncTimerRef.current);
       for (const tid of toastTimers) window.clearTimeout(tid);
       toastTimers.clear();
       for (const tid of floatTimers) window.clearTimeout(tid);
@@ -680,65 +646,6 @@ export default function App() {
     setKicked(true);
     refreshCloudStatus();
   }, [refreshCloudStatus]);
-
-  const scheduleProvinceLbSync = useCallback(
-    (immediate = false) => {
-      const currentUid = uidRef.current;
-      const capturedSeq = authSeqRef.current;
-      if (
-        !currentUid ||
-        !cloudReadyRef.current ||
-        kickedRef.current ||
-        needsOnboardingRef.current ||
-        cloudSyncPermDeniedRef.current ||
-        cloudSyncQuotaPausedRef.current ||
-        updateAvailableRef.current ||
-        (stateRef.current.provinces?.length || 0) === 0
-      ) {
-        return;
-      }
-      provLbPendingRef.current = true;
-      if (!isOnlineRef.current) return;
-
-      const now = Date.now();
-      const sinceLast = now - lastProvLbSyncAtRef.current;
-      const delay = immediate
-        ? 120
-        : Math.max(PROV_LB_COALESCE_MS, Math.max(0, PROV_LB_MIN_INTERVAL_MS - sinceLast));
-
-      if (provLbSyncTimerRef.current) {
-        if (!immediate) return;
-        window.clearTimeout(provLbSyncTimerRef.current);
-        provLbSyncTimerRef.current = null;
-      }
-
-      provLbSyncTimerRef.current = window.setTimeout(() => {
-        provLbSyncTimerRef.current = null;
-        if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) return;
-        if (!isOnlineRef.current || !cloudReadyRef.current || kickedRef.current || needsOnboardingRef.current) return;
-        const nowSrv = Date.now() + serverOffsetMsRef.current;
-        const entries = buildProvinceLeaderboardEntries(
-          stateRef.current,
-          currentUid,
-          pubProfileRef.current?.username || 'Player',
-          stateRef.current.country?.[0] || 'PK',
-          nowSrv,
-        );
-        const nextHash = buildProvinceLeaderboardFingerprint(entries);
-        provLbPendingRef.current = false;
-        if (!nextHash || nextHash === lastProvLbHashRef.current) return;
-        lastProvLbSyncAtRef.current = Date.now();
-        lastProvLbHashRef.current = nextHash;
-        void syncProvinceLeaderboardEntries(entries, currentUid).catch(() => {
-          if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
-            provLbPendingRef.current = true;
-            lastProvLbHashRef.current = '';
-          }
-        });
-      }, delay);
-    },
-    [],
-  );
 
   const performCloudSync = useCallback(
     async (immediate = false, allowDuringUpdate = false) => {
@@ -1094,10 +1001,6 @@ export default function App() {
         window.clearTimeout(cloudRetryTailTimerRef.current);
         cloudRetryTailTimerRef.current = null;
       }
-      if (provLbSyncTimerRef.current) {
-        window.clearTimeout(provLbSyncTimerRef.current);
-        provLbSyncTimerRef.current = null;
-      }
 
       cloudLoadingRef.current = false;
       kickedRef.current = false;
@@ -1114,7 +1017,6 @@ export default function App() {
       cloudSyncBusyRef.current = false;
       cloudDirtyRef.current = false;
       pendingDirtyRef.current = false;
-      provLbPendingRef.current = false;
       syncRetryCountRef.current = 0;
       cloudSyncPermDeniedRef.current = false;
       cloudSyncQuotaPausedRef.current = false;
@@ -1140,13 +1042,8 @@ export default function App() {
       projLastSyncRef.current = {};
       projPrevTickMsRef.current = {};
       markingNotifIdsRef.current.clear();
-      provUnlockBusyRef.current = false;
-      provAllocBusyRef.current = false;
       subBuyBusyRef.current = false;
       lastExpiredSubKeyRef.current = '';
-      lastProvLbSyncAtRef.current = 0;
-      lastProvLbHashRef.current = '';
-      provLbCacheRef.current = {};
       cloudReadyRef.current = false;
       needsOnboardingRef.current = false;
 
@@ -1159,9 +1056,6 @@ export default function App() {
       setProjects([]);
       setLeaderboard([]);
       setLbLoaded(false);
-      setProvLbEntries([]);
-      setProvLbLoading(false);
-      setSelectedProvinceId('prov_1');
       setSentToday(0);
       setLiveProjectProgress({});
       setGlobalChat([]);
@@ -1320,19 +1214,6 @@ export default function App() {
         authResolvedRef.current = true;
         writeAccountSave(u.uid, finalState);
         refreshCloudStatus();
-
-        if ((finalState.provinces?.length || 0) > 0) {
-          lastProvLbSyncAtRef.current = Date.now();
-          const lbEntries = buildProvinceLeaderboardEntries(
-            finalState,
-            u.uid,
-            pData.username || 'Player',
-            finalState.country?.[0] || 'PK',
-            srvNow,
-          );
-          lastProvLbHashRef.current = buildProvinceLeaderboardFingerprint(lbEntries);
-          void syncProvinceLeaderboardEntries(lbEntries, u.uid).catch(() => null);
-        }
       } catch (err) {
         if (isSessionStillValid(uidRef.current, u.uid, authSeqRef.current, seq)) {
           const classified = classifySyncError(
@@ -1411,9 +1292,6 @@ export default function App() {
         } else if (!cloudSyncQuotaPausedRef.current) {
           void triggerHeartbeat();
         }
-        if (provLbPendingRef.current && !cloudSyncQuotaPausedRef.current) {
-          scheduleProvinceLbSync(true);
-        }
       } else {
         refreshCloudStatus();
       }
@@ -1462,7 +1340,7 @@ export default function App() {
       window.removeEventListener('online', onOnline);
       document.removeEventListener('visibilitychange', onVisChange);
     };
-  }, [loadCloudSession, performCloudSync, refreshCloudStatus, saveLocal, scheduleProvinceLbSync, triggerHeartbeat]);
+  }, [loadCloudSession, performCloudSync, refreshCloudStatus, saveLocal, triggerHeartbeat]);
 
   // Firebase bootstrap & auth listener
   useEffect(() => {
@@ -1955,6 +1833,7 @@ export default function App() {
       let triggerDecisionId: string | null = null;
       let passiveEvent: { kind: 'bonus' | 'fine'; amt: number } | null = null;
       const curSnap = stateRef.current;
+      const queueCompleted = tickConstructionQueue(curSnap, nowSrv).completed;
       const expiredSubTier =
         curSnap.sub?.tier && curSnap.sub?.exp && curSnap.sub.exp <= nowSrv ? curSnap.sub : null;
       const expiredSubKey = expiredSubTier ? `${expiredSubTier.tier}_${expiredSubTier.exp}` : '';
@@ -2000,9 +1879,10 @@ export default function App() {
             1,
             prev.pop +
               (nextHap - 45) * 0.0005 +
-              ((prev.b.water || 0) * 0.0002 +
-                (prev.b.rail || 0) * 0.0003 +
-                (prev.b.transit || 0) * 0.00025 +
+              ((prev.b.hospitals || 0) * 0.00025 +
+                (prev.b.railways || 0) * 0.0003 +
+                (prev.b.roads || 0) * 0.0002 +
+                (prev.b.greenhouses || 0) * 0.00015 +
                 (prev.transitSub || 0) * 0.00004),
           ),
         );
@@ -2079,7 +1959,7 @@ export default function App() {
         const clearedSub =
           prev.sub?.tier && prev.sub?.exp && prev.sub.exp <= nowSrv ? {} : prev.sub;
 
-        const preProv: GameState = rotateDailyQuestsIfNeeded(
+        const nextNational: GameState = rotateDailyQuestsIfNeeded(
           {
             ...prev,
             cash: nextCash,
@@ -2100,8 +1980,16 @@ export default function App() {
           nowSrv,
         );
 
-        return stepProvincesTick(preProv, 1, nowSrv);
+        return tickConstructionQueue(nextNational, nowSrv).state;
       });
+
+      if (queueCompleted.length > 0) {
+        const label = queueCompleted.map((c) => (c.qty > 1 ? `${c.name} ×${c.qty}` : c.name)).join(', ');
+        addToast(`Construction complete: ${label}!`);
+        playSfx('win', !!curSnap.set.sfx);
+        setBurstKey((k) => k + 1);
+        scheduleCloudSync(SYNC_COALESCE_DEBOUNCE_MS);
+      }
 
       if (shouldNotifyExpiredSub && expiredSubTier) {
         const expDef = SUBSCRIPTIONS.find((x) => x.id === expiredSubTier.tier);
@@ -2201,7 +2089,6 @@ export default function App() {
       // Near-real-time Spark-optimized passive sync:
       // 1. Lightweight 1-write public metrics update (~3.5s) when cash/GDP/rank/sub changed (0 extra reads).
       // 2. Coalesced full save flush (~15s) ONLY if meaningful save state changed or dirty.
-      // 3. Fingerprint-gated province leaderboard sync (~3s) when province metrics cross delta.
       const capturedTickUid = uidRef.current;
       const capturedTickSeq = authSeqRef.current;
       if (
@@ -2255,31 +2142,6 @@ export default function App() {
           if (pendingDirtyRef.current || (isUserActive && nextSaveHash !== lastSavedSaveHashRef.current)) {
             syncRetryCountRef.current = 0;
             void performCloudSync(false);
-          }
-        }
-
-        if (
-          (stateRef.current.provinces?.length || 0) > 0 &&
-          now - lastProvLbSyncAtRef.current >= PROV_LB_MIN_INTERVAL_MS
-        ) {
-          const entries = buildProvinceLeaderboardEntries(
-            stateRef.current,
-            capturedTickUid,
-            pubProfileRef.current?.username || 'Player',
-            stateRef.current.country?.[0] || 'PK',
-            nowSrv,
-          );
-          const nextHash = buildProvinceLeaderboardFingerprint(entries);
-          if (nextHash && nextHash !== lastProvLbHashRef.current) {
-            lastProvLbSyncAtRef.current = now;
-            lastProvLbHashRef.current = nextHash;
-            provLbPendingRef.current = false;
-            void syncProvinceLeaderboardEntries(entries, capturedTickUid).catch(() => {
-              if (isSessionStillValid(uidRef.current, capturedTickUid, authSeqRef.current, capturedTickSeq)) {
-                provLbPendingRef.current = true;
-                lastProvLbHashRef.current = '';
-              }
-            });
           }
         }
       }
@@ -2555,6 +2417,13 @@ export default function App() {
     (clientX?: number, clientY?: number) => {
       const now = Date.now();
       if (now - lastCityTapRef.current < 600) return;
+      const recent = cityTapTimesRef.current.filter((t) => now - t < 60_000);
+      if (recent.length >= 10) {
+        lastCityTapRef.current = now;
+        addToast('Tap boost cooling down — passive income continues!');
+        return;
+      }
+      cityTapTimesRef.current = [...recent, now];
       lastCityTapRef.current = now;
       const cur = stateRef.current;
       const inc = calculateIncome(cur, {
@@ -2573,7 +2442,7 @@ export default function App() {
         '#ffc23d',
       );
     },
-    [tradeTier, spawnFloat, updateState],
+    [addToast, tradeTier, spawnFloat, updateState],
   );
 
   const handleBuyBuilding = useCallback(
@@ -2582,15 +2451,23 @@ export default function App() {
       if (!def) return;
       const nowSrv = Date.now() + serverOffsetMsRef.current;
       const res = applyBuyBuilding(stateRef.current, id, qty, nowSrv);
-      if (!res.ok) return;
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
 
       stateRef.current = res.state;
       saveLocal(res.state);
       playSfx('buy', !!res.state.set.sfx);
       triggerBuzz(15, !!res.state.set.vib);
-      setBurstKey((k) => k + 1);
       const rect = e.currentTarget.getBoundingClientRect();
-      spawnFloat(`${def.n} Lv ${res.newCount}`, rect.left + rect.width / 2, rect.top, '#ffc23d');
+      if (res.instant) {
+        setBurstKey((k) => k + 1);
+        spawnFloat(`${def.n} Lv ${res.newCount}`, rect.left + rect.width / 2, rect.top, '#ffc23d');
+      } else {
+        spawnFloat(`Queued · ${res.durationSec}s`, rect.left + rect.width / 2, rect.top, '#5ccbff');
+        addToast(`Construction started: ${def.n}${qty > 1 ? ` ×${qty}` : ''} (${res.durationSec}s)`);
+      }
 
       setState((prev) => {
         const recheck = applyBuyBuilding(prev, id, qty, nowSrv);
@@ -2598,7 +2475,7 @@ export default function App() {
       });
       scheduleCloudSync(SYNC_COALESCE_DEBOUNCE_MS);
     },
-    [spawnFloat, saveLocal, scheduleCloudSync],
+    [addToast, spawnFloat, saveLocal, scheduleCloudSync],
   );
 
   const handleFixInfra = useCallback(
@@ -2641,7 +2518,8 @@ export default function App() {
     (techId: string, e: React.MouseEvent<HTMLButtonElement>) => {
       const tDef = TECH_TREE.find((x) => x.id === techId);
       if (!tDef) return;
-      const res = applyUnlockTech(stateRef.current, techId);
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const res = applyUnlockTech(stateRef.current, techId, nowSrv);
       if (!res.ok) {
         if (res.reason) addToast(res.reason);
         return;
@@ -2653,7 +2531,7 @@ export default function App() {
       const rect = e.currentTarget.getBoundingClientRect();
       spawnFloat(tDef.n, rect.left + rect.width / 2, rect.top, '#a88bff');
       setState((prev) => {
-        const recheck = applyUnlockTech(prev, techId);
+        const recheck = applyUnlockTech(prev, techId, nowSrv);
         return recheck.ok ? recheck.state : prev;
       });
       scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
@@ -2741,31 +2619,49 @@ export default function App() {
     [addToast, updateState],
   );
 
-  const handlePolicyChange = useCallback(
-    (key: keyof GameState, value: number) => {
-      const bounds = POLICY_BOUNDS[key as string];
-      if (!bounds || !Number.isFinite(value)) return;
-      const clamped = Math.round(Math.max(bounds[0], Math.min(bounds[1], value)));
-      if (stateRef.current[key] === clamped) return;
-      stateRef.current = { ...stateRef.current, [key]: clamped };
+  const handleCommitFiscalReform = useCallback(
+    (draft: Partial<Record<keyof GameState, number>>): boolean => {
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const res = applyCommitFiscalReform(stateRef.current, draft, nowSrv);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return false;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('buy', !!res.state.set.sfx);
+      triggerBuzz(14, !!res.state.set.vib);
       setState((prev) => {
-        if (prev[key] === clamped) return prev;
-        return { ...prev, [key]: clamped };
+        const recheck = applyCommitFiscalReform(prev, draft, nowSrv);
+        return recheck.ok ? recheck.state : prev;
       });
-      scheduleSaveLocal();
-      scheduleCloudSync(SYNC_COALESCE_DEBOUNCE_MS);
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      addToast(`Fiscal reform enacted (−₨ ${formatNumber(res.cost)})!`);
+      return true;
     },
-    [scheduleSaveLocal, scheduleCloudSync],
+    [addToast, saveLocal, scheduleCloudSync],
   );
 
-  const handleApplyPreset = useCallback(
-    (presetId: 'balanced' | 'revenue' | 'welfare') => {
-      playSfx('buy', !!stateRef.current.set.sfx);
-      updateState((prev) => applyPolicyPreset(prev, presetId), SYNC_COALESCE_DEBOUNCE_MS);
-      const label = presetId === 'balanced' ? 'Balanced Growth' : presetId === 'revenue' ? 'High Revenue' : 'Citizen Bliss';
-      addToast(`Policy preset applied: ${label}`);
+  const handleChangePolicyStance = useCallback(
+    (catId: PolicyCategoryId, stance: 0 | 1 | 2) => {
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const res = applyChangePolicyStance(stateRef.current, catId, stance, nowSrv);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(16, !!res.state.set.vib);
+      setState((prev) => {
+        const recheck = applyChangePolicyStance(prev, catId, stance, nowSrv);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      addToast(`Policy enacted: ${res.label || catId}`);
     },
-    [addToast, updateState],
+    [addToast, saveLocal, scheduleCloudSync],
   );
 
   const handleChangeGov = useCallback(
@@ -2929,6 +2825,15 @@ export default function App() {
         return recheck.ok ? recheck.state : prev;
       });
       scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      if (uidRef.current && cloudReadyRef.current && isOnlineRef.current) {
+        void promoteRankOnline({ targetRank: rankId, sid: sidRef.current })
+          .then((srv) => {
+            if (srv.usedServer && typeof srv.walletRev === 'number') {
+              walletRevRef.current = Math.max(walletRevRef.current, srv.walletRev);
+            }
+          })
+          .catch(() => null);
+      }
       addToast(`Promoted to ${rk.n}!`);
     },
     [addToast, spawnFloat, saveLocal, scheduleCloudSync],
@@ -3088,291 +2993,6 @@ export default function App() {
       addToast(`${b.n} activated!`);
     },
     [addToast, spawnFloat, saveLocal, scheduleCloudSync],
-  );
-
-  // Province Management Handlers & Scoped Real-Time Leaderboard Listener
-  const refreshProvLeaderboard = useCallback(
-    async (category: ProvinceLeaderboardCategory, force = false) => {
-      const currentUid = uidRef.current;
-      const capturedSeq = authSeqRef.current;
-      if (!currentUid || !cloudReadyRef.current) {
-        setProvLbEntries([]);
-        return;
-      }
-      const cached = provLbCacheRef.current[category];
-      if (!force && cached && Date.now() - cached.fetchedAt < 10_000) {
-        setProvLbEntries(cached.entries);
-        return;
-      }
-      setProvLbLoading(true);
-      try {
-        const list = await fetchProvinceLeaderboard(category, 100);
-        if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
-          provLbCacheRef.current[category] = { entries: list, fetchedAt: Date.now() };
-          setProvLbEntries(list);
-        }
-      } catch (err) {
-        if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
-          recordFirestoreError(err, OperationType.LIST, 'provinceLeaderboard');
-        }
-      } finally {
-        if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
-          setProvLbLoading(false);
-        }
-      }
-    },
-    [],
-  );
-
-  // Scoped real-time onSnapshot listener: active ONLY while viewing Provinces -> Global Ranks
-  useEffect(() => {
-    if (
-      tab !== 'provinces' ||
-      provincesSubTab !== 'leaderboard' ||
-      !uid ||
-      !cloudReady ||
-      needsOnboarding ||
-      kicked ||
-      !db
-    ) {
-      return;
-    }
-    const cached = provLbCacheRef.current[provLbCat];
-    if (cached) {
-      setProvLbEntries(cached.entries);
-    } else {
-      setProvLbLoading(true);
-    }
-
-    const q = buildQueryHelpers().provinceLeaderboardQuery(provLbCat, 100);
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const mapped = snap.docs.map((d) =>
-          normalizeProvinceLeaderboardDoc(d.id, d.data({ serverTimestamps: 'estimate' }) as Record<string, unknown>),
-        );
-        const filtered = selectBestProvinceLeaderboardEntries(mapped, provLbCat);
-        provLbCacheRef.current[provLbCat] = { entries: filtered, fetchedAt: Date.now() };
-        setProvLbEntries(filtered);
-        setProvLbLoading(false);
-      },
-      (err) => {
-        setProvLbLoading(false);
-        handleSnapshotError('provinceLeaderboard', err);
-      },
-    );
-
-    return () => unsub();
-  }, [tab, provincesSubTab, provLbCat, uid, cloudReady, needsOnboarding, kicked, handleSnapshotError]);
-
-  const handleUnlockProvince = useCallback(
-    async (input: ProvinceCustomizationInput): Promise<boolean> => {
-      if (provUnlockBusyRef.current) return false;
-      const currentUid = uidRef.current;
-      const capturedSeq = authSeqRef.current;
-      const nowSrv = Date.now() + serverOffsetMsRef.current;
-      const res = applyUnlockProvince(stateRef.current, input, nowSrv);
-      if (!res.ok || !res.unlocked) {
-        addToast(res.reason || 'Could not charter Province.');
-        return false;
-      }
-
-      provUnlockBusyRef.current = true;
-      setProvUnlockBusy(true);
-      stateRef.current = res.state;
-      saveLocal(res.state, currentUid);
-      playSfx('win', !!res.state.set.sfx);
-      triggerBuzz(20, !!res.state.set.vib);
-      setSelectedProvinceId(res.unlocked.id);
-      setState((prev) => {
-        const recheck = applyUnlockProvince(prev, input, nowSrv, res.txId);
-        return recheck.ok ? recheck.state : prev;
-      });
-      addToast(
-        res.discountPct > 0
-          ? `Chartered ${res.unlocked.name} (${res.discountPct}% Weekly Deal)!`
-          : `Chartered ${res.unlocked.name}!`,
-      );
-
-      try {
-        if (currentUid && cloudReadyRef.current && !needsOnboardingRef.current && !kickedRef.current) {
-          if (!cloudSyncPermDeniedRef.current && !cloudSyncQuotaPausedRef.current) {
-            mutationSeqRef.current += 1;
-            pendingDirtyRef.current = true;
-            const capturedMutSeq = mutationSeqRef.current;
-            refreshCloudStatus();
-            try {
-              const txRes = await recordProvinceTxAndSyncOnline({
-                expectedUid: currentUid,
-                txId: res.txId,
-                kind: 'unlock',
-                provId: res.unlocked.id,
-                slot: res.unlocked.slot,
-                finalPrice: res.paidPrice,
-                discountPct: res.discountPct,
-                nextState: stateRef.current,
-                pubStats: pubProfileRef.current?.stats,
-                completedTradesCount: completedTradesRef.current,
-                rev: walletRevRef.current,
-                sid: sidRef.current,
-                onKicked: handleKicked,
-              });
-              if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
-                return false;
-              }
-              walletRevRef.current = txRes.walletRev;
-              lastSyncedAtRef.current = Date.now();
-              lastSavedSaveHashRef.current = buildMeaningfulSaveFingerprint(stateRef.current);
-              if (mutationSeqRef.current === capturedMutSeq) {
-                pendingDirtyRef.current = false;
-              }
-              refreshCloudStatus();
-            } catch {
-              if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
-                scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
-              }
-            }
-            if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
-              return false;
-            }
-            scheduleProvinceLbSync(true);
-          }
-        }
-      } finally {
-        if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
-          provUnlockBusyRef.current = false;
-          setProvUnlockBusy(false);
-        }
-      }
-      return true;
-    },
-    [addToast, handleKicked, refreshCloudStatus, saveLocal, scheduleCloudSync, scheduleProvinceLbSync],
-  );
-
-  const handleCustomizeProvince = useCallback(
-    async (provId: string, input: ProvinceCustomizationInput): Promise<boolean> => {
-      const currentUid = uidRef.current;
-      const res = applyCustomizeProvince(stateRef.current, provId, input);
-      if (!res.ok || !res.province) {
-        addToast(res.reason || 'Invalid Province details.');
-        return false;
-      }
-      stateRef.current = res.state;
-      saveLocal(res.state, currentUid);
-      playSfx('buy', !!res.state.set.sfx);
-      setState((prev) => {
-        const recheck = applyCustomizeProvince(prev, provId, input);
-        return recheck.ok ? recheck.state : prev;
-      });
-      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
-      addToast(`Updated ${res.province.name}!`);
-      scheduleProvinceLbSync(true);
-      return true;
-    },
-    [addToast, saveLocal, scheduleCloudSync, scheduleProvinceLbSync],
-  );
-
-  const handleAllocateProvinceBudget = useCallback(
-    async (provId: string, category: ProvinceBudgetCategory, amount: number): Promise<boolean> => {
-      if (provAllocBusyRef.current) return false;
-      const currentUid = uidRef.current;
-      const capturedSeq = authSeqRef.current;
-      const nowSrv = Date.now() + serverOffsetMsRef.current;
-      const res = applyAllocateProvinceBudget(stateRef.current, provId, category, amount, nowSrv);
-      if (!res.ok) {
-        addToast(res.reason || 'Allocation failed.');
-        return false;
-      }
-
-      provAllocBusyRef.current = true;
-      stateRef.current = res.state;
-      saveLocal(res.state, currentUid);
-      playSfx('coin', !!res.state.set.sfx);
-      triggerBuzz(12, !!res.state.set.vib);
-      setState((prev) => {
-        const recheck = applyAllocateProvinceBudget(prev, provId, category, amount, nowSrv, res.txId);
-        return recheck.ok ? recheck.state : prev;
-      });
-      addToast(`Allocated ₨ ${formatNumber(res.amount)} to ${category}`);
-
-      try {
-        if (
-          currentUid &&
-          cloudReadyRef.current &&
-          !needsOnboardingRef.current &&
-          !kickedRef.current &&
-          !cloudSyncPermDeniedRef.current &&
-          !cloudSyncQuotaPausedRef.current
-        ) {
-          mutationSeqRef.current += 1;
-          pendingDirtyRef.current = true;
-          const capturedMutSeq = mutationSeqRef.current;
-          refreshCloudStatus();
-          try {
-            const targetProv = stateRef.current.provinces?.find((p) => p.id === provId);
-            const txRes = await recordProvinceTxAndSyncOnline({
-              expectedUid: currentUid,
-              txId: res.txId,
-              kind: 'alloc',
-              provId,
-              slot: targetProv?.slot || 1,
-              finalPrice: res.amount,
-              discountPct: 0,
-              nextState: stateRef.current,
-              pubStats: pubProfileRef.current?.stats,
-              completedTradesCount: completedTradesRef.current,
-              rev: walletRevRef.current,
-              sid: sidRef.current,
-              onKicked: handleKicked,
-            });
-            if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
-              return false;
-            }
-            walletRevRef.current = txRes.walletRev;
-            lastSyncedAtRef.current = Date.now();
-            lastSavedSaveHashRef.current = buildMeaningfulSaveFingerprint(stateRef.current);
-            if (mutationSeqRef.current === capturedMutSeq) {
-              pendingDirtyRef.current = false;
-            }
-            refreshCloudStatus();
-            scheduleProvinceLbSync(true);
-          } catch {
-            if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
-              scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
-            }
-          }
-        }
-      } finally {
-        if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
-          provAllocBusyRef.current = false;
-        }
-      }
-      return true;
-    },
-    [addToast, handleKicked, refreshCloudStatus, saveLocal, scheduleCloudSync, scheduleProvinceLbSync],
-  );
-
-  const handleRebalanceProvinceBudget = useCallback(
-    (provId: string, fromCat: ProvinceBudgetCategory, toCat: ProvinceBudgetCategory, amount: number): boolean => {
-      const nowSrv = Date.now() + serverOffsetMsRef.current;
-      const res = applyRebalanceProvinceBudget(stateRef.current, provId, fromCat, toCat, amount, nowSrv);
-      if (!res.ok) {
-        addToast(res.reason || 'Rebalance failed.');
-        return false;
-      }
-      stateRef.current = res.state;
-      saveLocal(res.state);
-      playSfx('buy', !!res.state.set.sfx);
-      setState((prev) => {
-        const recheck = applyRebalanceProvinceBudget(prev, provId, fromCat, toCat, amount, nowSrv);
-        return recheck.ok ? recheck.state : prev;
-      });
-      scheduleCloudSync(SYNC_COALESCE_DEBOUNCE_MS);
-      scheduleProvinceLbSync(false);
-      addToast(`Rebalanced ₨ ${formatNumber(res.amount)} (${fromCat} → ${toCat})`);
-      return true;
-    },
-    [addToast, saveLocal, scheduleCloudSync, scheduleProvinceLbSync],
   );
 
   // Auth handlers (guarded against double submission)
@@ -4224,37 +3844,13 @@ export default function App() {
                 onUnlockTech={handleUnlockTech}
               />
             )}
-            {tab === 'provinces' && (
-              <ProvincesTab
-                state={state}
-                uid={uid}
-                cloudReady={cloudReady}
-                ownerName={pubProfile?.username || 'Player'}
-                subTab={provincesSubTab}
-                selectedProvinceId={selectedProvinceId}
-                serverOffsetMs={serverOffsetMs}
-                unlockBusy={provUnlockBusy}
-                lbCategory={provLbCat}
-                lbEntries={provLbEntries}
-                lbLoading={provLbLoading}
-                onChangeSubTab={setProvincesSubTab}
-                onSelectProvince={setSelectedProvinceId}
-                onUnlockProvince={handleUnlockProvince}
-                onCustomizeProvince={handleCustomizeProvince}
-                onAllocateBudget={handleAllocateProvinceBudget}
-                onRebalanceBudget={handleRebalanceProvinceBudget}
-                onChangeLbCategory={setProvLbCat}
-                onRefreshLb={() => void refreshProvLeaderboard(provLbCat, true)}
-                onOpenLogin={handleOpenLoginGate}
-              />
-            )}
             {tab === 'policy' && (
               <PolicyTab
                 state={state}
                 uid={uid}
                 serverOffsetMs={serverOffsetMs}
-                onPolicyChange={handlePolicyChange}
-                onApplyPreset={handleApplyPreset}
+                onCommitFiscalReform={handleCommitFiscalReform}
+                onChangePolicyStance={handleChangePolicyStance}
                 onChangeGov={handleChangeGov}
                 onResetGame={handleResetGame}
                 onSaveCloudNow={handleSaveCloudNow}
@@ -4479,7 +4075,6 @@ export default function App() {
             saveLocal(merged, currentUid);
             refreshCloudStatus();
             scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
-            scheduleProvinceLbSync(true);
             addToast(`Welcome, ${username}!`);
           } catch (err) {
             if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) return;

@@ -28,8 +28,6 @@ test('firestore.rules covers every collection declared in firebase-blueprint.jso
     'match /dailyLimits/{limitId}',
     'match /globalChat/{messageId}',
     'match /dms/{pairId}/messages/{messageId}',
-    'match /provinceTxs/{txId}',
-    'match /provinceLeaderboard/{entryId}',
   ];
   assert.equal(Object.keys(blueprint.firestore).length, expectedMatchers.length);
   for (const m of expectedMatchers) {
@@ -467,9 +465,9 @@ test('saves/{uid} rules allow create & update for unverified-email owner with fr
   rich.gems = 25_000;
   rich.b = Object.fromEntries(Object.keys(rich.b).map((k) => [k, 25]));
   rich.stk = Object.fromEntries(STICKERS.map((s) => [s.id, 3]));
-  rich = applyBuyRank(rich, 1).state;
-  rich = applyBuyBooster(rich, BOOSTERS.find((b) => b.id === 'boom_surge')!, now).state;
-  rich = applyBuyBooster(rich, BOOSTERS.find((b) => b.id === 'tax_surge')!, now + 100).state;
+  rich = applyBuyRank(rich, 2).state;
+  rich = applyBuyBooster(rich, BOOSTERS.find((b) => b.id === 'growth_boost')!, now).state;
+  rich = applyBuyBooster(rich, BOOSTERS.find((b) => b.id === 'tax_boost')!, now + 100).state;
   rich = rollWeeklySubPromo(rich, now, () => 0.9).state;
   rich = applyBuySubscription(rich, SUBSCRIPTIONS[2], now + 200).state;
   for (const t of TECH_TREE) {
@@ -648,44 +646,71 @@ test('players/{uid} heartbeat & leaderboard rules match client payloads and bloc
   assert.equal(25 <= 100 && 10 <= 100, true);
 });
 
-test('Province saves, immutable provinceTxs, and provinceLeaderboard rules block tampering', () => {
+test('Legacy province schema bounds in firestore.rules remain intact and block tampering', () => {
   const uid = 'NJZoJG5EUKdTtMpEQTl5bbRvrgA2';
   const reqOwner: ReqContext = { auth: { uid, emailVerified: false }, time: 1_795_642_450_000 };
 
-  // Valid 10 Provinces pass save rules
-  const maxSave = freshState();
-  const baseProv = maxSave.provinces![0];
-  maxSave.provinces = Array.from({ length: 10 }, (_, idx) => ({
-    ...baseProv,
-    id: `prov_${idx + 1}`,
-    slot: idx + 1,
-    name: `Province ${idx + 1}`,
-  }));
-  const cleaned10 = { save: cleanSavePayload(maxSave) };
-  assert.equal(evalSavesAccess('update', reqOwner, uid, cleaned10), true);
+  const baseSave = cleanSavePayload(freshState()) as Record<string, unknown>;
+  const baseProv = {
+    id: 'prov_1',
+    slot: 1,
+    name: 'Capital Region',
+    flagId: 'crest_star',
+    color: '#3fd2ff',
+    gdp: 100_000,
+    pop: 12,
+    hap: 75,
+    dev: 20,
+    emp: 70,
+    budget: {
+      infrastructure: 5000,
+      education: 5000,
+      healthcare: 5000,
+      security: 5000,
+      welfare: 5000,
+      industry: 5000,
+    },
+    lvls: {
+      infrastructure: 10,
+      education: 10,
+      healthcare: 10,
+      security: 10,
+      welfare: 10,
+      businessActivity: 10,
+    },
+  };
+  const valid10 = {
+    save: {
+      ...baseSave,
+      provinces: Array.from({ length: 10 }, (_, idx) => ({
+        ...baseProv,
+        id: `prov_${idx + 1}`,
+        slot: idx + 1,
+        name: `Province ${idx + 1}`,
+      })),
+    },
+  };
+  assert.equal(evalSavesAccess('update', reqOwner, uid, valid10), true);
 
-  // 11 Provinces rejected
   const eleven = {
     save: {
-      ...(cleaned10.save as Record<string, unknown>),
-      provinces: [...(cleaned10.save.provinces as unknown[]), { ...baseProv, id: 'prov_10', slot: 10 }],
+      ...baseSave,
+      provinces: [...(valid10.save.provinces as unknown[]), { ...baseProv, id: 'prov_10', slot: 10 }],
     },
   };
   assert.equal(evalSavesAccess('update', reqOwner, uid, eleven), false);
 
-  // Negative budget or bad color rejected
   const negBudgetProv = { ...baseProv, budget: { ...baseProv.budget, infrastructure: -50 } };
   assert.equal(
-    evalSavesAccess('update', reqOwner, uid, { save: { ...(cleaned10.save as object), provinces: [negBudgetProv] } }),
+    evalSavesAccess('update', reqOwner, uid, { save: { ...baseSave, provinces: [negBudgetProv] } }),
     false,
   );
   const badColorProv = { ...baseProv, color: 'javascript:alert(1)' };
   assert.equal(
-    evalSavesAccess('update', reqOwner, uid, { save: { ...(cleaned10.save as object), provinces: [badColorProv] } }),
+    evalSavesAccess('update', reqOwner, uid, { save: { ...baseSave, provinces: [badColorProv] } }),
     false,
   );
 
-  // Rules enforce immutable owner-only create on provinceTxs and ownerUid check on provinceLeaderboard
   assert.match(rules, /match \/provinceTxs\/\{txId\}[\s\S]*allow update, delete: if false/);
   assert.match(rules, /match \/provinceLeaderboard\/\{entryId\}[\s\S]*incoming\(\)\.ownerUid == request\.auth\.uid/);
 });

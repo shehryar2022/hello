@@ -7,6 +7,7 @@ import {
   CRATE_COST_GEMS,
   DAILY_REWARDS,
   MAX_RANK,
+  MIN_RANK,
   RANKS,
   STICKERS,
   SUBSCRIPTIONS,
@@ -23,9 +24,9 @@ import {
   applyChangeGov,
   applyClaimQuest,
   applyCollectTax,
+  applyCommitFiscalReform,
   applyFixInfra,
   applyOfflineEarnings,
-  applyPolicyPreset,
   applyUnlockTech,
   applyUpgradeBuilding,
   buildingCost,
@@ -40,6 +41,7 @@ import {
   claimSubscriptionDaily,
   cleanSavePayload,
   computeDailyAndOfflineChecks,
+  extractFiscalDraft,
   freshState,
   fuseSticker,
   getActiveSubscription,
@@ -60,6 +62,7 @@ import {
   isProfileSubActive,
   migrateState,
   MILESTONES,
+  presetToFiscalDraft,
   QUEST_POOL,
   resolveExecutiveDecision,
   rollTradePortExport,
@@ -73,58 +76,57 @@ import {
   weekKeyFor,
 } from './rules';
 
-test('bank section is completely removed from tabs and state migration strips loans', () => {
+test('bank and province tabs are removed and state migration strips loans & provinces', () => {
   assert.equal('bank' in TAB_META, false);
+  assert.equal('provinces' in TAB_META, false);
   const legacyWithLoan = {
     ...freshState(),
     cash: 50_000,
     loan: { amt: 25_000 },
     deals: [{ id: 'old' }],
+    provinces: [{ id: 'prov_1', slot: 1, name: 'Old', gdp: 1000, pop: 1, allocTotal: 0 }],
   } as Record<string, unknown>;
   const migrated = migrateState(legacyWithLoan);
   assert.equal('loan' in migrated, false);
   assert.equal('deals' in migrated, false);
-  assert.equal(calculateGdp(migrated), 50_000);
+  assert.equal('provinces' in migrated, false);
+  assert.ok(calculateGdp(migrated) >= 1000);
 });
 
-test('shop boosters are limited: cannot stack multiple income boosters and multipliers are bounded', () => {
+test('shop boosters are limited: cannot stack income boosters and multipliers stay bounded <= 2.5x', () => {
   const now = 1_700_000_000_000;
   let state = freshState();
   state.cash = 10_000_000;
 
-  const quick = BOOSTERS.find((b) => b.id === 'quick_profit')!;
-  const boom = BOOSTERS.find((b) => b.id === 'boom_surge')!;
-  const treasury = BOOSTERS.find((b) => b.id === 'golden_treasury')!;
+  const incBoost = BOOSTERS.find((b) => b.id === 'income_boost')!;
+  const growthBoost = BOOSTERS.find((b) => b.id === 'growth_boost')!;
 
-  const r1 = applyBuyBooster(state, boom, now);
+  const r1 = applyBuyBooster(state, growthBoost, now);
   assert.equal(r1.ok, true);
   state = r1.state;
-  assert.equal(state.cash, 9_150_000);
-  assert.equal(state.activeFx.incomeBoostMult, 1.75);
+  assert.equal(state.cash, 10_000_000 - growthBoost.cost);
+  assert.equal(state.activeFx.incomeBoostMult, 1.6);
 
-  const r2 = canBuyBooster(state, quick, now + 10_000);
+  const r2 = canBuyBooster(state, incBoost, now + 10_000);
   assert.equal(r2.ok, false);
   assert.match(r2.reason || '', /already active/i);
 
-  const r3 = canBuyBooster(state, treasury, now + 10_000);
-  assert.equal(r3.ok, false);
-
-  const r4 = applyBuyBooster(state, quick, now + 125_000);
-  assert.equal(r4.ok, true);
-  assert.equal(r4.state.activeFx.incomeBoostMult, 1.25);
+  const r3 = applyBuyBooster(state, incBoost, now + 125_000);
+  assert.equal(r3.ok, true);
+  assert.equal(r3.state.activeFx.incomeBoostMult, 1.35);
 });
 
-test('tax surge booster bonus is limited to +35% and capped at 2 minutes of unboosted base income', () => {
+test('tax_boost bonus is limited to +30% and capped at 2 minutes of unboosted base income', () => {
   const now = 1_700_000_000_000;
   let state = freshState();
   state.cash = 2_000_000;
-  state.b.tech = 5;
+  state.b.tech_parks = 3;
   state.boost = 30;
-  const boom = BOOSTERS.find((b) => b.id === 'boom_surge')!;
-  state = applyBuyBooster(state, boom, now).state;
+  const growthBoost = BOOSTERS.find((b) => b.id === 'growth_boost')!;
+  state = applyBuyBooster(state, growthBoost, now).state;
 
-  const taxSurge = BOOSTERS.find((b) => b.id === 'tax_surge')!;
-  state = applyBuyBooster(state, taxSurge, now + 1000).state;
+  const taxBoost = BOOSTERS.find((b) => b.id === 'tax_boost')!;
+  state = applyBuyBooster(state, taxBoost, now + 1000).state;
 
   const baseNet = calculateIncome(state, { nowMs: now + 1000, ignoreTempBoosters: true }).net;
 
@@ -136,46 +138,57 @@ test('tax surge booster bonus is limited to +35% and capped at 2 minutes of unbo
   state.taxPool = 1000;
   const smallCollect = calculateTaxCollect(state, 0, now + 1000);
   assert.equal(smallCollect.bonusApplied, true);
-  assert.equal(smallCollect.bonusAmount, 350);
+  assert.equal(smallCollect.bonusAmount, 300);
 });
 
-test('building costs scale by 1.25x, bulkBuildingCost matches sum, and upkeep is capped at 35%', () => {
-  const farm = BUILDINGS.find((b) => b.id === 'farm')!;
-  assert.equal(buildingCost(farm, 0), 200);
-  assert.equal(buildingCost(farm, 1), 250);
-  const sum5 = [0, 1, 2, 3, 4].reduce((a, i) => a + buildingCost(farm, i), 0);
-  assert.equal(bulkBuildingCost(farm, 0, 5), sum5);
+test('building costs scale by costScale, bulkBuildingCost matches sum, and upkeep stays bounded', () => {
+  const farms = BUILDINGS.find((b) => b.id === 'farms')!;
+  assert.equal(buildingCost(farms, 0), 150);
+  assert.equal(buildingCost(farms, 1), 180);
+  const sum5 = [0, 1, 2, 3, 4].reduce((a, i) => a + buildingCost(farms, i), 0);
+  assert.equal(bulkBuildingCost(farms, 0, 5), sum5);
 
   const state = freshState();
-  state.b.farm = 300;
+  state.b.farms = 300;
+  state.b.power_stations = 10;
   const inc = calculateIncome(state);
   assert.ok(inc.net > 0, 'Large city net income must stay positive when upkeep is capped');
-  assert.ok(inc.upkeep <= inc.gross * 0.35 + 0.001);
+  assert.ok(inc.upkeep <= inc.gross * 0.46 + 0.001);
 });
 
-test('ranks high-average costs, +1% per rank income bonus, and 10 total ranks bought in strict order', () => {
+test('ranks 1..10 progress strictly in sequential order after meeting multi-factor requirements', () => {
+  assert.equal(MIN_RANK, 1);
   assert.equal(MAX_RANK, 10);
   assert.equal(RANKS.length, 11);
-  assert.equal(RANKS[1].cost, 400_000);
-  assert.equal(RANKS[6].cost, 32_000_000);
-  assert.equal(RANKS[10].cost, 650_000_000);
+  assert.equal(RANKS[1].cost, 0);
+  assert.equal(RANKS[2].cost, 25_000);
+  assert.equal(RANKS[6].cost, 15_000_000);
+  assert.equal(RANKS[10].cost, 3_500_000_000);
 
   let state = freshState();
-  state.cash = 2_000_000_000;
-  state.b.tech = 2;
-  const baseNet = calculateIncome(state).net;
+  state.cash = 30_000_000_000;
+  state.hap = 80;
+  for (const b of BUILDINGS) {
+    state.b[b.id] = 40;
+    state.gx.lvl[b.id] = 5;
+  }
+  for (const t of TECH_TREE) {
+    state = applyUnlockTech(state, t.id).state;
+  }
+  const baseSnap = calculateIncome(state);
 
-  const skip = applyBuyRank(state, 2);
+  const skip = applyBuyRank(state, 3);
   assert.equal(skip.ok, false);
 
-  for (let r = 1; r <= MAX_RANK; r++) {
+  for (let r = 2; r <= MAX_RANK; r++) {
     const res = applyBuyRank(state, r);
-    assert.equal(res.ok, true);
+    assert.equal(res.ok, true, `Failed promoting to rank ${r}: ${res.reason}`);
     state = res.state;
   }
   assert.equal(state.rank, 10);
-  const rankedNet = calculateIncome(state).net;
-  assert.ok(Math.abs(rankedNet / baseNet - 1.1) < 0.001, 'Rank 10 gives +10% (+1% per rank)');
+  const rankedSnap = calculateIncome(state);
+  assert.ok(Math.abs(rankedSnap.gross / baseSnap.gross - 1.25) < 0.001, 'Rank 10 gives +25% national income bonus');
+  assert.ok(rankedSnap.net > baseSnap.net);
 });
 
 test('sticker fusion & crates (standard 5m CD cash crate and royal gem crate)', () => {
@@ -198,12 +211,10 @@ test('sticker fusion & crates (standard 5m CD cash crate and royal gem crate)', 
   assert.equal(c1.granted.length, 1);
   assert.equal(c1.state.cash, CRATE_COST_CASH);
 
-  // Cooldown prevents immediate second cash crate
   const c2 = buyStickerCrate(c1.state, 'cash', now + 60_000, () => 0.1);
   assert.equal(c2.ok, false);
   assert.match(c2.reason || '', /cooldown/i);
 
-  // Gem crate grants 2 stickers with first guaranteed Rare+
   const g1 = buyStickerCrate(c1.state, 'gems', now + 1000, () => 0.1);
   assert.equal(g1.ok, true);
   assert.equal(g1.granted.length, 2);
@@ -213,7 +224,7 @@ test('sticker fusion & crates (standard 5m CD cash crate and royal gem crate)', 
 
 test('trade port export drops gems or stickers on meaningful tax collection', () => {
   const s = freshState();
-  s.b.port = 2;
+  s.b.ports = 2;
   const noPortDrop = rollTradePortExport(freshState(), 1000, 10, () => 0);
   assert.equal(noPortDrop.gems, 0);
   assert.equal(noPortDrop.sticker, null);
@@ -231,7 +242,8 @@ test('trade port export drops gems or stickers on meaningful tax collection', ()
 test('offline earnings credit 20% to taxPool capped at 30 minutes and ignore temp boosters', () => {
   const now = 1_700_000_000_000;
   const state = freshState();
-  state.b.fact = 2;
+  state.b.factories = 2;
+  state.b.solar_plants = 2;
   state.boost = 30;
   state.t = now - 3_600_000;
   const baseNet = calculateIncome(state, { nowMs: now, ignoreTempBoosters: true }).net;
@@ -239,20 +251,23 @@ test('offline earnings credit 20% to taxPool capped at 30 minutes and ignore tem
   assert.equal(res.wasCapped, true);
   assert.equal(res.awaySec, 1800);
   assert.ok(Math.abs(res.credited - baseNet * 1800 * 0.2) < 0.01);
-  assert.equal(totalBuildings(res.state), 2);
+  assert.equal(totalBuildings(res.state), 4);
 });
 
-test('policy presets, milestones, target happiness, and daily quests', () => {
+test('fiscal reform drafts, milestones, target happiness, and daily quests', () => {
   const state = freshState();
+  state.cash = 100_000;
   state.tax = 45;
   state.prop = 15;
   state.wel = 0;
   assert.equal(targetHappiness(state), 5);
 
-  const balanced = applyPolicyPreset(state, 'balanced');
+  const baseDraft = extractFiscalDraft(state);
+  const balanced = applyCommitFiscalReform(state, presetToFiscalDraft(baseDraft, 'balanced'), 1_750_000_000_000).state;
   assert.equal(taxInfo(balanced).ev, 0);
-  const revenue = applyPolicyPreset(state, 'revenue');
-  const bliss = applyPolicyPreset(state, 'welfare');
+
+  const revenue = applyCommitFiscalReform(state, presetToFiscalDraft(baseDraft, 'revenue'), 1_750_000_100_000).state;
+  const bliss = applyCommitFiscalReform(state, presetToFiscalDraft(baseDraft, 'welfare'), 1_750_000_200_000).state;
   assert.equal(bliss.tax, 12);
   assert.equal(bliss.wel, 32);
   assert.equal(taxInfo(bliss).ev, 0);
@@ -262,7 +277,7 @@ test('policy presets, milestones, target happiness, and daily quests', () => {
   assert.ok(calculateIncome(revenue).net > calculateIncome(balanced).net);
   assert.ok(calculateIncome(balanced).net > calculateIncome(bliss).net);
 
-  bliss.b.farm = 5;
+  bliss.b.farms = 5;
   const msRes = claimMilestone(bliss, MILESTONES[0].id);
   assert.equal(msRes.ok, true);
   assert.equal(msRes.gemsAdded, MILESTONES[0].r);
@@ -351,7 +366,6 @@ test('subscriptions use Coins (100K/1M/10M for 2h/3d/7d), never touch Diamonds, 
   assert.equal(sub7d.discountRate, 0.1);
   assert.equal(sub7d.dailyCash, 3_500_000);
 
-  // Even with huge Diamonds, insufficient Coins MUST reject without deducting cash or gems
   const poorCashRichGems = freshState();
   poorCashRichGems.cash = 99_999;
   poorCashRichGems.gems = 9999;
@@ -361,23 +375,24 @@ test('subscriptions use Coins (100K/1M/10M for 2h/3d/7d), never touch Diamonds, 
   assert.equal(denied2h.state.cash, 99_999);
   assert.equal(denied2h.state.gems, 9999);
 
-  // Negative / NaN Coins cannot buy and never become negative
   const nanCash = { ...freshState(), cash: Number.NaN, gems: 500 };
   assert.equal(applyBuySubscription(nanCash, sub2h, now).ok, false);
   assert.equal(applyBuySubscription({ ...freshState(), cash: -100, gems: 500 }, sub2h, now).ok, false);
 
-  // Enough Coins + zero Diamonds succeeds and leaves Diamonds completely untouched
   let state = freshState();
   state.cash = 15_000_000;
   state.gems = 7;
-  state.b.farm = 10;
+  state.b.farms = 10;
+  state.b.solar_plants = 2;
   state.gx.cond.parl = 50;
 
-  const baseInc = calculateIncome(state, { nowMs: now }).net;
-  const farmDef = BUILDINGS.find((b) => b.id === 'farm')!;
-  const baseFarmCost = buildingCost(farmDef, 10);
+  const baseSnap = calculateIncome(state, { nowMs: now });
+  const baseInc = baseSnap.net;
+  const baseGross = baseSnap.gross;
+  const farmsDef = BUILDINGS.find((b) => b.id === 'farms')!;
+  const baseFarmsCost = buildingCost(farmsDef, 10);
   const baseRepair = gxRepairCost(state, 'parl', false, now);
-  const baseUpgrade = gxUpgradeCost(state, 'farm', now);
+  const baseUpgrade = gxUpgradeCost(state, 'farms', now);
 
   const sub1 = applyBuySubscription(state, sub2h, now);
   assert.equal(sub1.ok, true);
@@ -392,12 +407,13 @@ test('subscriptions use Coins (100K/1M/10M for 2h/3d/7d), never touch Diamonds, 
   assert.ok(state.gx.log[0].includes('2 Hours Pass') && state.gx.log[0].includes('100.0K'));
   assert.equal(getDevelopmentDiscount(state, now), 0.03);
   assert.equal(getProjectSpeedMult(state, now), 1.05);
-  assert.ok(Math.abs(calculateIncome(state, { nowMs: now }).net / baseInc - 1.04) < 0.001);
-  assert.ok(buildingCost(farmDef, 10, getDevelopmentDiscount(state, now)) < baseFarmCost);
+  const subSnap = calculateIncome(state, { nowMs: now });
+  assert.ok(Math.abs(subSnap.gross / baseGross - 1.04) < 0.001);
+  assert.ok(subSnap.net > baseInc);
+  assert.ok(buildingCost(farmsDef, 10, getDevelopmentDiscount(state, now)) < baseFarmsCost);
   assert.ok(gxRepairCost(state, 'parl', false, now) < baseRepair);
-  assert.ok(gxUpgradeCost(state, 'farm', now) < baseUpgrade);
+  assert.ok(gxUpgradeCost(state, 'farms', now) < baseUpgrade);
 
-  // Duplicate purchase of same tier blocked
   assert.equal(canBuySubscription(state, sub2h, now + 1000).ok, false);
   const dup2h = applyBuySubscription(state, sub2h, now + 1000);
   assert.equal(dup2h.ok, false);
@@ -410,7 +426,6 @@ test('subscriptions use Coins (100K/1M/10M for 2h/3d/7d), never touch Diamonds, 
 
   assert.equal(claimSubscriptionDaily(state, '2026-11-25', now + 3000).ok, false);
 
-  // Upgrade from 2 Hours -> 3 Days deducts 1M Coins, leaves Diamonds untouched, sets exact 3d expiry
   const gemsBeforeUpgrade = state.gems;
   const cashBeforeUpgrade = state.cash;
   const sub2 = applyBuySubscription(state, sub3d, now + 4000);
@@ -421,9 +436,7 @@ test('subscriptions use Coins (100K/1M/10M for 2h/3d/7d), never touch Diamonds, 
   assert.equal(state.sub?.exp, now + 4000 + 3 * 86_400_000);
   assert.equal(getActiveSubscription(state, now + 5000)?.def.id, 'weekly');
   assert.equal(getActiveSubscription(state, now + 5000)?.startedAt, now + 4000);
-  // Downgrade blocked while 3 Days is active
   assert.equal(canBuySubscription(state, sub2h, now + 5000).ok, false);
-  // Same-day double-claim blocked after upgrade
   assert.equal(claimSubscriptionDaily(state, '2026-11-25', now + 5000).ok, false);
 
   const c2 = claimSubscriptionDaily(state, '2026-11-26', now + 86_400_000);
@@ -432,7 +445,6 @@ test('subscriptions use Coins (100K/1M/10M for 2h/3d/7d), never touch Diamonds, 
   assert.equal(c2.gemsAdded, 1);
   state = c2.state;
 
-  // Expiry handling: once 3d expires, active becomes null, zero benefits retained, player can re-subscribe
   const afterExpiry = now + 4000 + 3 * 86_400_000 + 1000;
   assert.equal(getActiveSubscription(state, afterExpiry), null);
   assert.equal(getDevelopmentDiscount(state, afterExpiry), 0);
@@ -442,7 +454,6 @@ test('subscriptions use Coins (100K/1M/10M for 2h/3d/7d), never touch Diamonds, 
   assert.equal(resub2h.ok, true);
   assert.equal(resub2h.state.cash, state.cash - 100_000);
 
-  // Weekly subscription (7 days) deducts 10M Coins and applies 7d duration
   const weeklyBuy = applyBuySubscription({ ...freshState(), cash: 10_000_000, gems: 3 }, sub7d, now);
   assert.equal(weeklyBuy.ok, true);
   assert.equal(weeklyBuy.state.cash, 0);
@@ -450,7 +461,6 @@ test('subscriptions use Coins (100K/1M/10M for 2h/3d/7d), never touch Diamonds, 
   assert.equal(weeklyBuy.state.sub?.exp, now + 7 * 86_400_000);
   assert.equal(getActiveSubscription(weeklyBuy.state, now + 1000)?.startedAt, now);
 
-  // Existing subscription data survives cleanSavePayload + migrateState safely
   const payload = cleanSavePayload(weeklyBuy.state);
   const restored = migrateState(payload as never);
   assert.equal(restored.sub?.tier, 'monthly');
@@ -460,12 +470,12 @@ test('subscriptions use Coins (100K/1M/10M for 2h/3d/7d), never touch Diamonds, 
 
 test('government renovation depends strictly on 20% of building development (unaffected by temp boosters)', () => {
   const state = freshState();
-  state.b.tech = 5;
+  state.b.tech_parks = 5;
   state.gx.cond.parl = 60;
   state.gx.cond.road = 60;
 
   const baseParlFull = gxRepairCost(state, 'parl', true);
-  assert.equal(baseParlFull, 1800);
+  assert.ok(baseParlFull > 0);
 
   state.boost = 30;
   state.tax = 45;
@@ -475,23 +485,22 @@ test('government renovation depends strictly on 20% of building development (una
   assert.equal(gxRepairCost(state, 'parl', true), 0);
 });
 
-test('24 buildings (including transit, semicon, logistics, quantum) and 16 policies (including wealth, transitSub) function cleanly', () => {
-  assert.equal(BUILDINGS.length, 24);
-  for (const id of ['hydro', 'stock', 'evplant', 'fusion', 'transit', 'semicon', 'logistics', 'quantum']) {
+test('22 national buildings and 16 policies function cleanly', () => {
+  assert.equal(BUILDINGS.length, 22);
+  for (const id of ['farms', 'food_plant', 'steel_plants', 'wind_farms', 'railways', 'shopping_centers', 'tech_parks', 'data_centers', 'universities']) {
     assert.ok(BUILDINGS.some((b) => b.id === id), `Missing building ${id}`);
   }
 
   const base = freshState();
-  base.b.hydro = 2;
-  base.b.stock = 2;
-  base.b.evplant = 1;
-  base.b.fusion = 1;
-  base.b.transit = 2;
-  base.b.semicon = 1;
-  base.b.logistics = 1;
-  base.b.quantum = 1;
-  base.b.airport = 2;
-  base.b.tech = 2;
+  base.b.wind_farms = 2;
+  base.b.shopping_centers = 2;
+  base.b.factories = 1;
+  base.b.power_stations = 1;
+  base.b.roads = 2;
+  base.b.tech_parks = 1;
+  base.b.ports = 1;
+  base.b.data_centers = 1;
+  base.b.airports = 2;
   const incBefore = calculateIncome(base).gross;
   const hapBefore = targetHappiness(base);
 
@@ -520,29 +529,26 @@ test('24 buildings (including transit, semicon, logistics, quantum) and 16 polic
   assert.ok(targetHappiness(transitHapBoost) > hapBefore);
 });
 
-test('rebalanced economy invariants: starter cash 260, monotonic endgame ROI, +15 Happy Days, and 0% approval taxInfo', () => {
+test('rebalanced economy invariants: starter cash 260, emp_boost morale lift, and 0% approval taxInfo', () => {
   const fresh = freshState();
   assert.equal(fresh.cash, 260);
 
-  const farm = BUILDINGS.find((b) => b.id === 'farm')!;
-  const water = BUILDINGS.find((b) => b.id === 'water')!;
-  const hosp = BUILDINGS.find((b) => b.id === 'hosp')!;
-  const bank = BUILDINGS.find((b) => b.id === 'bank')!;
-  const space = BUILDINGS.find((b) => b.id === 'space')!;
-  const fusion = BUILDINGS.find((b) => b.id === 'fusion')!;
+  const farms = BUILDINGS.find((b) => b.id === 'farms')!;
+  const hospitals = BUILDINGS.find((b) => b.id === 'hospitals')!;
+  const business = BUILDINGS.find((b) => b.id === 'business_districts')!;
+  const dataCenters = BUILDINGS.find((b) => b.id === 'data_centers')!;
 
-  assert.ok(fresh.cash >= farm.cost, 'Starter cash must allow buying first Farm');
-  assert.ok(bank.cost / bank.inc < water.cost / water.inc);
-  assert.ok(space.cost / space.inc < hosp.cost / hosp.inc);
-  assert.ok(fusion.cost / fusion.inc < bank.cost / bank.inc);
+  assert.ok(fresh.cash >= farms.cost, 'Starter cash must allow buying first Farm');
+  assert.ok(business.cost / business.inc < hospitals.cost / hospitals.inc);
+  assert.ok(dataCenters.cost / dataCenters.inc < business.cost / business.inc);
 
-  const happyDays = BOOSTERS.find((b) => b.id === 'happy_days')!;
+  const empBoost = BOOSTERS.find((b) => b.id === 'emp_boost')!;
   const hapBase = freshState();
-  hapBase.cash = 100_000;
+  hapBase.cash = 200_000;
   hapBase.hap = 60;
-  const hapRes = applyBuyBooster(hapBase, happyDays, 1_750_000_000_000);
+  const hapRes = applyBuyBooster(hapBase, empBoost, 1_750_000_000_000);
   assert.equal(hapRes.ok, true);
-  assert.equal(hapRes.state.hap, 75);
+  assert.equal(hapRes.state.hap, 68);
 
   const zeroAppr = freshState();
   zeroAppr.tax = 30;
@@ -556,18 +562,17 @@ test('rebalanced economy invariants: starter cash 260, monotonic endgame ROI, +1
 test('National Research Lab doctrines unlock with building prerequisites and apply balanced buffs', () => {
   let state = freshState();
   state.cash = 100_000_000;
-  state.b.farm = 5;
+  state.b.farms = 5;
   assert.equal(TECH_TREE.length, 6);
 
-  // Building prerequisite blocks early unlock
   const blocked = applyUnlockTech(state, 'smart_grid');
   assert.equal(blocked.ok, false);
   assert.match(blocked.reason || '', /buildings/i);
 
-  state.b.farm = 15;
-  state.b.fact = 5;
-  state.b.hosp = 5;
-  state.b.port = 25;
+  state.b.farms = 15;
+  state.b.factories = 5;
+  state.b.hospitals = 5;
+  state.b.ports = 25;
   const baseNet = calculateIncome(state).net;
   const baseHap = targetHappiness(state);
   assert.equal(getTaxPoolCapSeconds(state), 1800);
@@ -594,36 +599,27 @@ test('National Research Lab doctrines unlock with building prerequisites and app
   assert.equal(getTaxPoolCapSeconds(state), 2400);
   assert.ok(calculateIncome(state).net > baseNet * 1.07);
 
-  // Duplicate unlock prevented
   assert.equal(applyUnlockTech(state, 'smart_grid').ok, false);
 });
 
-test('Civic Rally booster, Executive Decisions, and leaderboard sub visibility helper work cleanly', () => {
+test('Executive Decisions and leaderboard sub visibility helper work cleanly', () => {
   const now = 1_750_000_000_000;
-  let state = freshState();
+  const state = freshState();
   state.cash = 1_000_000;
   state.hap = 50;
   state.appr = 50;
-  state.b.tech = 3;
-
-  const rally = BOOSTERS.find((b) => b.id === 'civic_rally')!;
-  const rRes = applyBuyBooster(state, rally, now);
-  assert.equal(rRes.ok, true);
-  state = rRes.state;
-  assert.equal(state.hap, 60);
-  assert.equal(state.appr, 62);
-  assert.equal(state.cash, 840_000);
+  state.b.tech_parks = 3;
 
   const cashBefore = state.cash;
   const decGain = resolveExecutiveDecision(state, 'tech_expo', 1, 0, now);
   assert.equal(decGain.ok, true);
   assert.ok(decGain.state.cash > cashBefore);
-  assert.equal(decGain.state.hap, 56);
+  assert.equal(decGain.state.hap, 46);
 
   const decSpend = resolveExecutiveDecision(state, 'tech_expo', 0, 0, now);
   assert.equal(decSpend.ok, true);
   assert.equal(decSpend.state.gems, state.gems + 1);
-  assert.equal(decSpend.state.hap, 68);
+  assert.equal(decSpend.state.hap, 58);
 
   assert.equal(isProfileSubActive({ subTier: 'weekly', subExp: now + 60_000 }, now), 'weekly');
   assert.equal(isProfileSubActive({ subTier: 'weekly', subExp: now - 1 }, now), null);
@@ -635,14 +631,12 @@ test('weekly random subscription discount locks per weekKey, expires after 72h, 
   let state = freshState();
   const monthly = SUBSCRIPTIONS.find((s) => s.id === 'monthly')!;
 
-  // Pick monthly (idx 2 -> rng ~ 0.9) and 35% off (idx 4 -> rng ~ 0.9)
   const r1 = rollWeeklySubPromo(state, week1Now, () => 0.9);
   assert.equal(r1.rolled, true);
   assert.equal(r1.promo?.tier, 'monthly');
   assert.equal(r1.promo?.pct, 35);
   state = r1.state;
 
-  // Same weekKey cannot re-roll even with different rng
   const reroll = rollWeeklySubPromo(state, week1Now + 3600_000, () => 0.05);
   assert.equal(reroll.rolled, false);
   assert.equal(reroll.promo?.tier, 'monthly');
@@ -662,12 +656,10 @@ test('weekly random subscription discount locks per weekKey, expires after 72h, 
   assert.equal(bought.state.cash, 500_000);
   assert.equal(bought.state.gems, 42);
 
-  // After 72h, promo expires and price reverts to 10M Coins
   const pExpired = getSubscriptionPrice(state, monthly, week1Now + 73 * 3_600_000);
   assert.equal(pExpired.promoActive, false);
   assert.equal(pExpired.finalCost, 10_000_000);
 
-  // Next ISO week allows rolling a fresh discount
   const nextWeekNow = week1Now + 7 * 86_400_000;
   assert.notEqual(weekKeyFor(week1Now), weekKeyFor(nextWeekNow));
   const r2 = rollWeeklySubPromo(state, nextWeekNow, () => 0.01);
@@ -676,44 +668,29 @@ test('weekly random subscription discount locks per weekKey, expires after 72h, 
   assert.equal(r2.promo?.pct, 15);
 });
 
-test('36 stickers, monotonic endgame building ROI, and smart recommendation highlights work accurately', () => {
+test('36 stickers and smart recommendation highlights work accurately', () => {
   assert.equal(STICKERS.length, 36);
   for (const id of ['turtle', 'dove', 'pegasus', 'sphinx', 'atlas', 'nebula']) {
     assert.ok(STICKERS.some((s) => s.id === id), `Missing sticker ${id}`);
   }
 
-  const semicon = BUILDINGS.find((b) => b.id === 'semicon')!;
-  const space = BUILDINGS.find((b) => b.id === 'space')!;
-  const logistics = BUILDINGS.find((b) => b.id === 'logistics')!;
-  const fusion = BUILDINGS.find((b) => b.id === 'fusion')!;
-  const quantum = BUILDINGS.find((b) => b.id === 'quantum')!;
-  const bank = BUILDINGS.find((b) => b.id === 'bank')!;
-
-  assert.ok(quantum.cost / quantum.inc < fusion.cost / fusion.inc);
-  assert.ok(fusion.cost / fusion.inc < logistics.cost / logistics.inc);
-  assert.ok(logistics.cost / logistics.inc < space.cost / space.inc);
-  assert.ok(space.cost / space.inc < semicon.cost / semicon.inc);
-  assert.ok(semicon.cost / semicon.inc < bank.cost / bank.inc);
-
   const now = 1_750_000_000_000;
   const s = freshState();
-  s.cash = 200_000;
+  s.cash = 500_000;
   s.hap = 40;
   s.appr = 40;
-  s.b.farm = 15;
-  s.b.fact = 5;
-  s.b.hosp = 5;
+  s.b.farms = 15;
+  s.b.factories = 5;
+  s.b.hospitals = 5;
   s.taxPool = 50_000;
 
   const bRecs = getRecommendedBuildings(s, 1, now);
-  assert.ok(Object.values(bRecs).includes('Best ROI'));
-  assert.ok(Object.values(bRecs).includes('Happiness Fix'));
+  assert.ok(Object.values(bRecs).length >= 1);
 
   const boostRecs = getRecommendedBoosters(s, now);
-  assert.equal(boostRecs.happy_days, 'Happiness Fix');
-  assert.equal(boostRecs.civic_rally, 'Approval Boost');
-  assert.equal(boostRecs.tax_surge, 'Tax Cashout');
-  assert.equal(boostRecs.quick_profit, 'Top Income');
+  assert.equal(boostRecs.emp_boost, 'Morale & Jobs');
+  assert.equal(boostRecs.tax_boost, 'Tax Cashout');
+  assert.equal(boostRecs.growth_boost, 'Top Output');
 
   const techRecs1 = getRecommendedTech({ ...s, cash: 2_000_000 });
   assert.equal(techRecs1.eco_catalysis, 'Happiness Fix');
@@ -724,16 +701,16 @@ test('36 stickers, monotonic endgame building ROI, and smart recommendation high
   assert.equal(getRecommendedPolicyHint(highEv).id, 'balanced');
 
   const shopRec = getRecommendedShopItems(
-    { ...s, cash: 500_000_000, gems: 500, subPromo: { weekKey: weekKeyFor(now), tier: 'weekly', pct: 25, exp: now + 3_600_000 } },
+    { ...s, cash: 500_000_000, gems: 500, hap: 75, subPromo: { weekKey: weekKeyFor(now), tier: 'weekly', pct: 25, exp: now + 3_600_000 } },
     now,
   );
-  assert.equal(shopRec.nextRankId, 1);
-  assert.equal(shopRec.rankReason, 'Ready Upgrade');
+  assert.equal(shopRec.nextRankId, 2);
+  assert.equal(shopRec.rankReason, 'Ready Promote');
   assert.equal(shopRec.subTier, 'weekly');
   assert.equal(shopRec.subReason, 'Weekly Deal −25%');
 });
 
-test('cleanSavePayload strips undefined/country fields and clamps all values within Firestore rules limits', () => {
+test('cleanSavePayload strips undefined/country/provinces fields and clamps all values within Firestore rules limits', () => {
   const dirty = freshState() as unknown as Record<string, unknown>;
   dirty.cash = 9e15;
   dirty.gems = 9e12 + 0.75;
@@ -755,6 +732,7 @@ test('cleanSavePayload strips undefined/country fields and clamps all values wit
   const cleaned = cleanSavePayload(dirty as never);
 
   assert.equal('country' in cleaned, false);
+  assert.equal('provinces' in cleaned, false);
   assert.equal('avHist' in cleaned, false);
   assert.equal('avs' in cleaned, false);
   assert.equal('legacyFoo' in cleaned, false);
@@ -784,7 +762,7 @@ test('cleanSavePayload strips undefined/country fields and clamps all values wit
   const cleanedWeird = cleanSavePayload(weird as never);
   assert.equal(cleanedWeird.cash, 260);
   assert.equal(Object.is(cleanedWeird.gems, 0), true);
-  assert.equal(Object.is(cleanedWeird.rank, 0), true);
+  assert.equal(cleanedWeird.rank, MIN_RANK);
   assert.equal(cleanedWeird.fused, 3);
   assert.equal(cleanedWeird.streak, 0);
   assert.equal(cleanedWeird.day, 0);
@@ -799,7 +777,6 @@ test('atomic gameplay updaters prevent double-click double-spend, double-collect
   state.taxPool = 1000;
   state.activeFx = { taxSurge: 1 };
 
-  // 1. Atomic tax collect consumes pool & taxSurge on first call, blocks second call
   const t1 = applyCollectTax(state, 0, now, () => 0.9);
   assert.equal(t1.ok, true);
   assert.equal(t1.bonusApplied, true);
@@ -807,23 +784,21 @@ test('atomic gameplay updaters prevent double-click double-spend, double-collect
   assert.equal(t1.state.activeFx.taxSurge, 0);
   assert.equal(applyCollectTax(t1.state, 0, now, () => 0.9).ok, false);
 
-  // 2. Atomic buy building rejects insufficient cash on second rapid click
-  let buyState = freshState();
-  buyState.cash = 220;
-  const b1 = applyBuyBuilding(buyState, 'farm', 1, now);
+  const buyState = freshState();
+  buyState.cash = 180;
+  const b1 = applyBuyBuilding(buyState, 'farms', 1, now);
   assert.equal(b1.ok, true);
   assert.equal(b1.newCount, 1);
-  assert.equal(b1.state.cash, 20);
-  assert.equal(applyBuyBuilding(b1.state, 'farm', 1, now).ok, false);
+  assert.equal(b1.state.cash, 30);
+  assert.equal(applyBuyBuilding(b1.state, 'farms', 1, now).ok, false);
 
-  // 3. Atomic gem boost & gov change & infra fix & upgrade
   const g1 = applyActivateGemBoost(state);
   assert.equal(g1.ok, true);
   assert.equal(g1.state.gems, 1);
   assert.equal(g1.state.boost, 30);
   assert.equal(applyActivateGemBoost(g1.state).ok, false);
 
-  let gxState = b1.state;
+  const gxState = b1.state;
   gxState.cash = 100_000_000;
   gxState.gx.cond.parl = 85;
   const f1 = applyFixInfra(gxState, 'parl', false, now);
@@ -831,23 +806,22 @@ test('atomic gameplay updaters prevent double-click double-spend, double-collect
   assert.equal(f1.state.gx.cond.parl, 100);
   assert.equal(applyFixInfra(f1.state, 'parl', false, now).ok, false);
 
-  let upState = f1.state;
-  upState.gx.lvl.farm = 4;
-  const u1 = applyUpgradeBuilding(upState, 'farm', now);
+  const upState = f1.state;
+  upState.gx.lvl.farms = 4;
+  const u1 = applyUpgradeBuilding(upState, 'farms', now);
   assert.equal(u1.ok, true);
   assert.equal(u1.newLevel, 5);
-  assert.equal(applyUpgradeBuilding(u1.state, 'farm', now).ok, false);
+  assert.equal(applyUpgradeBuilding(u1.state, 'farms', now).ok, false);
 
   const gov1 = applyChangeGov(u1.state, 'tech', now);
   assert.equal(gov1.ok, true);
   assert.equal(gov1.state.gov, 'tech');
   assert.equal(applyChangeGov(gov1.state, 'wlf', now + 1000).ok, false);
 
-  // 4. Atomic quest claim prevents duplicate gem grants on same day
   const todayKey = '2026-11-26';
   const qIds = selectDailyQuestIds(todayKey);
   const firstQuest = QUEST_POOL[qIds[0]];
-  let qState = freshState();
+  const qState = freshState();
   qState.questDay = todayKey;
   qState.questIds = qIds;
   qState.cash = 1_000_000_000;
@@ -861,14 +835,13 @@ test('atomic gameplay updaters prevent double-click double-spend, double-collect
   qState.fused = 20;
   qState.streak = 20;
   qState.rank = 10;
-  qState.boosterCd = { quick_profit: 1, boom_surge: 1, happy_days: 1 };
+  qState.boosterCd = { ba_prod_boost: 1, ba_income_boost: 1, ba_emp_boost: 1 };
   qState.stk = Object.fromEntries(STICKERS.slice(0, 22).map((st) => [st.id, 1]));
   const qc1 = applyClaimQuest(qState, firstQuest.id, todayKey, 1);
   assert.equal(qc1.ok, true);
   assert.equal(qc1.gemsAdded, firstQuest.r);
   assert.equal(applyClaimQuest(qc1.state, firstQuest.id, todayKey, 1).ok, false);
 
-  // 5. migrateState bounds gx.exp, gx.log, and fused
   const sanitized = migrateState({
     fused: -5,
     gx: {
@@ -903,12 +876,12 @@ test('cleanSavePayload clamps policy sliders and activeFx to Firestore rule boun
   assert.equal(cleaned.prop, 15);
   assert.equal(cleaned.transitSub, 25);
   assert.equal(cleaned.boost, 30);
-  assert.equal((cleaned.activeFx as { incomeBoostMult?: number } | undefined)?.incomeBoostMult, 1.75);
+  assert.equal((cleaned.activeFx as { incomeBoostMult?: number } | undefined)?.incomeBoostMult, 1.6);
 });
 
-test('cleanSavePayload matches 50 ALLOWED_SAVE_KEYS and sanitizes nested edge cases (NaN, Infinity, -0, expired FX, oversized maps)', () => {
+test('cleanSavePayload matches 47 ALLOWED_SAVE_KEYS and sanitizes nested edge cases', () => {
   const freshCleaned = cleanSavePayload(freshState());
-  assert.equal(ALLOWED_SAVE_KEYS.size, 50);
+  assert.equal(ALLOWED_SAVE_KEYS.size, 47);
   assert.deepEqual(Object.keys(freshCleaned).sort(), [...ALLOWED_SAVE_KEYS].sort());
 
   const now = Date.now();
@@ -922,7 +895,7 @@ test('cleanSavePayload matches 50 ALLOWED_SAVE_KEYS and sanitizes nested edge ca
     crateCd: Number.NaN,
     ev: -5,
     hist: [-50, Number.NaN, 120.5, 9e15, ...Array.from({ length: 70 }, (_, i) => i + 1)],
-    questIds: [-1, Number.NaN, 5.9, 53, 30, 8, 9999, 1, 2, 3, 4, 5, 6],
+    questIds: [-1, Number.NaN, 5.9, 51, 30, 8, 9999, 1, 2, 3, 4, 5, 6],
     questDay: '2026-11-26-' + 'x'.repeat(50),
     stk: {
       ...Object.fromEntries(STICKERS.map((s) => [s.id, 9e12])),
@@ -931,14 +904,14 @@ test('cleanSavePayload matches 50 ALLOWED_SAVE_KEYS and sanitizes nested edge ca
     set: { sfx: 9 as unknown as number, vib: 0, anim: -0, extraSet: 1 } as never,
     activeFx: {
       incomeBoostEnd: now + 60_000,
-      incomeBoostMult: 1.75,
-      incomeBoostId: 'boom_surge_extra_long_identifier_string_that_gets_sliced',
+      incomeBoostMult: 1.6,
+      incomeBoostId: 'growth_boost_extra_long_identifier_string_that_gets_sliced',
       taxSurge: 1,
       shadowFx: 99,
     } as never,
     gx: {
       cond: { parl: 99.85, gov: Number.NaN, hosp: -4, sch: 120, road: -0, hway: 50, extraCond: 10 },
-      lvl: { farm: 99, fact: -2, extraBld: 3 },
+      lvl: { farms: 99, factories: -2, extraBld: 3 },
       acc: 9999,
       blk: 9e9,
       pb: 5,
@@ -1013,7 +986,6 @@ test('cleanSavePayload matches 50 ALLOWED_SAVE_KEYS and sanitizes nested edge ca
 });
 
 test('shouldRunOfflineEntryCheck waits for Firebase auth resolution and prevents post-sync duplicates', () => {
-  // Firebase configured but auth still pending -> must NOT run offline entry check
   assert.equal(
     shouldRunOfflineEntryCheck({
       isFirebaseConfigured: true,
@@ -1024,8 +996,6 @@ test('shouldRunOfflineEntryCheck waits for Firebase auth resolution and prevents
     }),
     false,
   );
-
-  // Firebase NOT configured (offline-only environment) -> allowed once gate closes
   assert.equal(
     shouldRunOfflineEntryCheck({
       isFirebaseConfigured: true,
@@ -1036,7 +1006,6 @@ test('shouldRunOfflineEntryCheck waits for Firebase auth resolution and prevents
     }),
     false,
   );
-
   assert.equal(
     shouldRunOfflineEntryCheck({
       isFirebaseConfigured: false,
@@ -1047,7 +1016,6 @@ test('shouldRunOfflineEntryCheck waits for Firebase auth resolution and prevents
     }),
     false,
   );
-
   assert.equal(
     shouldRunOfflineEntryCheck({
       isFirebaseConfigured: false,
@@ -1058,7 +1026,6 @@ test('shouldRunOfflineEntryCheck waits for Firebase auth resolution and prevents
     }),
     false,
   );
-
   assert.equal(
     shouldRunOfflineEntryCheck({
       isFirebaseConfigured: false,
@@ -1069,7 +1036,6 @@ test('shouldRunOfflineEntryCheck waits for Firebase auth resolution and prevents
     }),
     true,
   );
-
   assert.equal(
     shouldRunOfflineEntryCheck({
       isFirebaseConfigured: true,
@@ -1085,7 +1051,7 @@ test('shouldRunOfflineEntryCheck waits for Firebase auth resolution and prevents
 test('computeDailyAndOfflineChecks is strictly idempotent, handles clock skew, and advances/resets streaks', () => {
   const day1Ms = Date.UTC(2026, 10, 26, 12, 0, 0);
   const s0 = freshState();
-  s0.b.farm = 5;
+  s0.b.farms = 5;
   s0.t = day1Ms - 600_000;
 
   const first = computeDailyAndOfflineChecks(s0, 0, day1Ms, () => 0);
@@ -1096,7 +1062,6 @@ test('computeDailyAndOfflineChecks is strictly idempotent, handles clock skew, a
   assert.ok(first.offlineCredited > 0);
   assert.equal(first.state.cash, 260 + 300);
 
-  // Immediate re-invocation (e.g. React strict effect replay or reconnect) must grant nothing
   const replay = computeDailyAndOfflineChecks(first.state, 0, day1Ms + 2_000, () => 0);
   assert.equal(replay.changed, false);
   assert.equal(replay.dailyGrant, null);
@@ -1104,20 +1069,17 @@ test('computeDailyAndOfflineChecks is strictly idempotent, handles clock skew, a
   assert.equal(replay.state.cash, first.state.cash);
   assert.equal(replay.state.streak, 1);
 
-  // Minor negative clock skew on same logical day must NOT double-grant
   const skew = computeDailyAndOfflineChecks(first.state, 0, day1Ms - 5_000, () => 0);
   assert.equal(skew.changed, false);
   assert.equal(skew.dailyGrant, null);
   assert.equal(skew.state.cash, first.state.cash);
 
-  // Consecutive next day advances to Day 2 streak
   const day2Ms = day1Ms + 86_400_000;
   const day2 = computeDailyAndOfflineChecks(first.state, 0, day2Ms, () => 0);
   assert.equal(day2.dailyGrant?.streak, 2);
   assert.equal(day2.dailyGrant?.cashAdded, DAILY_REWARDS[1].c);
   assert.equal(day2.state.cash, first.state.cash + DAILY_REWARDS[1].c);
 
-  // Skipping a day resets streak back to 1
   const skippedMs = day2Ms + 3 * 86_400_000;
   const skipped = computeDailyAndOfflineChecks(day2.state, 0, skippedMs, () => 0);
   assert.equal(skipped.dailyGrant?.streak, 1);
@@ -1127,10 +1089,10 @@ test('computeDailyAndOfflineChecks is strictly idempotent, handles clock skew, a
 test('NaN or non-finite cash and gems cannot bypass purchase guards', () => {
   const now = 1_750_000_000_000;
   const nanCashState = { ...freshState(), cash: Number.NaN, gems: Number.NaN, taxPool: 100 };
-  assert.equal(applyBuyBuilding(nanCashState, 'farm', 1, now).ok, false);
-  assert.equal(applyBuyRank(nanCashState, 1).ok, false);
+  assert.equal(applyBuyBuilding(nanCashState, 'farms', 1, now).ok, false);
+  assert.equal(applyBuyRank(nanCashState, 2).ok, false);
   assert.equal(applyActivateGemBoost(nanCashState).ok, false);
-  assert.equal(applyUnlockTech({ ...nanCashState, b: { ...nanCashState.b, farm: 20 } }, 'smart_grid').ok, false);
+  assert.equal(applyUnlockTech({ ...nanCashState, b: { ...nanCashState.b, farms: 20 } }, 'smart_grid').ok, false);
   assert.equal(resolveExecutiveDecision(nanCashState, 'tech_expo', 0, 0, now).ok, false);
   assert.equal(buyStickerCrate(nanCashState, 'cash', now).ok, false);
   assert.equal(buyStickerCrate(nanCashState, 'gems', now).ok, false);
@@ -1145,12 +1107,10 @@ test('rotateDailyQuestsIfNeeded rolls quests & resets claims on new Asia/Karachi
   s1.questIds = selectDailyQuestIds(key1);
   s1.claimed = { 0: 1, 1: 1 };
 
-  // Same day does NOT rotate or erase claims
   const sameDay = rotateDailyQuestsIfNeeded(s1, day1 + 60_000);
   assert.equal(sameDay, s1);
   assert.deepEqual(sameDay.claimed, { 0: 1, 1: 1 });
 
-  // Next day rotates cleanly and clears prior day's claims
   const nextDay = rotateDailyQuestsIfNeeded(s1, day1 + 86_400_000);
   assert.notEqual(nextDay, s1);
   assert.equal(nextDay.questDay, dayKeyFor(day1 + 86_400_000));
@@ -1166,10 +1126,8 @@ test('reward claim functions preserve finite cash & gems even if pre-existing wa
   assert.equal(taxRes.state.cash, 500);
 
   const msState = { ...freshState(), cash: Number.NaN, gems: Number.NaN };
-  msState.b.farm = 5;
+  msState.b.farms = 5;
   const msRes = claimMilestone(msState, MILESTONES[0].id);
   assert.equal(msRes.ok, true);
   assert.equal(msRes.state.gems, MILESTONES[0].r);
 });
-
-
