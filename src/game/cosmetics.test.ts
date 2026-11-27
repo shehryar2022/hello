@@ -26,6 +26,7 @@ import {
   getCosmeticDef,
   getDiamondAssetBonuses,
   getEquippedCosmetics,
+  getRarityStars,
   hasActivePreview,
   isCosmeticOwned,
   isThemeOwned,
@@ -46,10 +47,25 @@ test('Diamond Exclusives catalog contains complete categories and balanced items
   assert.equal(PROFILE_FRAMES.length, 10);
   assert.equal(NAME_EFFECTS.length, 8);
   assert.equal(THEME_ITEMS.length, 10);
-  assert.equal(PREMIUM_ANIMATIONS.length, 4);
+  assert.equal(PREMIUM_ANIMATIONS.length, 10);
   assert.equal(EXCLUSIVE_BADGES.length, 6);
   assert.equal(DIAMOND_ASSETS.length, 4);
   assert.equal(COSMETIC_BUNDLES.length, 4);
+
+  // Verify Part 1 Diamond Animation pricing & 7 rarity tiers (50-599 Diamonds, all unique prices)
+  const animPrices = new Set<number>();
+  const animRarities = new Set<string>();
+  for (const anim of PREMIUM_ANIMATIONS) {
+    assert.ok(anim.diamondsCost >= 50 && anim.diamondsCost <= 599, `${anim.id} out of 50..599 range`);
+    assert.ok(!animPrices.has(anim.diamondsCost), `Duplicate animation price ${anim.diamondsCost}`);
+    animPrices.add(anim.diamondsCost);
+    animRarities.add(anim.rarity);
+    const stars = getRarityStars(anim.rarity);
+    assert.ok(stars >= 1 && stars <= 7);
+  }
+  for (const expectedRarity of ['Basic', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mythic', 'Ultra Exclusive']) {
+    assert.ok(animRarities.has(expectedRarity), `Missing animation rarity tier: ${expectedRarity}`);
+  }
 
   const ids = new Set(ALL_COSMETIC_ITEMS.map((i) => i.id));
   assert.equal(ids.size, ALL_COSMETIC_ITEMS.length, 'Every cosmetic item ID must be unique');
@@ -75,7 +91,7 @@ test('Midnight Galaxy theme is unlocked by default while premium themes require 
 
 test('Purchasing cosmetic item deducts currency, prevents duplicates, checks rank, and auto-equips', () => {
   let s = freshState();
-  s.gems = 100;
+  s.gems = 300;
   s.cash = 50_000;
   s.rank = 1;
 
@@ -88,14 +104,14 @@ test('Purchasing cosmetic item deducts currency, prevents duplicates, checks ran
   const res1 = applyBuyCosmeticItem(s, 'frame_neon');
   assert.equal(res1.ok, true);
   s = res1.state;
-  assert.equal(s.gems, 88);
+  assert.equal(s.gems, 288);
   assert.equal(isCosmeticOwned(s, 'frame_neon'), true);
   assert.equal(getEquippedCosmetics(s).frame, 'frame_neon');
 
   // Duplicate purchase strictly blocked without deducting Diamonds
   const dup = applyBuyCosmeticItem(s, 'frame_neon');
   assert.equal(dup.ok, false);
-  assert.equal(dup.state.gems, 88);
+  assert.equal(dup.state.gems, 288);
 
   // Unequip and re-equip works cleanly
   const unequip = applyEquipCosmetic(s, 'frame', null);
@@ -109,7 +125,8 @@ test('Purchasing cosmetic item deducts currency, prevents duplicates, checks ran
 
 test('Bundles support pro-rated discount for partially owned items and block rebuy when fully owned', () => {
   let s = freshState();
-  s.gems = 200;
+  s.gems = 300;
+  s.rank = 2;
 
   // Buy one item from Cyber Neon Suite first
   const pre = applyBuyCosmeticItem(s, 'frame_neon');
@@ -164,7 +181,8 @@ test('Dual-currency Diamond Landmarks stay bounded (anti-P2W caps) and boost eco
 
 test('Cosmetic inventory, equipped slots, theme, and reward history round-trip via cloud save pack while preserving 47 top-level keys', () => {
   let s = freshState();
-  s.gems = 200;
+  s.gems = 500;
+  s.rank = 2;
   s = applyBuyCosmeticItem(s, 'frame_aurora').state;
   s = applyBuyCosmeticItem(s, 'nfx_rainbow').state;
   s = applyBuyCosmeticItem(s, 'badge_diamond_member').state;
@@ -238,10 +256,10 @@ test('Marketplace filters, sorting, category counts, bundle math, and coin forma
   s.gems = 50;
 
   const counts = getCosmeticCategoryCounts();
-  assert.equal(counts.all, 42);
+  assert.equal(counts.all, 48);
   assert.equal(counts.bundle, 4);
   assert.equal(counts.diamond_asset, 4);
-  assert.equal(getAvailableExclusiveCount(s), 41); // midnight_galaxy default owned
+  assert.equal(getAvailableExclusiveCount(s), 47); // midnight_galaxy default owned
 
   const asc = filterAndSortCosmetics(s, ALL_COSMETIC_ITEMS, { sortBy: 'price_asc', ownership: 'unowned' });
   assert.ok(asc.length > 0);
@@ -253,9 +271,9 @@ test('Marketplace filters, sorting, category counts, bundle math, and coin forma
   assert.ok(dualLandmarks.every((x) => (x.coinsCost || 0) > 0 && (!x.reqRank || x.reqRank <= s.rank)));
 
   const cyberBundle = getBundleValueSummary(s, 'bundle_cyber_horizon');
-  assert.equal(cyberBundle.individualDiamondsTotal, 12 + 18 + 16 + 20);
-  assert.equal(cyberBundle.savedDiamonds, 66 - 46);
-  assert.equal(cyberBundle.savingsPct, Math.round((20 / 66) * 100));
+  assert.equal(cyberBundle.individualDiamondsTotal, 12 + 18 + 16 + 175);
+  assert.equal(cyberBundle.savedDiamonds, 221 - 155);
+  assert.equal(cyberBundle.savingsPct, Math.round((66 / 221) * 100));
 
   assert.equal(formatDiamondPrice(26), '26 Diamonds');
   assert.equal(formatCoinPrice(250_000), '250K Coins');

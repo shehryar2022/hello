@@ -296,7 +296,7 @@ test('5. 7 Boosters enforce daily Karachi limits, cooldowns, mutual exclusion, c
 
 test('6. Multi-factor Rank 1..15 progression gates & Real GDP stability on cash spend', () => {
   assert.equal(MIN_RANK, 1);
-  assert.equal(CLOUD_MAX_RANK, 10);
+  assert.equal(CLOUD_MAX_RANK, 15);
   assert.equal(MAX_RANK, 15);
   assert.equal(RANKS.length, 16);
 
@@ -425,11 +425,11 @@ test('9. Lossless v2 packing preserves Rank 15, all 51 active buildings, policie
   rich.cityWeather = 'rain';
 
   const packed = cleanSavePayload(rich);
-  assert.ok(Object.keys(packed.b as Record<string, unknown>).length <= 35);
-  assert.ok(Object.keys((packed.gx as Record<string, unknown>).lvl as Record<string, unknown>).length <= 35);
-  assert.equal(packed.rank, 10);
+  assert.ok(Object.keys(packed.b as Record<string, unknown>).length <= 60);
+  assert.ok(Object.keys((packed.gx as Record<string, unknown>).lvl as Record<string, unknown>).length <= 60);
+  assert.equal(packed.rank, 15);
   assert.ok(Array.isArray(packed.provBudgetLog));
-  assert.ok((packed.provBudgetLog as string[]).length <= 20);
+  assert.ok((packed.provBudgetLog as string[]).length <= 30);
 
   const restored = migrateState(packed as never);
   assert.equal(restored.rank, 15);

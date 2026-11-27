@@ -385,9 +385,9 @@ export const LivePreviewStudio = memo(function LivePreviewStudio({
               <div className="lps-plate-head">
                 <div>
                   <h4>{activeFocusItem.name}</h4>
-                  <div className="lps-stars" aria-label={`${focusStars} of 5 rarity stars`}>
-                    {'★'.repeat(focusStars)}
-                    {'☆'.repeat(5 - focusStars)}
+                  <div className="lps-stars" aria-label={`${focusStars} of 7 rarity stars`}>
+                    {'★'.repeat(Math.max(1, focusStars))}
+                    {'☆'.repeat(Math.max(0, 7 - focusStars))}
                   </div>
                 </div>
                 <span

@@ -796,12 +796,20 @@ export class CityEngine {
   public setVisible(visible: boolean): void {
     const wasVisible = this.visible;
     this.visible = visible;
+    if (!visible) {
+      this.keysPressed.clear();
+      return;
+    }
     if (!wasVisible && visible && !this.disposed) {
       this.lastTickMs = performance.now();
       this.handleResize();
-      if (this.shouldAnimate()) {
-        this.resumeLoop(true);
-      }
+      requestAnimationFrame(() => {
+        if (this.disposed || !this.visible) return;
+        this.handleResize();
+        if (this.shouldAnimate()) {
+          this.resumeLoop(true);
+        }
+      });
     }
   }
 

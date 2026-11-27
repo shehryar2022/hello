@@ -1549,7 +1549,7 @@ export const NATIONAL_POLICIES: PolicyCategoryDef[] = [
 ];
 
 export const MIN_RANK = 1;
-export const CLOUD_MAX_RANK = 10; // Firestore rules enforce 0..10 on saves/{uid}, players/{uid}, globalChat
+export const CLOUD_MAX_RANK = 15; // Firestore rules enforce 0..15 on saves/{uid}, players/{uid}, globalChat
 export const MAX_RANK = 15;
 
 export const RANKS: RankDef[] = [
@@ -1769,42 +1769,42 @@ export const WEEKLY_MISSIONS: QuestDef[] = [
     t: 'Metropolitan Expansion (Own 60 buildings)',
     f: (s) => Object.values(s.b || {}).reduce((acc, v) => acc + (Number(v) || 0), 0),
     g: 60,
-    r: 18,
+    r: 5,
   },
   {
     id: 'wk_housing_80',
     t: 'Housing Security (Reach 80M Population)',
     f: (s) => Math.floor(s.pop || 0),
     g: 80,
-    r: 16,
+    r: 3,
   },
   {
     id: 'wk_policy_3',
     t: 'Policy Architect (Customize 3 Building Policies)',
     f: (s) => Object.values(s.bPolicies || {}).filter((p) => p && p !== 'standard').length,
     g: 3,
-    r: 14,
+    r: 2,
   },
   {
     id: 'wk_fuse_3',
     t: 'Sticker Alchemist (Fuse 3 Stickers)',
     f: (s) => Math.floor(s.fused || 0),
     g: 3,
-    r: 16,
+    r: 3,
   },
   {
     id: 'wk_hap_80',
     t: 'Prosperous Republic (Maintain 80% Happiness)',
     f: (s) => Math.floor(s.hap || 0),
     g: 80,
-    r: 15,
+    r: 4,
   },
   {
     id: 'wk_tech_4',
     t: 'Research Initiative (Unlock 4 Tech Doctrines)',
     f: (s) => ['smart_grid', 'eco_catalysis', 'healthcare_act', 'auto_customs', 'civil_corps', 'sovereign_vault'].filter((k) => (s.tech?.[k] || 0) > 0).length,
     g: 4,
-    r: 20,
+    r: 6,
   },
 ];
 
@@ -1817,7 +1817,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     desc: 'Own 15 total national buildings across your capital.',
     f: (s) => Object.values(s.b || {}).reduce((acc, v) => acc + (Number(v) || 0), 0),
     goal: 15,
-    rewardGems: 5,
+    rewardGems: 1,
     rewardCash: 15_000,
   },
   {
@@ -1828,7 +1828,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     desc: 'Expand your skyline to 75 national buildings.',
     f: (s) => Object.values(s.b || {}).reduce((acc, v) => acc + (Number(v) || 0), 0),
     goal: 75,
-    rewardGems: 15,
+    rewardGems: 3,
     rewardCash: 250_000,
   },
   {
@@ -1839,7 +1839,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     desc: 'Own 200 buildings in a living 3D metropolis.',
     f: (s) => Object.values(s.b || {}).reduce((acc, v) => acc + (Number(v) || 0), 0),
     goal: 200,
-    rewardGems: 35,
+    rewardGems: 6,
     rewardCash: 2_500_000,
   },
   {
@@ -1850,7 +1850,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     desc: 'Command 350+ buildings including special landmarks.',
     f: (s) => Object.values(s.b || {}).reduce((acc, v) => acc + (Number(v) || 0), 0),
     goal: 350,
-    rewardGems: 80,
+    rewardGems: 8,
     rewardCash: 25_000_000,
   },
   {
@@ -1861,7 +1861,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     desc: 'Hold ₨ 1,000,000 liquid Coins in the treasury.',
     f: (s) => Math.floor(s.cash || 0),
     goal: 1_000_000,
-    rewardGems: 8,
+    rewardGems: 2,
     rewardCash: 50_000,
   },
   {
@@ -1872,7 +1872,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     desc: 'Accumulate ₨ 100,000,000 in treasury Coins.',
     f: (s) => Math.floor(s.cash || 0),
     goal: 100_000_000,
-    rewardGems: 30,
+    rewardGems: 5,
     rewardCash: 5_000_000,
   },
   {
@@ -1883,7 +1883,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     desc: 'Achieve National Rank 5 (Industrialist).',
     f: (s) => Math.floor(s.rank || 1),
     goal: 5,
-    rewardGems: 15,
+    rewardGems: 3,
     rewardCash: 500_000,
   },
   {
@@ -1894,7 +1894,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     desc: 'Ascend all the way to National Rank 15.',
     f: (s) => Math.floor(s.rank || 1),
     goal: 15,
-    rewardGems: 120,
+    rewardGems: 10,
     rewardCash: 50_000_000,
   },
   {
@@ -1905,7 +1905,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     desc: 'Raise citizen Happiness to 88% or higher.',
     f: (s) => Math.floor(s.hap || 0),
     goal: 88,
-    rewardGems: 12,
+    rewardGems: 2,
     rewardCash: 150_000,
   },
   {
@@ -1916,7 +1916,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     desc: 'Complete all 6 national Research doctrines.',
     f: (s) => ['smart_grid', 'eco_catalysis', 'healthcare_act', 'auto_customs', 'civil_corps', 'sovereign_vault'].filter((k) => (s.tech?.[k] || 0) > 0).length,
     goal: 6,
-    rewardGems: 25,
+    rewardGems: 4,
     rewardCash: 1_500_000,
   },
   {
@@ -1927,7 +1927,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     desc: 'Collect 25 unique national stickers.',
     f: (s) => Object.keys(s.stk || {}).filter((k) => (s.stk?.[k] || 0) > 0).length,
     goal: 25,
-    rewardGems: 25,
+    rewardGems: 5,
     rewardCash: 1_000_000,
   },
   {
@@ -1938,7 +1938,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     desc: 'Maintain a 14-day daily governance login streak.',
     f: (s) => Math.floor(s.streak || 0),
     goal: 14,
-    rewardGems: 20,
+    rewardGems: 4,
     rewardCash: 500_000,
   },
 ];
@@ -2258,11 +2258,11 @@ export const RARITY_META: Record<number, [string, string]> = {
 export const DAILY_REWARDS = [
   { c: 300, g: 0, e: 0 },
   { c: 800, g: 1, e: 0 },
-  { c: 1800, g: 2, e: 0 },
-  { c: 4500, g: 3, e: 0 },
-  { c: 10000, g: 5, e: 0 },
-  { c: 22000, g: 8, e: 1 },
-  { c: 60000, g: 12, e: 1 },
+  { c: 1800, g: 1, e: 0 },
+  { c: 4500, g: 2, e: 0 },
+  { c: 10000, g: 3, e: 0 },
+  { c: 22000, g: 4, e: 1 },
+  { c: 60000, g: 6, e: 1 },
 ];
 
 export const GOVS: GovDef[] = [

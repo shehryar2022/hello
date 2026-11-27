@@ -729,11 +729,11 @@ test('cleanSavePayload strips undefined/country/provinces fields and clamps all 
   assert.equal('avs' in cleaned, false);
   assert.equal('legacyFoo' in cleaned, false);
   assert.equal('legacyHotel' in (cleaned.b as Record<string, unknown>), false);
-  assert.ok(Object.keys(cleaned.b as Record<string, unknown>).length <= 35);
+  assert.ok(Object.keys(cleaned.b as Record<string, unknown>).length <= 60);
   assert.equal(cleaned.cash, 1e13);
   assert.equal(cleaned.gems, 1e9);
   assert.equal(cleaned.taxPool, 1e13);
-  assert.equal(cleaned.rank, 10);
+  assert.equal(cleaned.rank, 15);
   assert.equal(migrateState(cleaned as never).rank, MAX_RANK);
   assert.equal(cleaned.fused, 1_000_000);
   assert.equal(cleaned.streak, 10_000);

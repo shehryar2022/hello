@@ -71,7 +71,7 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'username', 'usernameLower', 'countryCode', 'countryName',
           'gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'createdAt',
-          'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge'
+          'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim'
         ])
         && data.username is string && data.username.size() >= 3 && data.username.size() <= 16
         && data.username.matches('^[A-Za-z0-9_]{3,16}$')
@@ -85,14 +85,15 @@ service cloud.firestore {
         && data.cash is number && data.cash >= 0 && data.cash <= 10000000000000
         && data.gems is number && data.gems >= 0 && data.gems <= 1000000000
         && data.level is number && data.level >= 1 && data.level <= 10000000
-        && data.rank is number && data.rank >= 0 && data.rank <= 10
-        && data.lastSeen is timestamp
+        && data.rank is number && data.rank >= 0 && data.rank <= 15
         && (!('createdAt' in data) || data.createdAt is timestamp)
+        && data.lastSeen is timestamp
         && (!('subTier' in data) || data.subTier in ['', 'daily', 'weekly', 'monthly'])
         && (!('subExp' in data) || (data.subExp is number && data.subExp >= 0 && data.subExp <= 10000000000000))
         && (!('cosFrame' in data) || (data.cosFrame is string && data.cosFrame.matches('^[a-z0-9_]{0,36}$')))
         && (!('cosNameFx' in data) || (data.cosNameFx is string && data.cosNameFx.matches('^[a-z0-9_]{0,36}$')))
         && (!('cosBadge' in data) || (data.cosBadge is string && data.cosBadge.matches('^[a-z0-9_]{0,36}$')))
+        && (!('cosAnim' in data) || (data.cosAnim is string && data.cosAnim.matches('^[a-z0-9_]{0,36}$')))
         && isValidPlayerStats(data.stats);
     }
 
@@ -133,7 +134,7 @@ service cloud.firestore {
         && gx.size() <= 16
         && gx.keys().hasOnly(['cond', 'lvl', 'acc', 'blk', 'pb', 'ph', 'log', 'exp'])
         && (!('cond' in gx) || (gx.cond is map && gx.cond.size() <= 12))
-        && (!('lvl' in gx) || (gx.lvl is map && gx.lvl.size() <= 35))
+        && (!('lvl' in gx) || (gx.lvl is map && gx.lvl.size() <= 60))
         && (!('acc' in gx) || (gx.acc is number && gx.acc >= 0 && gx.acc <= 300))
         && (!('blk' in gx) || (gx.blk is number && gx.blk >= 0 && gx.blk <= 1000000))
         && (!('pb' in gx) || (gx.pb is number && gx.pb >= 0 && gx.pb <= 0.25))
@@ -194,7 +195,7 @@ service cloud.firestore {
         && (!('cash' in data.save) || (data.save.cash is number && data.save.cash >= 0 && data.save.cash <= 10000000000000))
         && (!('gems' in data.save) || (data.save.gems is number && data.save.gems >= 0 && data.save.gems <= 1000000000))
         && (!('taxPool' in data.save) || (data.save.taxPool is number && data.save.taxPool >= 0 && data.save.taxPool <= 10000000000000))
-        && (!('rank' in data.save) || (data.save.rank is number && data.save.rank >= 0 && data.save.rank <= 10))
+        && (!('rank' in data.save) || (data.save.rank is number && data.save.rank >= 0 && data.save.rank <= 15))
         && (!('boost' in data.save) || (data.save.boost is number && data.save.boost >= 0 && data.save.boost <= 30))
         && (!('crateCd' in data.save) || (data.save.crateCd is number && data.save.crateCd >= 0 && data.save.crateCd <= 10000000000000))
         && (!('day' in data.save) || (data.save.day is number && data.save.day >= 0 && data.save.day <= 100000000))
@@ -224,7 +225,7 @@ service cloud.firestore {
         && (!('green' in data.save) || (data.save.green is number && data.save.green >= 0 && data.save.green <= 25))
         && (!('wealth' in data.save) || (data.save.wealth is number && data.save.wealth >= 0 && data.save.wealth <= 20))
         && (!('transitSub' in data.save) || (data.save.transitSub is number && data.save.transitSub >= 0 && data.save.transitSub <= 25))
-        && (!('b' in data.save) || (data.save.b is map && data.save.b.size() <= 35))
+        && (!('b' in data.save) || (data.save.b is map && data.save.b.size() <= 60))
         && (!('stk' in data.save) || (data.save.stk is map && data.save.stk.size() <= 48))
         && (!('milestones' in data.save) || (data.save.milestones is map && data.save.milestones.size() <= 40))
         && (!('claimed' in data.save) || (data.save.claimed is map && data.save.claimed.size() <= 20))
@@ -234,7 +235,7 @@ service cloud.firestore {
         && (!('hist' in data.save) || (data.save.hist is list && data.save.hist.size() <= 60))
         && (!('questIds' in data.save) || (data.save.questIds is list && data.save.questIds.size() <= 10))
         && (!('questDay' in data.save) || (data.save.questDay is string && data.save.questDay.size() <= 32))
-        && (!('provBudgetLog' in data.save) || (data.save.provBudgetLog is list && data.save.provBudgetLog.size() <= 20))
+        && (!('provBudgetLog' in data.save) || (data.save.provBudgetLog is list && data.save.provBudgetLog.size() <= 30))
         && (!('provTxs' in data.save) || (data.save.provTxs is list && data.save.provTxs.size() <= 30))
         && (!('provinces' in data.save) || (
           data.save.provinces is list
@@ -358,16 +359,17 @@ service cloud.firestore {
 
     function isValidGlobalChat(data) {
       return data.keys().hasAll(['uid', 'name', 'cc', 'rank', 'text', 'createdAt'])
-        && data.keys().hasOnly(['uid', 'name', 'cc', 'rank', 'text', 'createdAt', 'cosFrame', 'cosNameFx', 'cosBadge'])
+        && data.keys().hasOnly(['uid', 'name', 'cc', 'rank', 'text', 'createdAt', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim'])
         && isValidId(data.uid)
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 16
         && data.cc is string && data.cc.size() <= 3
-        && data.rank is number && data.rank >= 0 && data.rank <= 10
+        && data.rank is number && data.rank >= 0 && data.rank <= 15
         && data.text is string && data.text.size() >= 1 && data.text.size() <= 200
         && data.text.matches('(?s).*\\S.*')
         && (!('cosFrame' in data) || (data.cosFrame is string && data.cosFrame.matches('^[a-z0-9_]{0,36}$')))
         && (!('cosNameFx' in data) || (data.cosNameFx is string && data.cosNameFx.matches('^[a-z0-9_]{0,36}$')))
         && (!('cosBadge' in data) || (data.cosBadge is string && data.cosBadge.matches('^[a-z0-9_]{0,36}$')))
+        && (!('cosAnim' in data) || (data.cosAnim is string && data.cosAnim.matches('^[a-z0-9_]{0,36}$')))
         && data.createdAt is timestamp;
     }
 
@@ -452,18 +454,19 @@ service cloud.firestore {
         && (
           affectedOnly(['lastSeen']) ||
           (
-            affectedOnly(['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge'])
+            affectedOnly(['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim'])
             && isValidPlayerProfile(incoming())
             && incoming().gdp is number && incoming().gdp >= 0 && incoming().gdp <= 10000000000000
             && incoming().cash is number && incoming().cash >= 0 && incoming().cash <= 10000000000000
             && incoming().gems is number && incoming().gems >= 0 && incoming().gems <= 1000000000
             && incoming().level is number && incoming().level >= 1 && incoming().level <= 10000000
-            && incoming().rank is number && incoming().rank >= 0 && incoming().rank <= 10
+            && incoming().rank is number && incoming().rank >= 0 && incoming().rank <= 15
             && (!('subTier' in incoming()) || incoming().subTier in ['', 'daily', 'weekly', 'monthly'])
             && (!('subExp' in incoming()) || (incoming().subExp is number && incoming().subExp >= 0 && incoming().subExp <= 10000000000000))
             && (!('cosFrame' in incoming()) || (incoming().cosFrame is string && incoming().cosFrame.matches('^[a-z0-9_]{0,36}$')))
             && (!('cosNameFx' in incoming()) || (incoming().cosNameFx is string && incoming().cosNameFx.matches('^[a-z0-9_]{0,36}$')))
             && (!('cosBadge' in incoming()) || (incoming().cosBadge is string && incoming().cosBadge.matches('^[a-z0-9_]{0,36}$')))
+            && (!('cosAnim' in incoming()) || (incoming().cosAnim is string && incoming().cosAnim.matches('^[a-z0-9_]{0,36}$')))
             && (!('stats' in incoming()) || isValidPlayerStats(incoming().stats))
           )
         );

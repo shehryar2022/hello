@@ -1379,6 +1379,11 @@ input[type=range]::-webkit-slider-thumb {
 @media (min-width: 1280px) {
   .main { grid-template-columns: minmax(420px, 500px) minmax(0, 1fr); }
 }
+@media (min-width: 1024px) {
+  .main.main--full {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 
 /* Gift Table Overlay */
 #tov { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 10px; background: rgba(10, 7, 30, 0.94); }
@@ -2370,10 +2375,9 @@ body.update-locked {
   font-variant-numeric: tabular-nums;
 }
 
-@media (max-width: 1023px) {
-  .hero-col.is-hidden-mobile {
-    display: none;
-  }
+.hero-col.is-hidden-dashboard,
+.hero-col.is-hidden-mobile {
+  display: none !important;
 }
 
 .city3d-shell {
@@ -3063,18 +3067,107 @@ body.update-locked {
   flex-shrink: 0;
 }
 
-/* Card cosmetic animations */
+/* Card cosmetic animations (progressive quality from Basic 55 to Ultra Exclusive 585) */
 .cos-anim-card {
   position: relative;
+  overflow: hidden;
+}
+.cos-anim--anim_soft_glow {
+  box-shadow: 0 0 18px rgba(148, 163, 184, 0.28), inset 0 0 18px rgba(56, 189, 248, 0.14), var(--out), var(--in) !important;
+  animation: cosSoftPulse 3.6s ease-in-out infinite;
+}
+.cos-anim--anim_ripple_veil {
+  background:
+    linear-gradient(120deg, rgba(56, 189, 248, 0.08) 0%, rgba(103, 232, 249, 0.22) 50%, rgba(56, 189, 248, 0.08) 100%),
+    linear-gradient(175deg, var(--hero-top) 0%, var(--clay) 80%) !important;
+  background-size: 200% 200%, 100% 100% !important;
+  animation: cosGradShift 5s ease-in-out infinite;
 }
 .cos-anim--anim_backdrop {
   background:
-    radial-gradient(circle at 85% 15%, rgba(124, 92, 255, 0.26), transparent 55%),
-    radial-gradient(circle at 15% 85%, rgba(63, 210, 255, 0.2), transparent 55%),
+    radial-gradient(circle at 85% 15%, rgba(124, 92, 255, 0.3), transparent 55%),
+    radial-gradient(circle at 15% 85%, rgba(63, 210, 255, 0.24), transparent 55%),
     linear-gradient(175deg, var(--hero-top) 0%, var(--clay) 75%) !important;
+  animation: cosSoftPulse 4s ease-in-out infinite;
+}
+.cos-anim--anim_pulse_grid {
+  box-shadow: 0 0 0 1.5px rgba(52, 211, 153, 0.52), 0 0 18px rgba(56, 189, 248, 0.26), var(--out), var(--in) !important;
+  background-image:
+    linear-gradient(rgba(52, 211, 153, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(56, 189, 248, 0.06) 1px, transparent 1px) !important;
+  background-size: 22px 22px !important;
 }
 .cos-anim--anim_borders {
-  box-shadow: 0 0 0 2px rgba(92, 203, 255, 0.65), 0 0 18px rgba(168, 85, 247, 0.35), var(--out), var(--in) !important;
+  box-shadow: 0 0 0 2px rgba(92, 203, 255, 0.72), 0 0 22px rgba(168, 85, 247, 0.42), var(--out), var(--in) !important;
+  animation: cosBorderSweep 3.2s linear infinite;
+}
+.cos-anim--anim_sparkles {
+  box-shadow: 0 0 0 1.5px rgba(126, 232, 255, 0.55), 0 0 22px rgba(253, 224, 71, 0.22), var(--out), var(--in) !important;
+}
+.cos-anim--anim_aurora_curtain {
+  box-shadow: 0 0 0 1.5px rgba(45, 212, 191, 0.55), 0 0 24px rgba(168, 85, 247, 0.34), var(--out), var(--in) !important;
+}
+.cos-anim--anim_celebration {
+  box-shadow: 0 0 0 2px rgba(255, 201, 60, 0.7), 0 0 26px rgba(244, 114, 182, 0.32), var(--out), var(--in) !important;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255, 201, 60, 0.24), transparent 55%),
+    linear-gradient(175deg, var(--hero-top) 0%, var(--clay) 75%) !important;
+}
+.cos-anim--anim_celestial_orbit {
+  box-shadow: 0 0 0 2px rgba(244, 114, 182, 0.72), 0 0 30px rgba(126, 232, 255, 0.38), var(--out), var(--in) !important;
+  background:
+    radial-gradient(circle at 50% 25%, rgba(244, 114, 182, 0.22), transparent 60%),
+    linear-gradient(175deg, var(--hero-top) 0%, var(--clay) 78%) !important;
+}
+.cos-anim--anim_sovereign_nova {
+  box-shadow: 0 0 0 2.5px rgba(253, 224, 71, 0.85), 0 0 36px rgba(251, 113, 133, 0.48), var(--out), var(--in) !important;
+  background:
+    radial-gradient(circle at 50% 10%, rgba(253, 224, 71, 0.26), transparent 55%),
+    radial-gradient(circle at 80% 90%, rgba(251, 113, 133, 0.24), transparent 55%),
+    linear-gradient(165deg, var(--hero-top) 0%, var(--clay) 75%) !important;
+}
+.cos-aurora-curtain {
+  position: absolute;
+  inset: -20% -30%;
+  pointer-events: none;
+  z-index: 0;
+  background: linear-gradient(115deg, transparent 20%, rgba(45, 212, 191, 0.22) 45%, rgba(168, 85, 247, 0.24) 65%, transparent 82%);
+  filter: blur(12px);
+  animation: cosGradShift 6s ease-in-out infinite;
+}
+.cos-orbit-rings {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.cos-orbit-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 1.5px dashed rgba(126, 232, 255, 0.35);
+}
+.cos-orbit-ring--a {
+  width: 220px;
+  height: 220px;
+  border-color: rgba(244, 114, 182, 0.35);
+  animation: cosOrbitSpin 12s linear infinite;
+}
+.cos-orbit-ring--b {
+  width: 310px;
+  height: 310px;
+  border-color: rgba(126, 232, 255, 0.28);
+  animation: cosOrbitSpin 18s linear infinite reverse;
+}
+.cos-nova-beams {
+  position: absolute;
+  inset: -35%;
+  pointer-events: none;
+  z-index: 0;
+  background: conic-gradient(from 0deg, transparent 0deg, rgba(253, 224, 71, 0.16) 35deg, transparent 90deg, rgba(251, 113, 133, 0.16) 150deg, transparent 210deg, rgba(126, 232, 255, 0.16) 280deg, transparent 360deg);
+  animation: cosOrbitSpin 14s linear infinite;
 }
 .cos-sparkles-layer {
   position: absolute;
@@ -3115,6 +3208,18 @@ body.update-locked {
 @keyframes cosSparkleFloat {
   0%, 100% { transform: translateY(0px) scale(0.8); opacity: 0.35; }
   50% { transform: translateY(-10px) scale(1.25); opacity: 0.95; }
+}
+@keyframes cosSoftPulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.06); }
+}
+@keyframes cosBorderSweep {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(92, 203, 255, 0.72), 0 0 20px rgba(168, 85, 247, 0.36), var(--out), var(--in); }
+  50% { box-shadow: 0 0 0 2px rgba(192, 132, 252, 0.85), 0 0 26px rgba(92, 203, 255, 0.5), var(--out), var(--in); }
+}
+@keyframes cosOrbitSpin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
 /* ==================== STORE BAR, TWO-WING SHOP, DIAMOND EXCLUSIVES & LIVE STUDIO ==================== */
@@ -4248,7 +4353,13 @@ body.update-locked {
   box-shadow: 0 0 0 2px #22d3ee, 0 12px 26px rgba(34, 211, 238, 0.28);
 }
 
-/* Rarity Tier Visual Distinction (Rare / Epic / Legendary / Exclusive) */
+/* Rarity Tier Visual Distinction (Basic -> Ultra Exclusive) */
+.dx-tier--basic {
+  border-color: rgba(148, 163, 184, 0.45);
+}
+.dx-tier--uncommon {
+  border-color: rgba(52, 211, 153, 0.52);
+}
 .dx-tier--rare {
   border-color: rgba(56, 189, 248, 0.55);
 }
@@ -4260,11 +4371,20 @@ body.update-locked {
   border-color: rgba(251, 191, 36, 0.78);
   box-shadow: 0 10px 24px rgba(4, 3, 18, 0.52), 0 0 16px rgba(251, 191, 36, 0.22);
 }
+.dx-tier--mythic {
+  border-color: rgba(244, 114, 182, 0.8);
+  box-shadow: 0 12px 26px rgba(4, 3, 18, 0.56), 0 0 20px rgba(244, 114, 182, 0.24);
+}
 .dx-tier--exclusive {
   border-color: rgba(251, 113, 133, 0.82);
   box-shadow: 0 12px 26px rgba(4, 3, 18, 0.56), 0 0 20px rgba(244, 63, 94, 0.24);
 }
-.dx-tier--exclusive::after {
+.dx-tier--ultra-exclusive {
+  border-color: rgba(253, 224, 71, 0.92);
+  box-shadow: 0 14px 30px rgba(4, 3, 18, 0.62), 0 0 26px rgba(251, 113, 133, 0.32);
+}
+.dx-tier--exclusive::after,
+.dx-tier--ultra-exclusive::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -4457,7 +4577,25 @@ body.update-locked {
   background: linear-gradient(145deg, color-mix(in srgb, var(--art-a) 35%, #18143c), #0d1024);
   box-shadow: 0 0 18px color-mix(in srgb, var(--art-a) 45%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
+.dx-art-anim-aura {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--art-a) 35%, transparent), color-mix(in srgb, var(--art-b) 18%, transparent) 55%, transparent 75%);
+  animation: cosSoftPulse 3.4s ease-in-out infinite;
+}
+.dx-art-anim-orbit {
+  position: absolute;
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  border: 1.5px dashed color-mix(in srgb, var(--art-a) 68%, transparent);
+  pointer-events: none;
+  animation: cosOrbitSpin 10s linear infinite;
+}
 .dx-art-anim-card {
+  position: relative;
+  z-index: 1;
   width: 72%;
   padding: 12px 10px;
   border-radius: 12px;
@@ -4467,6 +4605,10 @@ body.update-locked {
   display: grid;
   justify-items: center;
   gap: 6px;
+}
+.dx-art--anim_sovereign_nova .dx-art-anim-card {
+  border-color: #fde047;
+  box-shadow: 0 0 24px rgba(253, 224, 71, 0.45), 0 0 12px rgba(251, 113, 133, 0.45);
 }
 .dx-art-anim-ic { font-size: 22px; }
 .dx-art-anim-line {
@@ -4832,7 +4974,13 @@ body.update-locked {
   .dx-hero::before,
   .cos-frame::before,
   .cos-nfx,
-  .cos-sparkle-dot {
+  .cos-sparkle-dot,
+  .cos-aurora-curtain,
+  .cos-orbit-ring,
+  .cos-nova-beams,
+  .cos-anim-card,
+  .dx-art-anim-aura,
+  .dx-art-anim-orbit {
     animation: none !important;
   }
 }

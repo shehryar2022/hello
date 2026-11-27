@@ -304,6 +304,7 @@ export async function createPlayerProfile(
         cosFrame: sanitizeCosmeticIdField(eqCos.frame),
         cosNameFx: sanitizeCosmeticIdField(eqCos.nameEffect),
         cosBadge: sanitizeCosmeticIdField(eqCos.badge),
+        cosAnim: sanitizeCosmeticIdField(eqCos.anim),
         lastSeen: serverTimestamp(),
         stats: sanitizeStats(undefined, { buildings: totalBuildings(baseState) }),
         createdAt: serverTimestamp(),
@@ -407,6 +408,7 @@ export async function syncSaveToCloud(params: {
             cosFrame: sanitizeCosmeticIdField(eqCos.frame),
             cosNameFx: sanitizeCosmeticIdField(eqCos.nameEffect),
             cosBadge: sanitizeCosmeticIdField(eqCos.badge),
+            cosAnim: sanitizeCosmeticIdField(eqCos.anim),
             lastSeen: serverTimestamp(),
             stats: mergedStats,
           });
@@ -544,6 +546,7 @@ export async function syncSaveToCloud(params: {
       cosFrame: sanitizeCosmeticIdField(eqCos.frame),
       cosNameFx: sanitizeCosmeticIdField(eqCos.nameEffect),
       cosBadge: sanitizeCosmeticIdField(eqCos.badge),
+      cosAnim: sanitizeCosmeticIdField(eqCos.anim),
       lastSeen: serverTimestamp(),
       stats: mergedStats,
     };
@@ -678,7 +681,7 @@ export async function createGiftOffer(params: {
     const newGems = wGems - og;
     const prevStats = sanitizeStats(meData.stats);
     tx.update(meRef, {
-      gdp: Math.max(1, Number(meData.gdp) || newCash, newCash),
+      gdp: Math.min(1e13, Math.max(1, capValue(meData.gdp, 1e13), newCash)),
       cash: newCash,
       gems: newGems,
       level: Math.max(1, Math.min(10_000_000, Math.floor(Number(meData.level) || 1))),
@@ -727,70 +730,81 @@ export async function acceptGiftOffer(
   serverOffsetMs = 0,
 ): Promise<{ status: string }> {
   let status = 'accepted';
-  await runSessionTx(sid, onKicked, async (tx, me) => {
-    const tRef = doc(db, 'trades', tradeId);
-    const tSnap = await tx.get(tRef);
-    const t = tSnap.data();
-    if (!t) throw makeError('not-found', 'Offer not found');
-    if (t.to !== me) throw makeError('permission-denied', 'Not your offer');
-    if (t.status !== 'pending') {
-      status = t.status;
-      return;
-    }
-    if (timestampToMs(t.expiresAt) <= Date.now() + serverOffsetMs) {
-      status = 'expired';
-      return;
-    }
+  let nearExpiryMs = Number.POSITIVE_INFINITY;
+  try {
+    await runSessionTx(sid, onKicked, async (tx, me) => {
+      const tRef = doc(db, 'trades', tradeId);
+      const tSnap = await tx.get(tRef);
+      const t = tSnap.data();
+      if (!t) throw makeError('not-found', 'Offer not found');
+      if (t.to !== me) throw makeError('permission-denied', 'Not your offer');
+      if (t.status !== 'pending') {
+        status = t.status;
+        return;
+      }
+      const expMs = timestampToMs(t.expiresAt);
+      const nowSrv = Date.now() + serverOffsetMs;
+      nearExpiryMs = expMs - nowSrv;
+      if (expMs <= nowSrv + 1500) {
+        status = 'expired';
+        return;
+      }
 
-    const wRef = doc(db, 'players', me, 'private', 'wallet');
-    const meRef = doc(db, 'players', me);
-    const [wSnap, meSnap] = await Promise.all([tx.get(wRef), tx.get(meRef)]);
-    const w = wSnap.data();
-    if (!w) throw makeError('failed-precondition', 'Wallet missing');
+      const wRef = doc(db, 'players', me, 'private', 'wallet');
+      const meRef = doc(db, 'players', me);
+      const [wSnap, meSnap] = await Promise.all([tx.get(wRef), tx.get(meRef)]);
+      const w = wSnap.data();
+      if (!w) throw makeError('failed-precondition', 'Wallet missing');
 
-    const mStk = cleanStickersMap(w.stk);
-    for (const [k, v] of Object.entries((t.offerStk || {}) as Record<string, number>)) {
-      mStk[k] = (mStk[k] || 0) + Math.max(0, Math.floor(Number(v) || 0));
-    }
+      const mStk = cleanStickersMap(w.stk);
+      for (const [k, v] of Object.entries((t.offerStk || {}) as Record<string, number>)) {
+        mStk[k] = (mStk[k] || 0) + Math.max(0, Math.floor(Number(v) || 0));
+      }
 
-    const newCash = Math.min(1e13, capValue(w.cash, 1e13) + capValue(t.offerCash, 1e12));
-    const newGems = Math.min(1e9, capValue(w.gems, 1e9) + capValue(t.offerGems, 1e9));
+      const newCash = Math.min(1e13, capValue(w.cash, 1e13) + capValue(t.offerCash, 1e12));
+      const newGems = Math.min(1e9, capValue(w.gems, 1e9) + capValue(t.offerGems, 1e9));
 
-    const prevRev = Number.isFinite(Number(w.rev)) ? Math.max(0, Math.floor(Number(w.rev))) : 0;
-    tx.set(wRef, {
-      cash: newCash,
-      gems: newGems,
-      stk: mStk,
-      rev: Math.min(1e9, prevRev + 1),
-      sid,
-      t: serverTimestamp(),
-      tradeId,
-    });
-
-    if (meSnap.exists()) {
-      const md = meSnap.data();
-      const prevStats = sanitizeStats(md.stats);
-      tx.update(meRef, {
-        gdp: Math.max(1, Number(md.gdp) || newCash, newCash),
+      const prevRev = Number.isFinite(Number(w.rev)) ? Math.max(0, Math.floor(Number(w.rev))) : 0;
+      tx.set(wRef, {
         cash: newCash,
         gems: newGems,
-        level: Math.max(1, Math.min(10_000_000, Math.floor(Number(md.level) || 1))),
-        rank: Math.max(1, Math.min(CLOUD_MAX_RANK, Math.floor(Number(md.rank) || 1))),
-        lastSeen: serverTimestamp(),
-        stats: sanitizeStats(prevStats, {
-          completedTrades: prevStats.completedTrades + 1,
-          tradesReceived: prevStats.tradesReceived + 1,
-          cashTraded: prevStats.cashTraded + capValue(t.offerCash, 1e12),
-          gemsTraded: prevStats.gemsTraded + capValue(t.offerGems, 1e9),
-        }),
+        stk: mStk,
+        rev: Math.min(1e9, prevRev + 1),
+        sid,
+        t: serverTimestamp(),
+        tradeId,
       });
-    }
 
-    const receiverName = String(t.toName || 'Player').trim().slice(0, 16) || 'Player';
-    tx.update(tRef, { status: 'accepted', resolvedAt: serverTimestamp() });
-    writeNotifInTx(tx, t.from, me, 'accepted', `${receiverName} accepted your gift`, tradeId);
-    status = 'accepted';
-  });
+      if (meSnap.exists()) {
+        const md = meSnap.data();
+        const prevStats = sanitizeStats(md.stats);
+        tx.update(meRef, {
+          gdp: Math.min(1e13, Math.max(1, capValue(md.gdp, 1e13), newCash)),
+          cash: newCash,
+          gems: newGems,
+          level: Math.max(1, Math.min(10_000_000, Math.floor(Number(md.level) || 1))),
+          rank: Math.max(1, Math.min(CLOUD_MAX_RANK, Math.floor(Number(md.rank) || 1))),
+          lastSeen: serverTimestamp(),
+          stats: sanitizeStats(prevStats, {
+            completedTrades: prevStats.completedTrades + 1,
+            tradesReceived: prevStats.tradesReceived + 1,
+            cashTraded: prevStats.cashTraded + capValue(t.offerCash, 1e12),
+            gemsTraded: prevStats.gemsTraded + capValue(t.offerGems, 1e9),
+          }),
+        });
+      }
+
+      const receiverName = String(t.toName || 'Player').trim().slice(0, 16) || 'Player';
+      tx.update(tRef, { status: 'accepted', resolvedAt: serverTimestamp() });
+      writeNotifInTx(tx, t.from, me, 'accepted', `${receiverName} accepted your gift`, tradeId);
+      status = 'accepted';
+    });
+  } catch (err) {
+    if (isPermissionDeniedError(err) && nearExpiryMs < 8000) {
+      return { status: 'expired' };
+    }
+    throw err;
+  }
   return { status };
 }
 
@@ -998,6 +1012,7 @@ export async function sendGlobalChatMessage(params: {
   cosFrame?: string;
   cosNameFx?: string;
   cosBadge?: string;
+  cosAnim?: string;
 }): Promise<void> {
   const activeUid = requireUid(params.uid);
   const cleanText = params.text.trim().slice(0, 200);
@@ -1013,6 +1028,7 @@ export async function sendGlobalChatMessage(params: {
     cosFrame: sanitizeCosmeticIdField(params.cosFrame),
     cosNameFx: sanitizeCosmeticIdField(params.cosNameFx),
     cosBadge: sanitizeCosmeticIdField(params.cosBadge),
+    cosAnim: sanitizeCosmeticIdField(params.cosAnim),
     text: cleanText,
     createdAt: serverTimestamp(),
   });
@@ -1121,6 +1137,7 @@ export async function syncPublicProfileMetrics(params: {
     cosFrame: sanitizeCosmeticIdField(eqCos.frame),
     cosNameFx: sanitizeCosmeticIdField(eqCos.nameEffect),
     cosBadge: sanitizeCosmeticIdField(eqCos.badge),
+    cosAnim: sanitizeCosmeticIdField(eqCos.anim),
     lastSeen: serverTimestamp(),
   };
   const bTotal = totalBuildings(state);
@@ -1341,6 +1358,126 @@ export async function promoteRankOnline(params: {
       nextCash: data.nextCash,
       walletRev: data.walletRev,
       gdp: data.gdp,
+    };
+  } catch {
+    return { usedServer: false };
+  }
+}
+
+export async function purchaseCosmeticOnline(params: {
+  itemId: string;
+  sid: string;
+}): Promise<{
+  usedServer: boolean;
+  rejected?: boolean;
+  error?: string;
+  nextCash?: number;
+  nextGems?: number;
+  walletRev?: number;
+}> {
+  const fnBase =
+    typeof import.meta !== 'undefined' && import.meta.env
+      ? (import.meta.env.VITE_FUNCTIONS_BASE_URL as string | undefined)
+      : undefined;
+  if (!fnBase || !auth?.currentUser) {
+    return { usedServer: false };
+  }
+  try {
+    const token = await auth.currentUser.getIdToken();
+    const res = await fetch(`${fnBase.replace(/\/$/, '')}/verifyCosmeticPurchase`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ itemId: params.itemId, sid: params.sid }),
+    });
+    const data = (await res.json().catch(() => null)) as {
+      ok?: boolean;
+      error?: string;
+      nextCash?: number;
+      nextGems?: number;
+      walletRev?: number;
+    } | null;
+    if (res.status === 400) {
+      return {
+        usedServer: true,
+        rejected: true,
+        error: data?.error || 'COSMETIC_PURCHASE_REJECTED',
+      };
+    }
+    if (!res.ok || !data?.ok) {
+      return { usedServer: false };
+    }
+    return {
+      usedServer: true,
+      nextCash: data.nextCash,
+      nextGems: data.nextGems,
+      walletRev: data.walletRev,
+    };
+  } catch {
+    return { usedServer: false };
+  }
+}
+
+export async function claimRewardOnline(params: {
+  kind: 'daily_slot' | 'weekly_mission' | 'achievement' | 'milestone';
+  rewardId: string;
+  periodKey?: string;
+  sid: string;
+}): Promise<{
+  usedServer: boolean;
+  rejected?: boolean;
+  error?: string;
+  gemsAdded?: number;
+  cashAdded?: number;
+  nextCash?: number;
+  nextGems?: number;
+  walletRev?: number;
+}> {
+  const fnBase =
+    typeof import.meta !== 'undefined' && import.meta.env
+      ? (import.meta.env.VITE_FUNCTIONS_BASE_URL as string | undefined)
+      : undefined;
+  if (!fnBase || !auth?.currentUser) {
+    return { usedServer: false };
+  }
+  try {
+    const token = await auth.currentUser.getIdToken();
+    const res = await fetch(`${fnBase.replace(/\/$/, '')}/verifyRewardClaim`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(params),
+    });
+    const data = (await res.json().catch(() => null)) as {
+      ok?: boolean;
+      error?: string;
+      gemsAdded?: number;
+      cashAdded?: number;
+      nextCash?: number;
+      nextGems?: number;
+      walletRev?: number;
+    } | null;
+    if (res.status === 400) {
+      return {
+        usedServer: true,
+        rejected: true,
+        error: data?.error || 'REWARD_CLAIM_REJECTED',
+      };
+    }
+    if (!res.ok || !data?.ok) {
+      return { usedServer: false };
+    }
+    return {
+      usedServer: true,
+      gemsAdded: data.gemsAdded,
+      cashAdded: data.cashAdded,
+      nextCash: data.nextCash,
+      nextGems: data.nextGems,
+      walletRev: data.walletRev,
     };
   } catch {
     return { usedServer: false };

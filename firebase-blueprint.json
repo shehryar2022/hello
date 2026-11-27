@@ -22,7 +22,7 @@
         "cash": { "type": "number" },
         "gems": { "type": "number" },
         "level": { "type": "integer", "minimum": 1 },
-        "rank": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "rank": { "type": "integer", "minimum": 0, "maximum": 15 },
         "lastSeen": { "type": "string", "format": "date-time" },
         "createdAt": { "type": "string", "format": "date-time" },
         "subTier": { "type": "string", "enum": ["", "daily", "weekly", "monthly"] },
@@ -30,6 +30,7 @@
         "cosFrame": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
         "cosNameFx": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
         "cosBadge": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
+        "cosAnim": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
         "stats": { "type": "object" }
       },
       "required": ["username", "usernameLower", "countryCode", "countryName", "gdp", "cash", "gems", "level", "rank", "lastSeen", "stats", "createdAt"]
@@ -146,10 +147,11 @@
         "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
         "name": { "type": "string", "minLength": 1, "maxLength": 16 },
         "cc": { "type": "string", "maxLength": 3 },
-        "rank": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "rank": { "type": "integer", "minimum": 0, "maximum": 15 },
         "cosFrame": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
         "cosNameFx": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
         "cosBadge": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
+        "cosAnim": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
         "text": { "type": "string", "minLength": 1, "maxLength": 200 },
         "createdAt": { "type": "string", "format": "date-time" }
       },

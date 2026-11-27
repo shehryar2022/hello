@@ -114,3 +114,12 @@ test('Karachi countdown helper returns strictly positive bounded interval', () =
   const dayMs = msUntilNextKarachiDay(now);
   assert.ok(dayMs >= 1000 && dayMs <= 86_400_000);
 });
+
+test('Diamond rewards remain moderate across Daily Slots, Weekly Missions, and Milestones', () => {
+  for (const slot of DAILY_SLOT_REWARDS) {
+    assert.ok(slot.diamonds >= 1 && slot.diamonds <= 6, `Daily slot ${slot.day} out of range`);
+  }
+  for (const m of WEEKLY_MISSIONS) {
+    assert.ok(m.r >= 2 && m.r <= 6, `Weekly mission ${m.id} out of 2..6 range`);
+  }
+});

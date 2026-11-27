@@ -73,7 +73,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = memo(({
   const frameId = (isMe ? ownCosmetics?.frame : undefined) || profile.cosFrame;
   const nameFxId = (isMe ? ownCosmetics?.nameEffect : undefined) || profile.cosNameFx;
   const badgeId = (isMe ? ownCosmetics?.badge : undefined) || profile.cosBadge;
-  const animId = isMe ? ownCosmetics?.anim : undefined;
+  const animId = (isMe ? ownCosmetics?.anim : undefined) || profile.cosAnim;
 
   return (
     <div className="modal" role="dialog" aria-modal="true" aria-label="Player Profile" onClick={onClose}>

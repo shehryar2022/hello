@@ -41,6 +41,7 @@ interface HeroPanelProps {
   tradeTier: number;
   serverOffsetMs?: number;
   showCity: boolean;
+  hidden?: boolean;
   hiddenMobile?: boolean;
   selectedBuildingId: string | null;
   focusRequest?: { id: string; seq: number } | null;
@@ -65,6 +66,7 @@ export const HeroPanel: React.FC<HeroPanelProps> = memo(({
   tradeTier,
   serverOffsetMs = 0,
   showCity,
+  hidden = false,
   hiddenMobile = false,
   selectedBuildingId,
   focusRequest,
@@ -103,7 +105,10 @@ export const HeroPanel: React.FC<HeroPanelProps> = memo(({
   ];
 
   return (
-    <div className={`list hero-col${hiddenMobile ? ' is-hidden-mobile' : ''}`}>
+    <div
+      className={`list hero-col${hidden || hiddenMobile ? ' is-hidden-dashboard' : ''}`}
+      data-testid="city-dashboard"
+    >
       <CosmeticCardWrap
         animId={heroAnimId}
         animationsEnabled={state.set?.anim !== 0}

@@ -20,6 +20,7 @@ import {
   getRarityStars,
   isCosmeticOwned,
   isItemActiveInPreviewLoadout,
+  raritySlug,
   slotForCategory,
   type CosmeticPreviewLoadout,
   type DxCategoryFilter,
@@ -112,6 +113,7 @@ export const DiamondExclusivesShop = memo(function DiamondExclusivesShop({
   const [inspectedLandmarkId, setInspectedLandmarkId] = useState<string>(DIAMOND_ASSETS[0].id);
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
   const [isPurchasing, setIsPurchasing] = useState(false);
+  const buyLockRef = useRef(false);
 
   const studioRef = useRef<HTMLDivElement | null>(null);
   const ownedSet = useMemo(() => getOwnedCosmeticsSet(state), [state.cos]);
@@ -188,7 +190,8 @@ export const DiamondExclusivesShop = memo(function DiamondExclusivesShop({
   };
 
   const handleConfirmPurchase = () => {
-    if (!pendingConfirm || isPurchasing) return;
+    if (!pendingConfirm || isPurchasing || buyLockRef.current) return;
+    buyLockRef.current = true;
     setIsPurchasing(true);
     try {
       if (pendingConfirm.kind === 'item') {
@@ -199,6 +202,7 @@ export const DiamondExclusivesShop = memo(function DiamondExclusivesShop({
       setPendingConfirm(null);
     } finally {
       setIsPurchasing(false);
+      buyLockRef.current = false;
     }
   };
 
@@ -311,10 +315,14 @@ export const DiamondExclusivesShop = memo(function DiamondExclusivesShop({
                 data-testid="dx-filter-rarity"
               >
                 <option value="all">All Rarities</option>
+                <option value="Basic">Basic</option>
+                <option value="Uncommon">Uncommon</option>
                 <option value="Rare">Rare</option>
                 <option value="Epic">Epic</option>
                 <option value="Legendary">Legendary</option>
+                <option value="Mythic">Mythic</option>
                 <option value="Exclusive">Exclusive</option>
+                <option value="Ultra Exclusive">Ultra Exclusive</option>
               </select>
 
               <select
@@ -327,7 +335,8 @@ export const DiamondExclusivesShop = memo(function DiamondExclusivesShop({
                 <option value="all">All Prices</option>
                 <option value="diamonds_only">Diamonds Only</option>
                 <option value="dual_currency">Dual Currency</option>
-                <option value="under_25">24 Diamonds &amp; Under</option>
+                <option value="under_50">Under 50 Diamonds</option>
+                <option value="under_200">Under 200 Diamonds</option>
               </select>
 
               <select
@@ -398,7 +407,7 @@ export const DiamondExclusivesShop = memo(function DiamondExclusivesShop({
                   return (
                     <article
                       key={bundle.id}
-                      className={`dx-bundle-card dx-tier--${bundle.rarity.toLowerCase()}`}
+                      className={`dx-bundle-card dx-tier--${raritySlug(bundle.rarity)}`}
                       data-testid={`collection-${bundle.id}`}
                     >
                       <div className="dx-crest-anchor">
@@ -601,7 +610,7 @@ export const DiamondExclusivesShop = memo(function DiamondExclusivesShop({
                       return (
                         <article
                           key={asset.id}
-                          className={`dx-portrait-card dx-tier--${asset.rarity.toLowerCase()}${owned ? ' is-owned' : ''}${isInspected ? ' is-previewing' : ''}`}
+                          className={`dx-portrait-card dx-tier--${raritySlug(asset.rarity)}${owned ? ' is-owned' : ''}${isInspected ? ' is-previewing' : ''}`}
                         >
                           <div className="dx-crest-anchor">
                             <RarityCrestGem rarity={asset.rarity} size={20} />
@@ -748,7 +757,7 @@ export const DiamondExclusivesShop = memo(function DiamondExclusivesShop({
                     return (
                       <article
                         key={item.id}
-                        className={`dx-portrait-card dx-tier--${item.rarity.toLowerCase()}${isEquipped ? ' is-equipped' : ''}${isPreviewing ? ' is-previewing' : ''}`}
+                        className={`dx-portrait-card dx-tier--${raritySlug(item.rarity)}${isEquipped ? ' is-equipped' : ''}${isPreviewing ? ' is-previewing' : ''}`}
                         data-testid={`cosmetic-card-${item.id}`}
                       >
                         <div className="dx-crest-anchor">

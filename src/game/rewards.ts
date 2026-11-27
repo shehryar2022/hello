@@ -12,16 +12,16 @@ export interface DailySlotDef {
 }
 
 export const DAILY_SLOT_REWARDS: readonly DailySlotDef[] = [
-  { day: 1, title: 'Treasury Starter', icon: '🌅', coins: 1_500, diamonds: 2 },
-  { day: 2, title: 'Trade Dividend', icon: '🪙', coins: 4_500, diamonds: 3 },
-  { day: 3, title: 'Civic Reserve', icon: '🏛️', coins: 12_000, diamonds: 5 },
-  { day: 4, title: 'Expansion Grant', icon: '⚡', coins: 30_000, diamonds: 8 },
+  { day: 1, title: 'Treasury Starter', icon: '🌅', coins: 1_500, diamonds: 1 },
+  { day: 2, title: 'Trade Dividend', icon: '🪙', coins: 4_500, diamonds: 2 },
+  { day: 3, title: 'Civic Reserve', icon: '🏛️', coins: 12_000, diamonds: 2 },
+  { day: 4, title: 'Expansion Grant', icon: '⚡', coins: 30_000, diamonds: 3 },
   {
     day: 5,
     title: 'Sovereign Vault',
     icon: '👑',
     coins: 75_000,
-    diamonds: 15,
+    diamonds: 6,
     bonusLabel: '+1 Rare Sticker',
     grantsSticker: true,
   },

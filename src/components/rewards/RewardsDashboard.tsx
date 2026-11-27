@@ -47,6 +47,7 @@ const DailyResetCountdown = memo(function DailyResetCountdown({
 
 export interface RewardsDashboardProps {
   state: GameState;
+  dayKey?: string;
   weekKey: string;
   rankPosition: number;
   serverOffsetMs?: number;
@@ -58,6 +59,7 @@ export interface RewardsDashboardProps {
 
 export const RewardsDashboard = memo(function RewardsDashboard({
   state,
+  dayKey,
   weekKey,
   rankPosition,
   serverOffsetMs = 0,
@@ -67,7 +69,10 @@ export const RewardsDashboard = memo(function RewardsDashboard({
   onClaimMilestone,
 }: RewardsDashboardProps) {
   const nowMs = (state.t || Date.now()) + serverOffsetMs;
-  const dailyView = useMemo(() => getDailyRewardsView(state, nowMs), [state, nowMs]);
+  const dailyView = useMemo(() => {
+    void dayKey;
+    return getDailyRewardsView(state, nowMs);
+  }, [state, nowMs, dayKey]);
 
   const weeklyIndices = useMemo(() => selectWeeklyMissionIds(weekKey), [weekKey]);
   const weeklyClaimed = state.weeklyDay === weekKey ? state.weeklyClaimed || {} : {};

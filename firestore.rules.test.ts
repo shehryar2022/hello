@@ -85,11 +85,11 @@ test('Dirty Dozen security invariants are enforced in firestore.rules', () => {
   // 8. Legacy player updates, heartbeat-only updates, and atomic project completion/failure
   assert.match(rules, /'createdAt' in incoming\(\)/);
   assert.match(rules, /affectedOnly\(\['lastSeen'\]\)/);
-  assert.match(rules, /affectedOnly\(\['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge'\]\)/);
+  assert.match(rules, /affectedOnly\(\['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim'\]\)/);
   assert.match(rules, /affectedOnly\(\['progressMs', 'lastTickAt', 'status', 'resolvedAt'\]\)[\s\S]*incoming\(\)\.status in \['done', 'failed'\]/);
   assert.match(rules, /\(!\('rev' in existing\(\)\) \|\| !\(existing\(\)\.rev is number\) \|\| incoming\(\)\.rev >= existing\(\)\.rev\)/);
 
-  // 9. Save balance/policy/building bounds, non-whitespace text guards, rank 0..10, and nullable trade resolvedAt
+  // 9. Save balance/policy/building bounds, non-whitespace text guards, rank 0..15, and nullable trade resolvedAt
   assert.match(rules, /data\.save\.cash >= 0/);
   assert.match(rules, /data\.save\.gems >= 0/);
   assert.match(rules, /data\.save\.tax >= 5 && data\.save\.tax <= 45/);
@@ -99,7 +99,7 @@ test('Dirty Dozen security invariants are enforced in firestore.rules', () => {
   assert.match(rules, /data\.save\.gov in \['rep', 'tech', 'wlf', 'ind'\]/);
   assert.match(rules, /data\.save\.activeFx\.incomeBoostMult <= 1\.75/);
   assert.match(rules, /data\.save\.size\(\) <= 72/);
-  assert.match(rules, /data\.save\.b\.size\(\) <= 35/);
+  assert.match(rules, /data\.save\.b\.size\(\) <= 60/);
   assert.match(rules, /data\.save\.stk\.size\(\) <= 48/);
   assert.match(rules, /data\.stk\.size\(\) <= 48/);
   assert.match(rules, /data\.offerStk\.size\(\) <= 48/);
@@ -107,8 +107,8 @@ test('Dirty Dozen security invariants are enforced in firestore.rules', () => {
   assert.match(rules, /data\.save\.transitSub >= 0 && data\.save\.transitSub <= 25/);
   assert.match(rules, /data\.save\.milestones\.size\(\) <= 40/);
   assert.match(rules, /data\.save\.crateCd >= 0/);
-  assert.match(rules, /data\.save\.rank <= 10/);
-  assert.match(rules, /data\.rank <= 10/);
+  assert.match(rules, /data\.save\.rank <= 15/);
+  assert.match(rules, /data\.rank <= 15/);
   assert.match(rules, /data\.save\.sub\.tier in \['daily', 'weekly', 'monthly'\]/);
   assert.match(rules, /data\.save\.subPromo\.tier in \['daily', 'weekly', 'monthly'\]/);
   assert.match(rules, /data\.save\.subPromo\.pct >= 5 && data\.save\.subPromo\.pct <= 40/);
@@ -130,7 +130,7 @@ test('Dirty Dozen security invariants are enforced in firestore.rules', () => {
   assert.match(rules, /data\.save\.set is map\s+&&\s+data\.save\.set\.size\(\) <= 10/);
   assert.match(rules, /!existing\(\)\.keys\(\)\.hasOnly\(\['sid', 't'\]\)/);
   assert.match(rules, /\^' \+ request\.auth\.uid \+ '_\[A-Za-z0-9_\\\\-\]\+\$/);
-  assert.match(rules, /affectedOnly\(\['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge'\]\)[\s\S]*isValidPlayerProfile\(incoming\(\)\)/);
+  assert.match(rules, /affectedOnly\(\['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim'\]\)[\s\S]*isValidPlayerProfile\(incoming\(\)\)/);
   assert.match(rules, /affectedOnly\(\['read'\]\)[\s\S]*existing\(\)\.read is bool[\s\S]*incoming\(\)\.read == true/);
 
   // 10. Strict nested key whitelists on save, gx, gx.exp, set, activeFx, sub, subPromo; no fragile `is int` checks on JS numbers
@@ -201,7 +201,7 @@ function isValidSaveGx(gx: unknown): boolean {
   if (Object.keys(gx).length > 16) return false;
   if (!hasOnly(gx, ['cond', 'lvl', 'acc', 'blk', 'pb', 'ph', 'log', 'exp'])) return false;
   if ('cond' in gx && !(isObjMap(gx.cond) && Object.keys(gx.cond).length <= 12)) return false;
-  if ('lvl' in gx && !(isObjMap(gx.lvl) && Object.keys(gx.lvl).length <= 35)) return false;
+  if ('lvl' in gx && !(isObjMap(gx.lvl) && Object.keys(gx.lvl).length <= 60)) return false;
   if ('acc' in gx && !(isNum(gx.acc) && gx.acc >= 0 && gx.acc <= 300)) return false;
   if ('blk' in gx && !(isNum(gx.blk) && gx.blk >= 0 && gx.blk <= 1e6)) return false;
   if ('pb' in gx && !(isNum(gx.pb) && gx.pb >= 0 && gx.pb <= 0.25)) return false;
@@ -265,7 +265,7 @@ function isValidSave(data: unknown): boolean {
     !numRange('cash', 0, 1e13) ||
     !numRange('gems', 0, 1e9) ||
     !numRange('taxPool', 0, 1e13) ||
-    !numRange('rank', 0, 10) ||
+    !numRange('rank', 0, 15) ||
     !numRange('boost', 0, 30) ||
     !numRange('crateCd', 0, 1e13) ||
     !numRange('day', 0, 1e8) ||
@@ -299,7 +299,7 @@ function isValidSave(data: unknown): boolean {
   }
 
   if ('gov' in s && !['rep', 'tech', 'wlf', 'ind'].includes(String(s.gov))) return false;
-  if ('b' in s && !(isObjMap(s.b) && Object.keys(s.b).length <= 35)) return false;
+  if ('b' in s && !(isObjMap(s.b) && Object.keys(s.b).length <= 60)) return false;
   if ('stk' in s && !(isObjMap(s.stk) && Object.keys(s.stk).length <= 48)) return false;
   if ('milestones' in s && !(isObjMap(s.milestones) && Object.keys(s.milestones).length <= 40)) return false;
   if ('claimed' in s && !(isObjMap(s.claimed) && Object.keys(s.claimed).length <= 20)) return false;
@@ -309,7 +309,7 @@ function isValidSave(data: unknown): boolean {
   if ('hist' in s && !(Array.isArray(s.hist) && s.hist.length <= 60)) return false;
   if ('questIds' in s && !(Array.isArray(s.questIds) && s.questIds.length <= 10)) return false;
   if ('questDay' in s && !(typeof s.questDay === 'string' && s.questDay.length <= 32)) return false;
-  if ('provBudgetLog' in s && !(Array.isArray(s.provBudgetLog) && s.provBudgetLog.length <= 20)) return false;
+  if ('provBudgetLog' in s && !(Array.isArray(s.provBudgetLog) && s.provBudgetLog.length <= 30)) return false;
   if ('provTxs' in s && !(Array.isArray(s.provTxs) && s.provTxs.length <= 30)) return false;
   if ('provinces' in s) {
     if (!Array.isArray(s.provinces) || s.provinces.length < 1 || s.provinces.length > 10) return false;
@@ -395,7 +395,7 @@ function isValidPlayerProfile(data: unknown): boolean {
     'username', 'usernameLower', 'countryCode', 'countryName',
     'gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats',
   ];
-  const allowed = [...req, 'createdAt', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge'];
+  const allowed = [...req, 'createdAt', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim'];
   if (!hasAll(data, req) || !hasOnly(data, allowed)) return false;
   if (typeof data.username !== 'string' || !/^[A-Za-z0-9_]{3,16}$/.test(data.username)) return false;
   if (typeof data.usernameLower !== 'string' || !/^[a-z0-9_]{3,16}$/.test(data.usernameLower)) return false;
@@ -406,12 +406,12 @@ function isValidPlayerProfile(data: unknown): boolean {
   if (!(isNum(data.cash) && data.cash >= 0 && data.cash <= 1e13)) return false;
   if (!(isNum(data.gems) && data.gems >= 0 && data.gems <= 1e9)) return false;
   if (!(isNum(data.level) && data.level >= 1 && data.level <= 1e7)) return false;
-  if (!(isNum(data.rank) && data.rank >= 0 && data.rank <= 10)) return false;
+  if (!(isNum(data.rank) && data.rank >= 0 && data.rank <= 15)) return false;
   if (!isNum(data.lastSeen)) return false;
   if ('createdAt' in data && !isNum(data.createdAt)) return false;
   if ('subTier' in data && !['', 'daily', 'weekly', 'monthly'].includes(String(data.subTier))) return false;
   if ('subExp' in data && !(isNum(data.subExp) && data.subExp >= 0 && data.subExp <= 1e13)) return false;
-  for (const cosField of ['cosFrame', 'cosNameFx', 'cosBadge'] as const) {
+  for (const cosField of ['cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim'] as const) {
     if (cosField in data && (typeof data[cosField] !== 'string' || !/^[a-z0-9_]{0,36}$/.test(String(data[cosField])))) {
       return false;
     }
@@ -434,7 +434,7 @@ function evalPlayerUpdate(
   if (changed.every((k) => k === 'lastSeen')) return true;
   const allowedSync = [
     'gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp',
-    'cosFrame', 'cosNameFx', 'cosBadge',
+    'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim',
   ];
   if (!changed.every((k) => allowedSync.includes(k))) return false;
   return isValidPlayerProfile(incoming);
@@ -660,8 +660,18 @@ test('players/{uid} heartbeat & leaderboard rules match client payloads and bloc
         cosFrame: 'frame_neon',
         cosNameFx: 'nfx_rainbow',
         cosBadge: 'badge_diamond_member',
+        cosAnim: 'anim_sovereign_nova',
         lastSeen: now,
       },
+      existingProfile,
+    ),
+    true,
+  );
+  assert.equal(
+    evalPlayerUpdate(
+      reqOwner,
+      uid,
+      { ...existingProfile, rank: 15, lastSeen: now },
       existingProfile,
     ),
     true,
@@ -685,6 +695,7 @@ test('players/{uid} heartbeat & leaderboard rules match client payloads and bloc
     false,
   );
   assert.match(rules, /isValidGlobalChat\(data\)[\s\S]*cosFrame/);
+  assert.match(rules, /isValidGlobalChat\(data\)[\s\S]*cosAnim/);
   // Leaderboard list limit enforced at <= 100 (app queries 25 active & 10 search)
   assert.equal(25 <= 100 && 10 <= 100, true);
 });

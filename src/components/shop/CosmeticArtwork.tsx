@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { getCosmeticDef } from '../../game/cosmetics';
+import { getCosmeticDef, raritySlug } from '../../game/cosmetics';
 import type { CosmeticBundleDef, CosmeticItemDef, CosmeticRarity } from '../../game/types';
 import { CosmeticAvatar, CosmeticBadgeChip, CosmeticName } from '../CosmeticIdentity';
 
@@ -11,12 +11,16 @@ export const RarityCrestGem = memo(function RarityCrestGem({
   size?: number;
 }) {
   const palette: Record<CosmeticRarity, { fill: string; hi: string; stroke: string }> = {
+    Basic: { fill: '#94a3b8', hi: '#e2e8f0', stroke: '#475569' },
+    Uncommon: { fill: '#34d399', hi: '#d1fae5', stroke: '#047857' },
     Rare: { fill: '#38bdf8', hi: '#bae6fd', stroke: '#0369a1' },
     Epic: { fill: '#c084fc', hi: '#f3e8ff', stroke: '#6b21a8' },
     Legendary: { fill: '#fbbf24', hi: '#fef08a', stroke: '#b45309' },
+    Mythic: { fill: '#f472b6', hi: '#fce7f3', stroke: '#9d174d' },
     Exclusive: { fill: '#fb7185', hi: '#ffe4e6', stroke: '#9f1239' },
+    'Ultra Exclusive': { fill: '#fde047', hi: '#ffffff', stroke: '#be123c' },
   };
-  const p = palette[rarity];
+  const p = palette[rarity] || palette.Rare;
   return (
     <svg
       width={size}
@@ -24,7 +28,7 @@ export const RarityCrestGem = memo(function RarityCrestGem({
       viewBox="0 0 24 24"
       fill="none"
       aria-hidden="true"
-      className={`dx-crest-svg dx-crest-svg--${rarity.toLowerCase()}`}
+      className={`dx-crest-svg dx-crest-svg--${raritySlug(rarity)}`}
     >
       <path
         d="M12 2L20 9.2L16.2 21H7.8L4 9.2L12 2Z"
@@ -129,6 +133,12 @@ export const CosmeticItemArtwork = memo(function CosmeticItemArtwork({
   }
 
   if (item.category === 'animation') {
+    const isApex = item.id === 'anim_sovereign_nova' || item.id === 'anim_celestial_orbit';
+    const hasGlint =
+      item.id === 'anim_sparkles' ||
+      item.id === 'anim_aurora_curtain' ||
+      item.id === 'anim_celebration' ||
+      isApex;
     return (
       <div
         className={`dx-art dx-art--anim dx-art--${item.id}`}
@@ -137,6 +147,8 @@ export const CosmeticItemArtwork = memo(function CosmeticItemArtwork({
           '--art-b': item.secondaryColor,
         } as React.CSSProperties}
       >
+        {hasGlint && <div className="dx-art-anim-aura" aria-hidden="true" />}
+        {isApex && <div className="dx-art-anim-orbit" aria-hidden="true" />}
         <div className="dx-art-anim-card">
           <span className="dx-art-anim-ic" aria-hidden="true">
             {item.icon}

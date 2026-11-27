@@ -1542,16 +1542,16 @@ export function buyStickerCrate(
 
 
 export const MILESTONES: QuestDef[] = [
-  { id: 'm_first_bldg', t: 'First Infrastructure (Own 5 buildings)', f: (s) => totalBuildings(s), g: 5, r: 3 },
-  { id: 'm_cash_1m', t: 'Millionaire Economy (Reach ₨ 1M Real GDP)', f: (s) => calculateGdp(s), g: 1_000_000, r: 8 },
-  { id: 'm_builders_25', t: 'Urban Planner (Own 25 buildings)', f: (s) => totalBuildings(s), g: 25, r: 10 },
-  { id: 'm_infra_5', t: 'Master Architect (Upgrade any building to Lv 5)', f: (s) => Math.max(1, ...Object.values(s.gx?.lvl || { farms: 1 })), g: 5, r: 12 },
-  { id: 'm_stk_10', t: 'Curator (Collect 10 unique stickers)', f: (s) => stickerUniqueCount(s), g: 10, r: 10 },
-  { id: 'm_rank_4', t: 'Business Owner Charter (Reach Rank 4)', f: (s) => s.rank || MIN_RANK, g: 4, r: 15 },
-  { id: 'm_tech_3', t: 'Chief Scientist (Unlock 3 Research doctrines)', f: (s) => techCount(s), g: 3, r: 12 },
-  { id: 'm_gdp_100m', t: 'Economic Powerhouse (Real GDP ₨ 100M)', f: (s) => calculateGdp(s), g: 100_000_000, r: 25 },
-  { id: 'm_rank_10', t: 'National Legend (Reach Rank 10)', f: (s) => s.rank || MIN_RANK, g: 10, r: 45 },
-  { id: 'm_rank_15', t: 'Eternal Chancellor (Reach Rank 15)', f: (s) => s.rank || MIN_RANK, g: MAX_RANK, r: 75 },
+  { id: 'm_first_bldg', t: 'First Infrastructure (Own 5 buildings)', f: (s) => totalBuildings(s), g: 5, r: 1 },
+  { id: 'm_cash_1m', t: 'Millionaire Economy (Reach ₨ 1M Real GDP)', f: (s) => calculateGdp(s), g: 1_000_000, r: 2 },
+  { id: 'm_builders_25', t: 'Urban Planner (Own 25 buildings)', f: (s) => totalBuildings(s), g: 25, r: 3 },
+  { id: 'm_infra_5', t: 'Master Architect (Upgrade any building to Lv 5)', f: (s) => Math.max(1, ...Object.values(s.gx?.lvl || { farms: 1 })), g: 5, r: 3 },
+  { id: 'm_stk_10', t: 'Curator (Collect 10 unique stickers)', f: (s) => stickerUniqueCount(s), g: 10, r: 4 },
+  { id: 'm_rank_4', t: 'Business Owner Charter (Reach Rank 4)', f: (s) => s.rank || MIN_RANK, g: 4, r: 5 },
+  { id: 'm_tech_3', t: 'Chief Scientist (Unlock 3 Research doctrines)', f: (s) => techCount(s), g: 3, r: 4 },
+  { id: 'm_gdp_100m', t: 'Economic Powerhouse (Real GDP ₨ 100M)', f: (s) => calculateGdp(s), g: 100_000_000, r: 6 },
+  { id: 'm_rank_10', t: 'National Legend (Reach Rank 10)', f: (s) => s.rank || MIN_RANK, g: 10, r: 8 },
+  { id: 'm_rank_15', t: 'Eternal Chancellor (Reach Rank 15)', f: (s) => s.rank || MIN_RANK, g: MAX_RANK, r: 10 },
 ];
 
 export function claimMilestone(

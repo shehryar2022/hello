@@ -22,7 +22,15 @@ export type CosmeticCategory =
   | 'badge'
   | 'diamond_asset';
 
-export type CosmeticRarity = 'Rare' | 'Epic' | 'Legendary' | 'Exclusive';
+export type CosmeticRarity =
+  | 'Basic'
+  | 'Uncommon'
+  | 'Rare'
+  | 'Epic'
+  | 'Legendary'
+  | 'Mythic'
+  | 'Exclusive'
+  | 'Ultra Exclusive';
 
 export type GameThemeId =
   | 'midnight_galaxy'
@@ -523,6 +531,7 @@ export interface PlayerProfile {
   cosFrame?: string;
   cosNameFx?: string;
   cosBadge?: string;
+  cosAnim?: string;
   lastSeen?: unknown;
   seen?: number;
   stats: PlayerStats;
@@ -619,6 +628,7 @@ export interface ChatMessage {
   cosFrame?: string;
   cosNameFx?: string;
   cosBadge?: string;
+  cosAnim?: string;
   text: string;
   ms: number;
 }

@@ -386,26 +386,63 @@ export const THEME_ITEMS: CosmeticItemDef[] = [
 
 export const PREMIUM_ANIMATIONS: CosmeticItemDef[] = [
   {
+    id: 'anim_soft_glow',
+    name: 'Soft Ambient Glow',
+    category: 'animation',
+    rarity: 'Basic',
+    diamondsCost: 55,
+    previewTag: 'Gentle Pulse',
+    icon: '🕯️',
+    desc: 'Adds a clean, soothing atmospheric glow around your Commander Profile card.',
+    accentColor: '#94a3b8',
+    secondaryColor: '#38bdf8',
+  },
+  {
+    id: 'anim_ripple_veil',
+    name: 'Horizon Silk Shimmer',
+    category: 'animation',
+    rarity: 'Basic',
+    diamondsCost: 85,
+    previewTag: 'Silk Sweep',
+    icon: '🌊',
+    desc: 'Brushes a subtle horizon light sweep across your identity header & badges.',
+    accentColor: '#38bdf8',
+    secondaryColor: '#67e8f9',
+  },
+  {
     id: 'anim_backdrop',
     name: 'Profile Backdrop Aura',
     category: 'animation',
-    rarity: 'Rare',
-    diamondsCost: 14,
+    rarity: 'Uncommon',
+    diamondsCost: 115,
     previewTag: 'Ambient Halo',
     icon: '🌀',
-    desc: 'Enriches your Executive Header & Profile cards with an animated aura sheen.',
+    desc: 'Enriches your Executive Header & Profile cards with an animated dual-tone aura halo.',
     accentColor: '#818cf8',
+    secondaryColor: '#38bdf8',
+  },
+  {
+    id: 'anim_pulse_grid',
+    name: 'Cyber Pulse Trim',
+    category: 'animation',
+    rarity: 'Uncommon',
+    diamondsCost: 140,
+    previewTag: 'Harmonic Frame',
+    icon: '💠',
+    desc: 'Synchronizes a rhythmic cybernetic edge pulse around your command identity.',
+    accentColor: '#34d399',
     secondaryColor: '#38bdf8',
   },
   {
     id: 'anim_borders',
     name: 'Glowing Card Borders',
     category: 'animation',
-    rarity: 'Epic',
-    diamondsCost: 20,
+    rarity: 'Rare',
+    diamondsCost: 175,
+    reqRank: 2,
     previewTag: 'Luminance Trim',
     icon: '✨',
-    desc: 'Adds subtle animated crystalline rim luminescence to your command cards.',
+    desc: 'Projects a traveling crystalline luminance beam along your command card perimeter.',
     accentColor: '#3fd2ff',
     secondaryColor: '#c084fc',
   },
@@ -414,24 +451,66 @@ export const PREMIUM_ANIMATIONS: CosmeticItemDef[] = [
     name: 'Floating Diamond Sparkles',
     category: 'animation',
     rarity: 'Epic',
-    diamondsCost: 22,
+    diamondsCost: 235,
+    reqRank: 2,
     previewTag: 'Starlight Drift',
     icon: '💎',
-    desc: 'Drifts gentle crystalline sparkles across your profile & showcase banner.',
+    desc: 'Suspends rising crystalline starlight facets across your profile & showcase banner.',
     accentColor: '#7ee8ff',
     secondaryColor: '#fde047',
+  },
+  {
+    id: 'anim_aurora_curtain',
+    name: 'Aurora Borealis Curtain',
+    category: 'animation',
+    rarity: 'Epic',
+    diamondsCost: 285,
+    reqRank: 3,
+    previewTag: 'Polar Ribbons',
+    icon: '🌌',
+    desc: 'Drapes shimmering multi-band polar aurora ribbons over your Sovereign Identity.',
+    accentColor: '#2dd4bf',
+    secondaryColor: '#a855f7',
   },
   {
     id: 'anim_celebration',
     name: 'Imperial Unlock Fanfare',
     category: 'animation',
     rarity: 'Legendary',
-    diamondsCost: 28,
+    diamondsCost: 355,
+    reqRank: 4,
     previewTag: 'Celebration FX',
     icon: '🎆',
-    desc: 'Upgrades quest, reward & unlock celebrations with prism burst confetti.',
+    desc: 'Illuminates your card with golden crown rays & upgrades unlock celebrations with prism confetti.',
     accentColor: '#ffc93c',
     secondaryColor: '#f472b6',
+  },
+  {
+    id: 'anim_celestial_orbit',
+    name: 'Celestial Starlight Orbit',
+    category: 'animation',
+    rarity: 'Mythic',
+    diamondsCost: 465,
+    reqRank: 5,
+    previewTag: 'Astral Rings',
+    icon: '🪐',
+    desc: 'Surrounds your avatar & profile showcase with counter-rotating mythic orbital rings and star flares.',
+    accentColor: '#f472b6',
+    secondaryColor: '#7ee8ff',
+  },
+  {
+    id: 'anim_sovereign_nova',
+    name: 'Sovereign Diamond Nova',
+    category: 'animation',
+    rarity: 'Ultra Exclusive',
+    diamondsCost: 585,
+    reqRank: 6,
+    previewTag: 'Apex Prism FX',
+    icon: '👑',
+    desc: 'Apex multi-layered prismatic supernova aura, crystalline lattice & diamond stardust cascade.',
+    accentColor: '#fde047',
+    secondaryColor: '#fb7185',
+    limitedLabel: 'Apex FX',
   },
 ];
 
@@ -608,7 +687,7 @@ export const COSMETIC_BUNDLES: CosmeticBundleDef[] = [
     id: 'bundle_cyber_horizon',
     name: 'Cyber Neon Suite',
     rarity: 'Epic',
-    diamondsCost: 46,
+    diamondsCost: 155,
     itemIds: ['frame_neon', 'nfx_neon', 'theme_cyber_neon', 'anim_borders'],
     badgeText: 'Save 30%',
     desc: 'Neon Glow Frame, Neon Name Effect, Cyber Neon Theme & Glowing Borders.',
@@ -642,7 +721,7 @@ export const COSMETIC_BUNDLES: CosmeticBundleDef[] = [
     id: 'bundle_diamond_prestige',
     name: 'Diamond Prestige Vault',
     rarity: 'Exclusive',
-    diamondsCost: 118,
+    diamondsCost: 265,
     coinsCost: 750_000,
     itemIds: [
       'frame_diamond_crystal',
@@ -659,27 +738,51 @@ export const COSMETIC_BUNDLES: CosmeticBundleDef[] = [
 ];
 
 export const RARITY_COLORS: Record<CosmeticRarity, { text: string; border: string; bg: string }> = {
+  Basic: {
+    text: '#cbd5e1',
+    border: 'rgba(148, 163, 184, 0.4)',
+    bg: 'rgba(148, 163, 184, 0.14)',
+  },
+  Uncommon: {
+    text: '#6ee7b7',
+    border: 'rgba(52, 211, 153, 0.45)',
+    bg: 'rgba(52, 211, 153, 0.14)',
+  },
   Rare: {
     text: '#67e8f9',
-    border: 'rgba(63, 210, 255, 0.45)',
-    bg: 'rgba(63, 210, 255, 0.14)',
+    border: 'rgba(63, 210, 255, 0.48)',
+    bg: 'rgba(63, 210, 255, 0.15)',
   },
   Epic: {
     text: '#d8b4fe',
-    border: 'rgba(168, 85, 247, 0.5)',
-    bg: 'rgba(168, 85, 247, 0.16)',
+    border: 'rgba(168, 85, 247, 0.52)',
+    bg: 'rgba(168, 85, 247, 0.17)',
   },
   Legendary: {
     text: '#fde047',
-    border: 'rgba(255, 201, 60, 0.55)',
-    bg: 'rgba(255, 201, 60, 0.16)',
+    border: 'rgba(255, 201, 60, 0.58)',
+    bg: 'rgba(255, 201, 60, 0.17)',
+  },
+  Mythic: {
+    text: '#f9a8d4',
+    border: 'rgba(244, 114, 182, 0.6)',
+    bg: 'rgba(236, 72, 153, 0.18)',
   },
   Exclusive: {
     text: '#fda4af',
     border: 'rgba(251, 113, 133, 0.58)',
     bg: 'rgba(251, 113, 133, 0.18)',
   },
+  'Ultra Exclusive': {
+    text: '#fef08a',
+    border: 'rgba(250, 204, 21, 0.72)',
+    bg: 'rgba(245, 158, 11, 0.22)',
+  },
 };
+
+export function raritySlug(rarity: CosmeticRarity): string {
+  return rarity.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+}
 
 export function getCosmeticDef(id?: string): CosmeticItemDef | undefined {
   if (!id) return undefined;
@@ -828,13 +931,21 @@ export function formatCoinsCompact(amount: number): string {
 
 export function getRarityWeight(rarity: CosmeticRarity): number {
   switch (rarity) {
+    case 'Ultra Exclusive':
+      return 8;
     case 'Exclusive':
-      return 4;
+      return 7;
+    case 'Mythic':
+      return 6;
     case 'Legendary':
-      return 3;
+      return 5;
     case 'Epic':
-      return 2;
+      return 4;
     case 'Rare':
+      return 3;
+    case 'Uncommon':
+      return 2;
+    case 'Basic':
     default:
       return 1;
   }
@@ -842,14 +953,22 @@ export function getRarityWeight(rarity: CosmeticRarity): number {
 
 export function getRarityStars(rarity: CosmeticRarity): number {
   switch (rarity) {
+    case 'Ultra Exclusive':
+      return 7;
+    case 'Mythic':
     case 'Exclusive':
+      return 6;
     case 'Legendary':
       return 5;
     case 'Epic':
       return 4;
     case 'Rare':
-    default:
       return 3;
+    case 'Uncommon':
+      return 2;
+    case 'Basic':
+    default:
+      return 1;
   }
 }
 
@@ -1121,7 +1240,7 @@ export function sanitizeCosmeticIdField(id: unknown): string {
 
 export type DxCategoryFilter = 'all' | 'bundle' | CosmeticCategory;
 export type DxRarityFilter = 'all' | CosmeticRarity;
-export type DxPriceFilter = 'all' | 'diamonds_only' | 'dual_currency' | 'under_25';
+export type DxPriceFilter = 'all' | 'diamonds_only' | 'dual_currency' | 'under_50' | 'under_200';
 export type DxOwnershipFilter = 'all' | 'available' | 'owned' | 'unowned' | 'rank_locked';
 export type DxSortBy = 'recommended' | 'price_asc' | 'price_desc' | 'rarity' | 'newest';
 
@@ -1321,7 +1440,10 @@ export function filterAndSortCosmetics(
     if (priceFilter === 'dual_currency' && !(item.coinsCost && item.coinsCost > 0)) {
       return false;
     }
-    if (priceFilter === 'under_25' && item.diamondsCost > 24) {
+    if (priceFilter === 'under_50' && item.diamondsCost >= 50) {
+      return false;
+    }
+    if (priceFilter === 'under_200' && item.diamondsCost >= 200) {
       return false;
     }
     const owned = isCosmeticOwned(s, item.id);

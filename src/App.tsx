@@ -57,6 +57,7 @@ import {
   capValue,
   checkUsernameAvailability,
   claimGovProject,
+  claimRewardOnline,
   createGiftOffer,
   createPlayerProfile,
   createGovProject,
@@ -68,6 +69,7 @@ import {
   normalizeProject,
   payGovProjectStage,
   promoteRankOnline,
+  purchaseCosmeticOnline,
   rejectGiftOffer,
   searchPlayersByUsername,
   sendDirectMessage,
@@ -102,6 +104,7 @@ import {
   areLeaderboardListsEqual,
   isHeartbeatDue,
   mergeLeaderboardProfiles,
+  shouldRefreshPresenceQuery,
 } from './firebase/presence';
 import {
   buildMeaningfulSaveFingerprint,
@@ -320,7 +323,8 @@ function areChatListsEqual(a: ChatMessage[], b: ChatMessage[]): boolean {
       x.rank !== y.rank ||
       x.cosFrame !== y.cosFrame ||
       x.cosNameFx !== y.cosNameFx ||
-      x.cosBadge !== y.cosBadge
+      x.cosBadge !== y.cosBadge ||
+      x.cosAnim !== y.cosAnim
     ) {
       return false;
     }
@@ -390,7 +394,6 @@ export default function App() {
 
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [floats, setFloats] = useState<FloatPop[]>([]);
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 1024);
   const [graphicsSettings, setGraphicsSettings] = useState<GraphicsSettings>(() => readGraphicsSettings(null));
   const [perfStats, setPerfStats] = useState<RuntimePerfStats>(DEFAULT_PERF_STATS);
   const perfStatsRef = useRef<RuntimePerfStats>(DEFAULT_PERF_STATS);
@@ -447,6 +450,7 @@ export default function App() {
   const [unlockModal, setUnlockModal] = useState<UnlockCelebrationInfo | null>(null);
 
   const [serverOffsetMs, setServerOffsetMs] = useState(0);
+  const [presenceQueryEpoch, setPresenceQueryEpoch] = useState(0);
   const serverOffsetMsRef = useRef<number>(0);
   const serverTimeVerifiedRef = useRef<boolean>(false);
   const leaderboardRawRef = useRef<PlayerProfile[]>([]);
@@ -507,6 +511,8 @@ export default function App() {
   tradesRef.current = trades;
   const lastSettledTradeCheckRef = useRef<number>(0);
   const subBuyBusyRef = useRef<boolean>(false);
+  const cosmeticBuyBusyRef = useRef<boolean>(false);
+  const rewardClaimBusyRef = useRef<Set<string>>(new Set());
   const lastExpiredSubKeyRef = useRef<string>('');
   const rankPositionRef = useRef<number>(1);
   const modalOpenRef = useRef<boolean>(false);
@@ -523,6 +529,9 @@ export default function App() {
       serverOffsetMsRef.current = next;
       serverTimeVerifiedRef.current = true;
       setServerOffsetMs((prev) => (Math.abs(prev - next) >= 1000 ? next : prev));
+      if (shouldRefreshPresenceQuery(prevOffset, next, wasVerified)) {
+        setPresenceQueryEpoch((prev) => prev + 1);
+      }
       if (!wasVerified || Math.abs(next - prevOffset) >= 5000) {
         const curUid = uidRef.current;
         if (curUid && leaderboardRawRef.current.length > 0) {
@@ -722,13 +731,6 @@ export default function App() {
       });
     }
   }, [tab, shopSubTab]);
-
-  // Track responsive mobile vs desktop viewport
-  useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth < 1024);
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
 
   // Track user activity for gov day & project construction
   useEffect(() => {
@@ -1775,6 +1777,7 @@ export default function App() {
               Date.now() + serverOffsetMsRef.current,
               { ownProfileOverride: nextProfile },
             );
+            leaderboardRawRef.current = merged;
             return areLeaderboardListsEqual(prev, merged) ? prev : merged;
           });
         },
@@ -1949,6 +1952,7 @@ export default function App() {
                 cosFrame: sanitizeCosmeticIdField(x.cosFrame),
                 cosNameFx: sanitizeCosmeticIdField(x.cosNameFx),
                 cosBadge: sanitizeCosmeticIdField(x.cosBadge),
+                cosAnim: sanitizeCosmeticIdField(x.cosAnim),
                 text: String(x.text || ''),
                 ms: timestampToMs(x.createdAt),
               };
@@ -1990,6 +1994,7 @@ export default function App() {
   // Dedicated realtime active-players listener + periodic presence pruning & window sliding
   useEffect(() => {
     if (!uid || !cloudReady || needsOnboarding || kicked) return;
+    void presenceQueryEpoch;
     const queries = buildQueryHelpers();
     const unsub = onSnapshot(
       queries.playersActiveQuery(serverOffsetMsRef.current),
@@ -2036,7 +2041,7 @@ export default function App() {
       window.clearInterval(pruneTimer);
       unsub();
     };
-  }, [uid, cloudReady, needsOnboarding, kicked, handleSnapshotError]);
+  }, [uid, cloudReady, needsOnboarding, kicked, presenceQueryEpoch, handleSnapshotError]);
 
   // Direct messages listener for active DM recipient (keyed only on primitive UID)
   const dmUid = dmRecipient?.uid || '';
@@ -2719,15 +2724,12 @@ export default function App() {
     setSelectedBuildingId(id);
   }, []);
 
-  const handleFocusBuilding = useCallback(
-    (id: string) => {
-      focusSeqRef.current += 1;
-      setSelectedBuildingId(id);
-      setFocusRequest({ id, seq: focusSeqRef.current });
-      if (isMobile) setTab('build');
-    },
-    [isMobile],
-  );
+  const handleFocusBuilding = useCallback((id: string) => {
+    focusSeqRef.current += 1;
+    setSelectedBuildingId(id);
+    setFocusRequest({ id, seq: focusSeqRef.current });
+    setTab('build');
+  }, []);
 
   const handleBuyBuilding = useCallback(
     (id: string, qty: 1 | 5, e?: React.MouseEvent<HTMLButtonElement>) => {
@@ -3120,7 +3122,7 @@ export default function App() {
 
   const handleClaimDailySlot = useCallback(
     (e: React.MouseEvent<HTMLButtonElement>) => {
-      if (isGameplayBlocked()) return;
+      if (isGameplayBlocked() || rewardClaimBusyRef.current.has('daily_slot')) return;
       const nowSrv = Date.now() + serverOffsetMsRef.current;
       const roll = Math.random();
       const res = applyClaimDailySlot(stateRef.current, nowSrv, () => roll);
@@ -3128,6 +3130,8 @@ export default function App() {
         if (res.reason) addToast(res.reason);
         return;
       }
+      rewardClaimBusyRef.current.add('daily_slot');
+      const daySlotId = `day_${res.slot.day}`;
       stateRef.current = res.state;
       saveLocal(res.state);
       playSfx('win', !!res.state.set.sfx);
@@ -3143,14 +3147,93 @@ export default function App() {
         const recheck = applyClaimDailySlot(prev, nowSrv, () => roll);
         return recheck.ok ? recheck.state : prev;
       });
-      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       addToast(
         `Day ${res.slot.day} claimed! +${formatCoinsCompact(res.coinsAdded)} Coins & +${res.diamondsAdded} Diamonds${
           res.sticker ? ` · ${res.sticker.n}` : ''
         }`,
       );
+      const currentUid = uidRef.current;
+      const capturedSeq = authSeqRef.current;
+      if (currentUid && cloudReadyRef.current && isOnlineRef.current) {
+        mutationSeqRef.current += 1;
+        pendingDirtyRef.current = true;
+        refreshCloudStatus();
+        void getWriteQueue(currentUid, capturedSeq)
+          .enqueue(async () => {
+            if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+              return 'aborted' as const;
+            }
+            const srv = await claimRewardOnline({
+              kind: 'daily_slot',
+              rewardId: daySlotId,
+              periodKey: dayKeyFor(nowSrv),
+              sid: sidRef.current,
+            });
+            if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+              return 'aborted' as const;
+            }
+            if (srv.usedServer && !srv.rejected) {
+              if (typeof srv.walletRev === 'number') {
+                walletRevRef.current = Math.max(walletRevRef.current, srv.walletRev);
+              }
+              if (typeof srv.nextCash === 'number' || typeof srv.nextGems === 'number') {
+                const patched: GameState = {
+                  ...stateRef.current,
+                  ...(typeof srv.nextCash === 'number' ? { cash: capValue(srv.nextCash, 1e13) } : {}),
+                  ...(typeof srv.nextGems === 'number' ? { gems: capValue(srv.nextGems, 1e9) } : {}),
+                };
+                stateRef.current = patched;
+                saveLocal(patched, currentUid);
+                setState((prev) => ({
+                  ...prev,
+                  ...(typeof srv.nextCash === 'number' ? { cash: capValue(srv.nextCash, 1e13) } : {}),
+                  ...(typeof srv.nextGems === 'number' ? { gems: capValue(srv.nextGems, 1e9) } : {}),
+                }));
+              }
+              pendingDirtyRef.current = false;
+              refreshCloudStatus();
+              return 'server-ok' as const;
+            }
+            if (srv.usedServer && srv.rejected) {
+              addToast(srv.error || 'Daily reward claim rejected by server.');
+              if (userRef.current) {
+                void loadCloudSession(userRef.current, authSeqRef.current);
+              }
+              return 'rejected' as const;
+            }
+            return 'fallback' as const;
+          })
+          .then((outcome) => {
+            if (
+              outcome === 'fallback' &&
+              isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)
+            ) {
+              scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+            }
+          })
+          .catch(() => {
+            if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+              scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+            }
+          })
+          .finally(() => {
+            rewardClaimBusyRef.current.delete('daily_slot');
+          });
+      } else {
+        scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+        queueMicrotask(() => rewardClaimBusyRef.current.delete('daily_slot'));
+      }
     },
-    [addToast, isGameplayBlocked, saveLocal, scheduleCloudSync, spawnFloat],
+    [
+      addToast,
+      getWriteQueue,
+      isGameplayBlocked,
+      loadCloudSession,
+      refreshCloudStatus,
+      saveLocal,
+      scheduleCloudSync,
+      spawnFloat,
+    ],
   );
 
   const syncLocalPubCosmetics = useCallback((nextState: GameState) => {
@@ -3162,6 +3245,7 @@ export default function App() {
             cosFrame: eq.frame || '',
             cosNameFx: eq.nameEffect || '',
             cosBadge: eq.badge || '',
+            cosAnim: eq.anim || '',
           }
         : prev,
     );
@@ -3199,20 +3283,19 @@ export default function App() {
     }));
     landmarkFocusSeqRef.current += 1;
     setLandmarkFocusRequest({ id: asset.id, seq: landmarkFocusSeqRef.current });
-    if (window.innerWidth < 1024) {
-      setTab('build');
-    }
+    setTab('build');
     addToast(`Previewing ${asset.name} in your 3D Capital!`);
   }, [addToast]);
 
   const handleBuyCosmeticItem = useCallback(
     (itemId: string) => {
-      if (isGameplayBlocked()) return;
+      if (isGameplayBlocked() || cosmeticBuyBusyRef.current) return;
       const res = applyBuyCosmeticItem(stateRef.current, itemId, true);
       if (!res.ok || !res.item) {
         if (res.reason) addToast(res.reason);
         return;
       }
+      cosmeticBuyBusyRef.current = true;
       stateRef.current = res.state;
       saveLocal(res.state);
       syncLocalPubCosmetics(res.state);
@@ -3233,7 +3316,6 @@ export default function App() {
         if (next.focusItemId === itemId) delete next.focusItemId;
         return next;
       });
-      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       setUnlockModal({
         title: res.item.name,
         subtitle: `${res.item.rarity} exclusive unlocked and applied to your nation identity.`,
@@ -3242,18 +3324,99 @@ export default function App() {
         rewardSummary: `${res.item.previewTag} · ${res.item.desc}`,
         accentColor: res.item.accentColor,
       });
+      const currentUid = uidRef.current;
+      const capturedSeq = authSeqRef.current;
+      if (currentUid && cloudReadyRef.current && isOnlineRef.current) {
+        mutationSeqRef.current += 1;
+        pendingDirtyRef.current = true;
+        refreshCloudStatus();
+        void getWriteQueue(currentUid, capturedSeq)
+          .enqueue(async () => {
+            if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+              return 'aborted' as const;
+            }
+            const srv = await purchaseCosmeticOnline({
+              itemId,
+              sid: sidRef.current,
+            });
+            if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+              return 'aborted' as const;
+            }
+            if (srv.usedServer && !srv.rejected) {
+              if (typeof srv.walletRev === 'number') {
+                walletRevRef.current = Math.max(walletRevRef.current, srv.walletRev);
+              }
+              if (typeof srv.nextCash === 'number' || typeof srv.nextGems === 'number') {
+                const patched: GameState = {
+                  ...stateRef.current,
+                  ...(typeof srv.nextCash === 'number' ? { cash: capValue(srv.nextCash, 1e13) } : {}),
+                  ...(typeof srv.nextGems === 'number' ? { gems: capValue(srv.nextGems, 1e9) } : {}),
+                };
+                stateRef.current = patched;
+                saveLocal(patched, currentUid);
+                setState((prev) => ({
+                  ...prev,
+                  ...(typeof srv.nextCash === 'number' ? { cash: capValue(srv.nextCash, 1e13) } : {}),
+                  ...(typeof srv.nextGems === 'number' ? { gems: capValue(srv.nextGems, 1e9) } : {}),
+                }));
+              }
+              pendingDirtyRef.current = false;
+              refreshCloudStatus();
+              return 'server-ok' as const;
+            }
+            if (srv.usedServer && srv.rejected) {
+              addToast(srv.error || 'Cosmetic purchase rejected by server.');
+              if (userRef.current) {
+                void loadCloudSession(userRef.current, authSeqRef.current);
+              }
+              return 'rejected' as const;
+            }
+            return 'fallback' as const;
+          })
+          .then((outcome) => {
+            if (
+              outcome === 'fallback' &&
+              isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)
+            ) {
+              scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+            }
+          })
+          .catch(() => {
+            if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+              scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+            }
+          })
+          .finally(() => {
+            cosmeticBuyBusyRef.current = false;
+          });
+      } else {
+        scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+        queueMicrotask(() => {
+          cosmeticBuyBusyRef.current = false;
+        });
+      }
     },
-    [addToast, isGameplayBlocked, saveLocal, scheduleCloudSync, syncLocalPubCosmetics],
+    [
+      addToast,
+      getWriteQueue,
+      isGameplayBlocked,
+      loadCloudSession,
+      refreshCloudStatus,
+      saveLocal,
+      scheduleCloudSync,
+      syncLocalPubCosmetics,
+    ],
   );
 
   const handleBuyCosmeticBundle = useCallback(
     (bundleId: string) => {
-      if (isGameplayBlocked()) return;
+      if (isGameplayBlocked() || cosmeticBuyBusyRef.current) return;
       const res = applyBuyCosmeticBundle(stateRef.current, bundleId, true);
       if (!res.ok || !res.bundle) {
         if (res.reason) addToast(res.reason);
         return;
       }
+      cosmeticBuyBusyRef.current = true;
       stateRef.current = res.state;
       saveLocal(res.state);
       syncLocalPubCosmetics(res.state);
@@ -3264,7 +3427,6 @@ export default function App() {
         return recheck.ok ? recheck.state : prev;
       });
       setPreviewLoadout({});
-      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       setUnlockModal({
         title: res.bundle.name,
         subtitle: `${res.unlockedIds.length} exclusive items unlocked & equipped together!`,
@@ -3272,6 +3434,10 @@ export default function App() {
         rarityLabel: `${res.bundle.rarity} Collection`,
         rewardSummary: `${res.bundle.badgeText} · ${res.bundle.desc}`,
         accentColor: res.bundle.accentColor,
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      queueMicrotask(() => {
+        cosmeticBuyBusyRef.current = false;
       });
     },
     [addToast, isGameplayBlocked, saveLocal, scheduleCloudSync, syncLocalPubCosmetics],
@@ -3337,12 +3503,14 @@ export default function App() {
 
   const handleClaimMilestone = useCallback(
     (milestoneId: string, e: React.MouseEvent<HTMLButtonElement>) => {
-      if (isGameplayBlocked()) return;
+      const lockKey = `ms_${milestoneId}`;
+      if (isGameplayBlocked() || rewardClaimBusyRef.current.has(lockKey)) return;
       const res = claimMilestone(stateRef.current, milestoneId);
       if (!res.ok) {
         if (res.reason) addToast(res.reason);
         return;
       }
+      rewardClaimBusyRef.current.add(lockKey);
       stateRef.current = res.state;
       saveLocal(res.state);
       playSfx('win', !!res.state.set.sfx);
@@ -3353,15 +3521,86 @@ export default function App() {
         const recheck = claimMilestone(prev, milestoneId);
         return recheck.ok ? recheck.state : prev;
       });
-      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       addToast(`Milestone completed! +${res.gemsAdded} Diamonds`);
+      const currentUid = uidRef.current;
+      const capturedSeq = authSeqRef.current;
+      if (currentUid && cloudReadyRef.current && isOnlineRef.current) {
+        mutationSeqRef.current += 1;
+        pendingDirtyRef.current = true;
+        refreshCloudStatus();
+        void getWriteQueue(currentUid, capturedSeq)
+          .enqueue(async () => {
+            if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+              return 'aborted' as const;
+            }
+            const srv = await claimRewardOnline({
+              kind: 'milestone',
+              rewardId: milestoneId,
+              sid: sidRef.current,
+            });
+            if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+              return 'aborted' as const;
+            }
+            if (srv.usedServer && !srv.rejected) {
+              if (typeof srv.walletRev === 'number') {
+                walletRevRef.current = Math.max(walletRevRef.current, srv.walletRev);
+              }
+              if (typeof srv.nextGems === 'number') {
+                const patched: GameState = { ...stateRef.current, gems: capValue(srv.nextGems, 1e9) };
+                stateRef.current = patched;
+                saveLocal(patched, currentUid);
+                setState((prev) => ({ ...prev, gems: capValue(srv.nextGems, 1e9) }));
+              }
+              pendingDirtyRef.current = false;
+              refreshCloudStatus();
+              return 'server-ok' as const;
+            }
+            if (srv.usedServer && srv.rejected) {
+              addToast(srv.error || 'Milestone claim rejected by server.');
+              if (userRef.current) {
+                void loadCloudSession(userRef.current, authSeqRef.current);
+              }
+              return 'rejected' as const;
+            }
+            return 'fallback' as const;
+          })
+          .then((outcome) => {
+            if (
+              outcome === 'fallback' &&
+              isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)
+            ) {
+              scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+            }
+          })
+          .catch(() => {
+            if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+              scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+            }
+          })
+          .finally(() => {
+            rewardClaimBusyRef.current.delete(lockKey);
+          });
+      } else {
+        scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+        queueMicrotask(() => rewardClaimBusyRef.current.delete(lockKey));
+      }
     },
-    [addToast, isGameplayBlocked, spawnFloat, saveLocal, scheduleCloudSync],
+    [
+      addToast,
+      getWriteQueue,
+      isGameplayBlocked,
+      loadCloudSession,
+      refreshCloudStatus,
+      saveLocal,
+      scheduleCloudSync,
+      spawnFloat,
+    ],
   );
 
   const handleClaimWeeklyMission = useCallback(
     (missionId: string, e: React.MouseEvent<HTMLButtonElement>) => {
-      if (isGameplayBlocked()) return;
+      const lockKey = `wk_${missionId}`;
+      if (isGameplayBlocked() || rewardClaimBusyRef.current.has(lockKey)) return;
       const wk = weekKeyFor(Date.now() + serverOffsetMsRef.current);
       const rankPos = rankPositionRef.current;
       const res = applyClaimWeeklyMission(stateRef.current, missionId, wk, rankPos);
@@ -3369,6 +3608,7 @@ export default function App() {
         if (res.reason) addToast(res.reason);
         return;
       }
+      rewardClaimBusyRef.current.add(lockKey);
       const wDef = WEEKLY_MISSIONS.find((m) => m.id === missionId);
       stateRef.current = res.state;
       saveLocal(res.state);
@@ -3380,20 +3620,93 @@ export default function App() {
         const recheck = applyClaimWeeklyMission(prev, missionId, wk, rankPos);
         return recheck.ok ? recheck.state : prev;
       });
-      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       addToast(`${wDef?.t || 'Weekly Mission'} claimed! +${res.gemsAdded} Diamonds`);
+      const currentUid = uidRef.current;
+      const capturedSeq = authSeqRef.current;
+      if (currentUid && cloudReadyRef.current && isOnlineRef.current) {
+        mutationSeqRef.current += 1;
+        pendingDirtyRef.current = true;
+        refreshCloudStatus();
+        void getWriteQueue(currentUid, capturedSeq)
+          .enqueue(async () => {
+            if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+              return 'aborted' as const;
+            }
+            const srv = await claimRewardOnline({
+              kind: 'weekly_mission',
+              rewardId: missionId,
+              periodKey: wk,
+              sid: sidRef.current,
+            });
+            if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+              return 'aborted' as const;
+            }
+            if (srv.usedServer && !srv.rejected) {
+              if (typeof srv.walletRev === 'number') {
+                walletRevRef.current = Math.max(walletRevRef.current, srv.walletRev);
+              }
+              if (typeof srv.nextGems === 'number') {
+                const patched: GameState = { ...stateRef.current, gems: capValue(srv.nextGems, 1e9) };
+                stateRef.current = patched;
+                saveLocal(patched, currentUid);
+                setState((prev) => ({ ...prev, gems: capValue(srv.nextGems, 1e9) }));
+              }
+              pendingDirtyRef.current = false;
+              refreshCloudStatus();
+              return 'server-ok' as const;
+            }
+            if (srv.usedServer && srv.rejected) {
+              addToast(srv.error || 'Weekly mission claim rejected by server.');
+              if (userRef.current) {
+                void loadCloudSession(userRef.current, authSeqRef.current);
+              }
+              return 'rejected' as const;
+            }
+            return 'fallback' as const;
+          })
+          .then((outcome) => {
+            if (
+              outcome === 'fallback' &&
+              isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)
+            ) {
+              scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+            }
+          })
+          .catch(() => {
+            if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+              scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+            }
+          })
+          .finally(() => {
+            rewardClaimBusyRef.current.delete(lockKey);
+          });
+      } else {
+        scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+        queueMicrotask(() => rewardClaimBusyRef.current.delete(lockKey));
+      }
     },
-    [addToast, isGameplayBlocked, spawnFloat, saveLocal, scheduleCloudSync],
+    [
+      addToast,
+      getWriteQueue,
+      isGameplayBlocked,
+      loadCloudSession,
+      refreshCloudStatus,
+      saveLocal,
+      scheduleCloudSync,
+      spawnFloat,
+    ],
   );
 
   const handleClaimAchievement = useCallback(
     (achievementId: string, e: React.MouseEvent<HTMLButtonElement>) => {
-      if (isGameplayBlocked()) return;
+      const lockKey = `ach_${achievementId}`;
+      if (isGameplayBlocked() || rewardClaimBusyRef.current.has(lockKey)) return;
       const res = applyClaimAchievement(stateRef.current, achievementId);
       if (!res.ok) {
         if (res.reason) addToast(res.reason);
         return;
       }
+      rewardClaimBusyRef.current.add(lockKey);
       const aDef = ACHIEVEMENTS.find((a) => a.id === achievementId);
       stateRef.current = res.state;
       saveLocal(res.state);
@@ -3405,10 +3718,88 @@ export default function App() {
         const recheck = applyClaimAchievement(prev, achievementId);
         return recheck.ok ? recheck.state : prev;
       });
-      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       addToast(`${aDef?.n || 'Achievement'} unlocked! +${res.gemsAdded} Diamonds, +₨ ${formatNumber(res.cashAdded)}`);
+      const currentUid = uidRef.current;
+      const capturedSeq = authSeqRef.current;
+      if (currentUid && cloudReadyRef.current && isOnlineRef.current) {
+        mutationSeqRef.current += 1;
+        pendingDirtyRef.current = true;
+        refreshCloudStatus();
+        void getWriteQueue(currentUid, capturedSeq)
+          .enqueue(async () => {
+            if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+              return 'aborted' as const;
+            }
+            const srv = await claimRewardOnline({
+              kind: 'achievement',
+              rewardId: achievementId,
+              sid: sidRef.current,
+            });
+            if (!isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+              return 'aborted' as const;
+            }
+            if (srv.usedServer && !srv.rejected) {
+              if (typeof srv.walletRev === 'number') {
+                walletRevRef.current = Math.max(walletRevRef.current, srv.walletRev);
+              }
+              if (typeof srv.nextCash === 'number' || typeof srv.nextGems === 'number') {
+                const patched: GameState = {
+                  ...stateRef.current,
+                  ...(typeof srv.nextCash === 'number' ? { cash: capValue(srv.nextCash, 1e13) } : {}),
+                  ...(typeof srv.nextGems === 'number' ? { gems: capValue(srv.nextGems, 1e9) } : {}),
+                };
+                stateRef.current = patched;
+                saveLocal(patched, currentUid);
+                setState((prev) => ({
+                  ...prev,
+                  ...(typeof srv.nextCash === 'number' ? { cash: capValue(srv.nextCash, 1e13) } : {}),
+                  ...(typeof srv.nextGems === 'number' ? { gems: capValue(srv.nextGems, 1e9) } : {}),
+                }));
+              }
+              pendingDirtyRef.current = false;
+              refreshCloudStatus();
+              return 'server-ok' as const;
+            }
+            if (srv.usedServer && srv.rejected) {
+              addToast(srv.error || 'Achievement claim rejected by server.');
+              if (userRef.current) {
+                void loadCloudSession(userRef.current, authSeqRef.current);
+              }
+              return 'rejected' as const;
+            }
+            return 'fallback' as const;
+          })
+          .then((outcome) => {
+            if (
+              outcome === 'fallback' &&
+              isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)
+            ) {
+              scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+            }
+          })
+          .catch(() => {
+            if (isSessionStillValid(uidRef.current, currentUid, authSeqRef.current, capturedSeq)) {
+              scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+            }
+          })
+          .finally(() => {
+            rewardClaimBusyRef.current.delete(lockKey);
+          });
+      } else {
+        scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+        queueMicrotask(() => rewardClaimBusyRef.current.delete(lockKey));
+      }
     },
-    [addToast, isGameplayBlocked, spawnFloat, saveLocal, scheduleCloudSync],
+    [
+      addToast,
+      getWriteQueue,
+      isGameplayBlocked,
+      loadCloudSession,
+      refreshCloudStatus,
+      saveLocal,
+      scheduleCloudSync,
+      spawnFloat,
+    ],
   );
 
   const handleEnactDecision = useCallback(
@@ -4027,6 +4418,7 @@ export default function App() {
           cosFrame: eq.frame,
           cosNameFx: eq.nameEffect,
           cosBadge: eq.badge,
+          cosAnim: eq.anim,
         });
         return true;
       } catch (err) {
@@ -4549,14 +4941,14 @@ export default function App() {
           onOpenAuth={handleOpenAuth}
         />
 
-        <div className="main">
+        <div className={`main ${tab === 'build' ? 'main--build' : 'main--full'}`}>
           <HeroPanel
             state={state}
             graphics={graphicsSettings}
             tradeTier={tradeTier}
             serverOffsetMs={serverOffsetMs}
-            showCity={!isMobile || tab === 'build'}
-            hiddenMobile={isMobile && tab !== 'build'}
+            showCity={tab === 'build'}
+            hidden={tab !== 'build'}
             selectedBuildingId={selectedBuildingId}
             focusRequest={focusRequest}
             previewAnimId={previewAnimId}
@@ -4678,6 +5070,7 @@ export default function App() {
             {tab === 'quest' && (
               <QuestsTab
                 state={state}
+                dayKey={dayKey}
                 weekKey={weekKey}
                 rankPosition={rankPosition}
                 serverOffsetMs={serverOffsetMs}

@@ -4,6 +4,7 @@ import { RewardsDashboard } from '../rewards/RewardsDashboard';
 
 interface QuestsTabProps {
   state: GameState;
+  dayKey: string;
   weekKey: string;
   rankPosition: number;
   serverOffsetMs?: number;
@@ -15,6 +16,7 @@ interface QuestsTabProps {
 
 export const QuestsTab: React.FC<QuestsTabProps> = memo(({
   state,
+  dayKey,
   weekKey,
   rankPosition,
   serverOffsetMs = 0,
@@ -26,6 +28,7 @@ export const QuestsTab: React.FC<QuestsTabProps> = memo(({
   return (
     <RewardsDashboard
       state={state}
+      dayKey={dayKey}
       weekKey={weekKey}
       rankPosition={rankPosition}
       serverOffsetMs={serverOffsetMs}
@@ -37,6 +40,7 @@ export const QuestsTab: React.FC<QuestsTabProps> = memo(({
   );
 }, (prev, next) => {
   if (
+    prev.dayKey !== next.dayKey ||
     prev.weekKey !== next.weekKey ||
     prev.rankPosition !== next.rankPosition ||
     prev.serverOffsetMs !== next.serverOffsetMs ||

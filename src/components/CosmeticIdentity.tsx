@@ -74,16 +74,48 @@ export function CosmeticCardWrap({
 }: CosmeticCardWrapProps) {
   const def = animId && animationsEnabled ? getCosmeticDef(animId) : undefined;
   const animClass = def ? `cos-anim-card cos-anim--${def.id}` : '';
-  const showSparkles = def?.id === 'anim_sparkles' && animationsEnabled;
+  const sparkleCount =
+    !animationsEnabled || !def
+      ? 0
+      : def.id === 'anim_sovereign_nova'
+        ? 7
+        : def.id === 'anim_sparkles' || def.id === 'anim_celestial_orbit'
+          ? 5
+          : def.id === 'anim_celebration'
+            ? 3
+            : 0;
+  const sparkleCoords = [
+    { left: '10%', top: '16%', delay: '0s' },
+    { left: '42%', top: '10%', delay: '0.9s' },
+    { left: '80%', top: '20%', delay: '1.8s' },
+    { left: '88%', top: '64%', delay: '0.5s' },
+    { left: '20%', top: '76%', delay: '1.4s' },
+    { left: '58%', top: '44%', delay: '2.3s' },
+    { left: '34%', top: '86%', delay: '1.1s' },
+  ];
+  const showAurora = animationsEnabled && (def?.id === 'anim_aurora_curtain' || def?.id === 'anim_sovereign_nova');
+  const showOrbit = animationsEnabled && (def?.id === 'anim_celestial_orbit' || def?.id === 'anim_sovereign_nova');
+  const showNova = animationsEnabled && def?.id === 'anim_sovereign_nova';
+
   return (
     <div className={`${animClass} ${className}`.trim()}>
-      {showSparkles ? (
+      {showAurora ? <div className="cos-aurora-curtain" aria-hidden="true" /> : null}
+      {showOrbit ? (
+        <div className="cos-orbit-rings" aria-hidden="true">
+          <span className="cos-orbit-ring cos-orbit-ring--a" />
+          <span className="cos-orbit-ring cos-orbit-ring--b" />
+        </div>
+      ) : null}
+      {showNova ? <div className="cos-nova-beams" aria-hidden="true" /> : null}
+      {sparkleCount > 0 ? (
         <div className="cos-sparkles-layer" aria-hidden="true">
-          <span className="cos-sparkle-dot" style={{ left: '12%', top: '18%', animationDelay: '0s' }} />
-          <span className="cos-sparkle-dot" style={{ left: '42%', top: '12%', animationDelay: '1.1s' }} />
-          <span className="cos-sparkle-dot" style={{ left: '78%', top: '22%', animationDelay: '2.2s' }} />
-          <span className="cos-sparkle-dot" style={{ left: '86%', top: '64%', animationDelay: '0.6s' }} />
-          <span className="cos-sparkle-dot" style={{ left: '22%', top: '76%', animationDelay: '1.8s' }} />
+          {sparkleCoords.slice(0, sparkleCount).map((pt, idx) => (
+            <span
+              key={idx}
+              className="cos-sparkle-dot"
+              style={{ left: pt.left, top: pt.top, animationDelay: pt.delay }}
+            />
+          ))}
         </div>
       ) : null}
       {children}
