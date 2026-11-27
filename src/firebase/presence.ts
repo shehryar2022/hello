@@ -51,6 +51,8 @@ function mergeProfileFields(prev: PlayerProfile | undefined, next: PlayerProfile
   const incomingHasName = Boolean(next.username && next.username.trim().length > 0);
   const incomingHasCountry = Boolean(next.countryCode && next.countryName);
   const incomingSubValid = Boolean(next.subTier);
+  const resolveCos = (nextVal: string | undefined, prevVal: string | undefined) =>
+    typeof nextVal === 'string' ? nextVal : prevVal;
   return {
     ...prev,
     ...next,
@@ -62,6 +64,9 @@ function mergeProfileFields(prev: PlayerProfile | undefined, next: PlayerProfile
     level: next.level > 0 ? next.level : prev.level,
     subTier: incomingSubValid ? next.subTier : next.subTier === '' ? '' : prev.subTier,
     subExp: incomingSubValid ? next.subExp : next.subExp ?? prev.subExp,
+    cosFrame: resolveCos(next.cosFrame, prev.cosFrame),
+    cosNameFx: resolveCos(next.cosNameFx, prev.cosNameFx),
+    cosBadge: resolveCos(next.cosBadge, prev.cosBadge),
     seen: nextSeen > 0 ? nextSeen : prev.seen,
     stats: next.stats
       ? {
@@ -158,6 +163,9 @@ export function areLeaderboardListsEqual(a: PlayerProfile[], b: PlayerProfile[])
       x.level !== y.level ||
       (x.subTier || '') !== (y.subTier || '') ||
       (x.subExp || 0) !== (y.subExp || 0) ||
+      (x.cosFrame || '') !== (y.cosFrame || '') ||
+      (x.cosNameFx || '') !== (y.cosNameFx || '') ||
+      (x.cosBadge || '') !== (y.cosBadge || '') ||
       (x.stats?.buildings || 0) !== (y.stats?.buildings || 0) ||
       (x.stats?.completedTrades || 0) !== (y.stats?.completedTrades || 0)
     ) {

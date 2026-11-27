@@ -109,7 +109,7 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
       items.push({ kind: 'cash', label: 'CASH', qty: formatNumber(effectiveCash) });
     }
     if (effectiveGems > 0) {
-      items.push({ kind: 'gems', label: 'GEMS', qty: String(effectiveGems) });
+      items.push({ kind: 'gems', label: 'DIAMONDS', qty: String(effectiveGems) });
     }
     for (const [id, count] of Object.entries(effectiveStk || {})) {
       if (count > 0 && items.length < SLOTS_MAX) {
@@ -129,7 +129,7 @@ export const GiftTableModal: React.FC<GiftTableModalProps> = ({
 
   const totalParts: string[] = [];
   if (effectiveCash > 0) totalParts.push(`₨ ${formatNumber(effectiveCash)}`);
-  if (effectiveGems > 0) totalParts.push(`${effectiveGems} Gems`);
+  if (effectiveGems > 0) totalParts.push(`${effectiveGems} Diamonds`);
   const stkTotal = Object.values(effectiveStk || {}).reduce((a, b) => a + (b || 0), 0);
   if (stkTotal > 0) totalParts.push(`${stkTotal} Stickers`);
   const totalSummary = totalParts.join(' · ');

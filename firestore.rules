@@ -71,7 +71,7 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'username', 'usernameLower', 'countryCode', 'countryName',
           'gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'createdAt',
-          'subTier', 'subExp'
+          'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge'
         ])
         && data.username is string && data.username.size() >= 3 && data.username.size() <= 16
         && data.username.matches('^[A-Za-z0-9_]{3,16}$')
@@ -90,6 +90,9 @@ service cloud.firestore {
         && (!('createdAt' in data) || data.createdAt is timestamp)
         && (!('subTier' in data) || data.subTier in ['', 'daily', 'weekly', 'monthly'])
         && (!('subExp' in data) || (data.subExp is number && data.subExp >= 0 && data.subExp <= 10000000000000))
+        && (!('cosFrame' in data) || (data.cosFrame is string && data.cosFrame.matches('^[a-z0-9_]{0,36}$')))
+        && (!('cosNameFx' in data) || (data.cosNameFx is string && data.cosNameFx.matches('^[a-z0-9_]{0,36}$')))
+        && (!('cosBadge' in data) || (data.cosBadge is string && data.cosBadge.matches('^[a-z0-9_]{0,36}$')))
         && isValidPlayerStats(data.stats);
     }
 
@@ -355,13 +358,16 @@ service cloud.firestore {
 
     function isValidGlobalChat(data) {
       return data.keys().hasAll(['uid', 'name', 'cc', 'rank', 'text', 'createdAt'])
-        && data.keys().hasOnly(['uid', 'name', 'cc', 'rank', 'text', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'name', 'cc', 'rank', 'text', 'createdAt', 'cosFrame', 'cosNameFx', 'cosBadge'])
         && isValidId(data.uid)
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 16
         && data.cc is string && data.cc.size() <= 3
         && data.rank is number && data.rank >= 0 && data.rank <= 10
         && data.text is string && data.text.size() >= 1 && data.text.size() <= 200
         && data.text.matches('(?s).*\\S.*')
+        && (!('cosFrame' in data) || (data.cosFrame is string && data.cosFrame.matches('^[a-z0-9_]{0,36}$')))
+        && (!('cosNameFx' in data) || (data.cosNameFx is string && data.cosNameFx.matches('^[a-z0-9_]{0,36}$')))
+        && (!('cosBadge' in data) || (data.cosBadge is string && data.cosBadge.matches('^[a-z0-9_]{0,36}$')))
         && data.createdAt is timestamp;
     }
 
@@ -446,7 +452,7 @@ service cloud.firestore {
         && (
           affectedOnly(['lastSeen']) ||
           (
-            affectedOnly(['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp'])
+            affectedOnly(['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge'])
             && isValidPlayerProfile(incoming())
             && incoming().gdp is number && incoming().gdp >= 0 && incoming().gdp <= 10000000000000
             && incoming().cash is number && incoming().cash >= 0 && incoming().cash <= 10000000000000
@@ -455,6 +461,9 @@ service cloud.firestore {
             && incoming().rank is number && incoming().rank >= 0 && incoming().rank <= 10
             && (!('subTier' in incoming()) || incoming().subTier in ['', 'daily', 'weekly', 'monthly'])
             && (!('subExp' in incoming()) || (incoming().subExp is number && incoming().subExp >= 0 && incoming().subExp <= 10000000000000))
+            && (!('cosFrame' in incoming()) || (incoming().cosFrame is string && incoming().cosFrame.matches('^[a-z0-9_]{0,36}$')))
+            && (!('cosNameFx' in incoming()) || (incoming().cosNameFx is string && incoming().cosNameFx.matches('^[a-z0-9_]{0,36}$')))
+            && (!('cosBadge' in incoming()) || (incoming().cosBadge is string && incoming().cosBadge.matches('^[a-z0-9_]{0,36}$')))
             && (!('stats' in incoming()) || isValidPlayerStats(incoming().stats))
           )
         );

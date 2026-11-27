@@ -160,19 +160,23 @@ const City3DInner: React.FC<City3DProps> = ({
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([id, lv]) => `${id}:${lv}`)
       .join(',');
-    const queueIds = (state.queue || [])
+    const queueIds = getConstructionQueue(state, 0)
       .map((q) => `${q.buildingId}@${q.finishAt}`)
       .join(',');
-    return `${bEntries}|${lvlEntries}|${queueIds}|${state.cityTimeMode || 'auto'}|${state.cityWeather || 'clear'}`;
-  }, [state.b, state.gx?.lvl, state.queue, state.cityTimeMode, state.cityWeather]);
+    const ownedAssets = (state.cos || [])
+      .filter((id) => id.startsWith('asset_'))
+      .sort()
+      .join(',');
+    return `${bEntries}|${lvlEntries}|${queueIds}|${ownedAssets}|${state.cityTimeMode || 'auto'}|${state.cityWeather || 'clear'}`;
+  }, [state.b, state.gx?.lvl, state.milestones, state.cos, state.cityTimeMode, state.cityWeather]);
 
   const latestStateRef = useRef(state);
   latestStateRef.current = state;
 
   // Push game state changes imperatively into 3D scene only when visual 3D state changes
   useEffect(() => {
-    engineRef.current?.syncState(latestStateRef.current);
-  }, [citySyncSignature]);
+    engineRef.current?.syncState(latestStateRef.current, serverOffsetMs);
+  }, [citySyncSignature, serverOffsetMs]);
 
   useEffect(() => {
     engineRef.current?.applyGraphicsSettings(graphics);

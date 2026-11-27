@@ -31,6 +31,7 @@ import {
   SubIcon,
   TrendingUp,
 } from '../GameIcons';
+import { CosmeticAvatar, CosmeticBadgeChip, CosmeticName } from '../CosmeticIdentity';
 import { GdpChart } from '../GdpChart';
 
 interface PlayersTabProps {
@@ -117,11 +118,18 @@ const LeaderboardRow: React.FC<LeaderboardRowProps> = memo(({
       <div className={`medal m${rankIndex + 1}`}>{rankIndex + 1}</div>
       <div style={{ minWidth: 0 }}>
         <h2 style={{ display: 'flex', gap: 7, alignItems: 'center' }}>
-          <span style={{ width: 24, height: 17, flex: 'none', display: 'inline-block' }}>
-            <CountryFlag code={p.countryCode} alt={p.countryCode} />
-          </span>
+          {p.cosFrame ? (
+            <CosmeticAvatar countryCode={p.countryCode} frameId={p.cosFrame} size="xs" />
+          ) : (
+            <span style={{ width: 24, height: 17, flex: 'none', display: 'inline-block' }}>
+              <CountryFlag code={p.countryCode} alt={p.countryCode} />
+            </span>
+          )}
           {!me && <i className={`onl${isOnline ? '' : ' off'}`} aria-hidden="true" />}
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.username}</span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <CosmeticName name={p.username} nameEffectId={p.cosNameFx} />
+          </span>
+          {p.cosBadge && <CosmeticBadgeChip badgeId={p.cosBadge} />}
           {rk.id > 0 && (
             <span className="rank-badge" style={{ '--c': rk.c } as React.CSSProperties} title={rk.n}>
               <RankEmblem rank={rk.id} size={18} />
@@ -341,7 +349,7 @@ export const PlayersTab: React.FC<PlayersTabProps> = memo(({
                   const globalIdx = (safePage - 1) * PAGE_SIZE + idx;
                   const me = p.id === uid;
                   const isOnline = !me && isPlayerOnline(p.seen, nowSrv);
-                  const subTier = isProfileSubActive(p, nowSrv);
+                  const subTier = isProfileSubActive(p, nowSrv) || '';
                   return (
                     <LeaderboardRow
                       key={p.id}
@@ -403,15 +411,23 @@ export const PlayersTab: React.FC<PlayersTabProps> = memo(({
                 const rk = RANKS[Math.max(1, Math.min(MAX_RANK, m.rank || 1))] || RANKS[1];
                 const senderProfile = leaderboard.find((p) => p.id === m.uid);
                 const subTier = isProfileSubActive(senderProfile, nowSrv);
+                const frameId = m.cosFrame || senderProfile?.cosFrame;
+                const nameFxId = m.cosNameFx || senderProfile?.cosNameFx;
+                const badgeId = m.cosBadge || senderProfile?.cosBadge;
                 return (
                   <div key={m.id} className={`cm ${m.uid === uid ? 'me' : ''} ${subTier ? `sub-card sub-card--${subTier}` : ''}`}>
                     <div className="cmh">
-                      <span className="cmf">
-                        <CountryFlag code={m.cc} alt={m.cc} className="" />
-                      </span>
+                      {frameId ? (
+                        <CosmeticAvatar countryCode={m.cc} frameId={frameId} size="xs" />
+                      ) : (
+                        <span className="cmf">
+                          <CountryFlag code={m.cc} alt={m.cc} className="" />
+                        </span>
+                      )}
                       <button type="button" className="cmn" onClick={() => onOpenProfile(m.uid)}>
-                        {m.name || 'Player'}
+                        <CosmeticName name={m.name || 'Player'} nameEffectId={nameFxId} />
                       </button>
+                      {badgeId && <CosmeticBadgeChip badgeId={badgeId} />}
                       {rk.id > 0 && <RankEmblem rank={rk.id} size={15} />}
                       {subTier && (
                         <span className={`sub-crest sub-crest--${subTier}`}>

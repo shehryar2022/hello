@@ -1,7 +1,9 @@
 import React from 'react';
 import { MAX_RANK, RANKS, TAB_META } from '../game/constants';
+import { getEquippedCosmetics } from '../game/cosmetics';
 import { formatNumber } from '../game/rules';
 import type { GameState, PlayerProfile, TabId } from '../game/types';
+import { CosmeticAvatar, CosmeticName } from './CosmeticIdentity';
 import {
   Bell,
   CashCoinIcon,
@@ -21,6 +23,8 @@ interface TopBarProps {
   pubProfile: PlayerProfile | null;
   rankPosition: number;
   unreadNotifs: number;
+  previewFrameId?: string;
+  previewNameEffectId?: string;
   onOpenProfile: () => void;
   onOpenSettings: () => void;
   onOpenNotifications: () => void;
@@ -35,6 +39,8 @@ export const TopBar = React.memo<TopBarProps>(({
   pubProfile,
   rankPosition,
   unreadNotifs,
+  previewFrameId,
+  previewNameEffectId,
   onOpenProfile,
   onOpenSettings,
   onOpenNotifications,
@@ -44,13 +50,33 @@ export const TopBar = React.memo<TopBarProps>(({
   const rankDef = RANKS[Math.max(1, Math.min(MAX_RANK, state.rank || 1))] || RANKS[1];
   const dateLabel = `${MONTH_YEAR_FORMATTER.format(dt)} · ${rankDef.n} · #${rankPosition}`;
   const cc = state.country?.[0];
+  const equipped = getEquippedCosmetics(state);
+  const activeFrame = previewFrameId || equipped.frame;
+  const activeNameFx = previewNameEffectId || equipped.nameEffect;
 
   return (
     <header className="top">
       <div className="who">
-        <button type="button" className="flag" title="View profile" aria-label="View profile" onClick={onOpenProfile}>
-          {cc ? <CountryFlag code={cc} alt={state.country[1]} /> : <Landmark size={20} color="#ffd257" />}
-        </button>
+        {cc ? (
+          <button
+            type="button"
+            className="flag"
+            style={activeFrame ? { padding: 0, background: 'transparent', overflow: 'visible', boxShadow: 'none' } : undefined}
+            title="View profile"
+            aria-label="View profile"
+            onClick={onOpenProfile}
+          >
+            {activeFrame ? (
+              <CosmeticAvatar countryCode={cc} frameId={activeFrame} size="md" />
+            ) : (
+              <CountryFlag code={cc} alt={state.country[1]} />
+            )}
+          </button>
+        ) : (
+          <button type="button" className="flag" title="View profile" aria-label="View profile" onClick={onOpenProfile}>
+            <Landmark size={20} color="#ffd257" />
+          </button>
+        )}
         <div>
           <h1>Country Economy Tycoon</h1>
           <small>{dateLabel}</small>
@@ -64,7 +90,7 @@ export const TopBar = React.memo<TopBarProps>(({
           </i>
           <span data-testid="hud-cash">{formatNumber(state.cash)}</span>
         </b>
-        <b className="g" title="Gems">
+        <b className="g" title="Diamonds">
           <i>
             <GemDiamondIcon size={19} />
           </i>
@@ -85,7 +111,11 @@ export const TopBar = React.memo<TopBarProps>(({
         </button>
         <button type="button" className="btn sm" id="login" onClick={onOpenAuth}>
           {uid ? <Cloud size={15} strokeWidth={2.2} /> : <Lock size={14} strokeWidth={2.2} />}
-          <span>{uid && pubProfile ? pubProfile.username : uid ? 'Syncing' : 'Login'}</span>
+          {uid && pubProfile ? (
+            <CosmeticName name={pubProfile.username} nameEffectId={activeNameFx} />
+          ) : (
+            <span>{uid ? 'Syncing' : 'Login'}</span>
+          )}
         </button>
       </div>
     </header>
@@ -95,12 +125,14 @@ export const TopBar = React.memo<TopBarProps>(({
 interface NavBarProps {
   activeTab: TabId;
   pendingIncomingGifts: number;
+  unclaimedRewardsCount?: number;
   onSelectTab: (tab: TabId) => void;
 }
 
 export const NavBar = React.memo<NavBarProps>(({
   activeTab,
   pendingIncomingGifts,
+  unclaimedRewardsCount = 0,
   onSelectTab,
 }) => {
   const entries = Object.entries(TAB_META) as Array<[TabId, (typeof TAB_META)[TabId]]>;
@@ -121,8 +153,14 @@ export const NavBar = React.memo<NavBarProps>(({
           {key === 'trade' && pendingIncomingGifts > 0 && (
             <em className="nb">{pendingIncomingGifts}</em>
           )}
+          {key === 'quest' && unclaimedRewardsCount > 0 && (
+            <em className="nb" data-testid="nav-rewards-badge">
+              {unclaimedRewardsCount > 9 ? '9+' : unclaimedRewardsCount}
+            </em>
+          )}
         </button>
       ))}
     </nav>
   );
 });
+

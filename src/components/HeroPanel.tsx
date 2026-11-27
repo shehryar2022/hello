@@ -7,6 +7,7 @@ import {
   getActiveSubscription,
   getBoosterActivationInfo,
 } from '../game/rules';
+import { getEquippedCosmetics } from '../game/cosmetics';
 import type {
   BuildingPolicyId,
   CityTimeMode,
@@ -16,6 +17,7 @@ import type {
   RuntimePerfStats,
 } from '../game/types';
 import { City3D } from './City3D';
+import { CosmeticCardWrap } from './CosmeticIdentity';
 import {
   Activity,
   Briefcase,
@@ -42,6 +44,7 @@ interface HeroPanelProps {
   hiddenMobile?: boolean;
   selectedBuildingId: string | null;
   focusRequest?: { id: string; seq: number } | null;
+  previewAnimId?: string;
   onCollectTax: (e: React.MouseEvent<HTMLButtonElement>) => void;
   onActivateGemBoost: () => void;
   onSelectBuilding: (id: string | null) => void;
@@ -63,6 +66,7 @@ export const HeroPanel: React.FC<HeroPanelProps> = memo(({
   hiddenMobile = false,
   selectedBuildingId,
   focusRequest,
+  previewAnimId,
   onCollectTax,
   onActivateGemBoost,
   onSelectBuilding,
@@ -75,6 +79,8 @@ export const HeroPanel: React.FC<HeroPanelProps> = memo(({
   onPerfStats,
 }) => {
   const now = (state.t || Date.now()) + serverOffsetMs;
+  const equipped = getEquippedCosmetics(state);
+  const heroAnimId = previewAnimId || equipped.anim;
   const snap = useMemo(
     () => computeEconomySnapshot(state, { tradeTier, nowMs: now }),
     [state, tradeTier, now],
@@ -94,7 +100,11 @@ export const HeroPanel: React.FC<HeroPanelProps> = memo(({
 
   return (
     <div className={`list hero-col${hiddenMobile ? ' is-hidden-mobile' : ''}`}>
-      <div className="card hero">
+      <CosmeticCardWrap
+        animId={heroAnimId}
+        animationsEnabled={state.set?.anim !== 0}
+        className="card hero"
+      >
         <div className="inc">
           <span className="lab">
             <TrendingUp size={14} color="#3fe0b0" />
@@ -244,7 +254,7 @@ export const HeroPanel: React.FC<HeroPanelProps> = memo(({
             )}
           </button>
         </div>
-      </div>
+      </CosmeticCardWrap>
 
       <div className="card stats" id="stats">
         {statItems.map((item) => (

@@ -34,7 +34,7 @@ interface GiftsTabProps {
 function summarizeGift(t: TradeOffer): string {
   const parts: string[] = [];
   if (t.offerCash > 0) parts.push(`₨ ${formatNumber(t.offerCash)}`);
-  if (t.offerGems > 0) parts.push(`${t.offerGems} Gems`);
+  if (t.offerGems > 0) parts.push(`${t.offerGems} Diamonds`);
   const stkCount = Object.values(t.offerStk || {}).reduce((a, b) => a + (b || 0), 0);
   if (stkCount > 0) parts.push(`${stkCount} Stickers`);
   return parts.length ? parts.join(' · ') : 'Empty gift';

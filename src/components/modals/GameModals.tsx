@@ -4,7 +4,8 @@ import { FIREBASE_CONFIG, isFirebaseConfigured } from '../../firebase/config';
 import { formatErrorLogReport, type AppErrorEntry } from '../../firebase/errorLog';
 import { COUNTRIES, MAX_RANK, RANKS, SUBSCRIPTIONS } from '../../game/constants';
 import { formatNumber, isProfileSubActive } from '../../game/rules';
-import type { GameState, GraphicsSettings, NotificationItem, PlayerProfile, RuntimePerfStats } from '../../game/types';
+import type { EquippedCosmetics, GameState, GraphicsSettings, NotificationItem, PlayerProfile, RuntimePerfStats } from '../../game/types';
+import { CosmeticAvatar, CosmeticBadgeChip, CosmeticCardWrap, CosmeticName } from '../CosmeticIdentity';
 import { GraphicsSettingsPanel } from '../GraphicsSettingsPanel';
 import {
   Bell,
@@ -29,6 +30,8 @@ interface ProfileModalProps {
   profile: PlayerProfile | null;
   isMe: boolean;
   uid: string | null;
+  ownCosmetics?: EquippedCosmetics;
+  animationsEnabled?: boolean;
   onClose: () => void;
   onGift: (profile: PlayerProfile) => void;
   onMessage: (profile: PlayerProfile) => void;
@@ -55,6 +58,8 @@ export const ProfileModal: React.FC<ProfileModalProps> = memo(({
   profile,
   isMe,
   uid,
+  ownCosmetics,
+  animationsEnabled = true,
   onClose,
   onGift,
   onMessage,
@@ -65,35 +70,52 @@ export const ProfileModal: React.FC<ProfileModalProps> = memo(({
   const rk = RANKS[Math.max(1, Math.min(MAX_RANK, profile.rank || 1))] || RANKS[1];
   const subTier = isProfileSubActive(profile, Date.now());
   const subDef = subTier ? SUBSCRIPTIONS.find((x) => x.id === subTier) : null;
+  const frameId = (isMe ? ownCosmetics?.frame : undefined) || profile.cosFrame;
+  const nameFxId = (isMe ? ownCosmetics?.nameEffect : undefined) || profile.cosNameFx;
+  const badgeId = (isMe ? ownCosmetics?.badge : undefined) || profile.cosBadge;
+  const animId = isMe ? ownCosmetics?.anim : undefined;
 
   return (
     <div className="modal" role="dialog" aria-modal="true" aria-label="Player Profile" onClick={onClose}>
-      <div
+      <CosmeticCardWrap
+        animId={animId}
+        animationsEnabled={animationsEnabled}
         className={`card ${subTier ? `sub-card sub-card--${subTier}` : ''}`}
-        onClick={(e) => e.stopPropagation()}
       >
-        <div className="bigflag">
-          <CountryFlag code={profile.countryCode} alt={profile.countryCode} large className="" />
-        </div>
-        {rk.id > 0 && (
-          <div className="rank-badge big" style={{ '--c': rk.c } as React.CSSProperties} title={rk.n}>
-            <RankEmblem rank={rk.id} size={30} />
-          </div>
-        )}
-        <h2>{profile.username}</h2>
-        <p style={{ margin: '4px 0 8px' }}>
-          {profile.countryName} · {rk.n}
-        </p>
-        {subTier && subDef && (
-          <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'center' }}>
-            <span className={`sub-crest sub-crest--${subTier}`}>
-              <span className="sub-crest-ic">
-                <SubIcon tier={subTier} size={13} />
+        <div onClick={(e) => e.stopPropagation()} style={{ position: 'relative', zIndex: 1 }}>
+          {frameId ? (
+            <CosmeticAvatar countryCode={profile.countryCode} frameId={frameId} size="lg" />
+          ) : (
+            <div className="bigflag">
+              <CountryFlag code={profile.countryCode} alt={profile.countryCode} large className="" />
+            </div>
+          )}
+          {rk.id > 0 && (
+            <div className="rank-badge big" style={{ '--c': rk.c } as React.CSSProperties} title={rk.n}>
+              <RankEmblem rank={rk.id} size={30} />
+            </div>
+          )}
+          <h2 style={{ flexWrap: 'wrap', gap: 6 }}>
+            <CosmeticName name={profile.username} nameEffectId={nameFxId} />
+          </h2>
+          {badgeId && (
+            <div style={{ marginTop: 4, display: 'flex', justifyContent: 'center' }}>
+              <CosmeticBadgeChip badgeId={badgeId} />
+            </div>
+          )}
+          <p style={{ margin: '4px 0 8px' }}>
+            {profile.countryName} · {rk.n}
+          </p>
+          {subTier && subDef && (
+            <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'center' }}>
+              <span className={`sub-crest sub-crest--${subTier}`}>
+                <span className="sub-crest-ic">
+                  <SubIcon tier={subTier} size={13} />
+                </span>
+                <span>{subDef.n}</span>
               </span>
-              <span>{subDef.n}</span>
-            </span>
-          </div>
-        )}
+            </div>
+          )}
 
         <div className="pstat">
           <div>
@@ -156,7 +178,8 @@ export const ProfileModal: React.FC<ProfileModalProps> = memo(({
             Close
           </button>
         </div>
-      </div>
+        </div>
+      </CosmeticCardWrap>
     </div>
   );
 });

@@ -115,3 +115,29 @@ test('3. areLeaderboardListsEqual detects unchanged visual data across heartbeat
   assert.equal(areLeaderboardListsEqual(a, b), true);
   assert.equal(areLeaderboardListsEqual(a, c), false);
 });
+
+test('4. mergeLeaderboardProfiles preserves cosmetic identity and detects cosmetic swaps cleanly', () => {
+  const now = 1_000_000;
+  const prev = [
+    makePlayer({
+      id: 'u1',
+      gdp: 5000,
+      cosFrame: 'frame_neon',
+      cosNameFx: 'nfx_rainbow',
+      cosBadge: 'badge_diamond_member',
+      seen: now - 1000,
+    }),
+  ];
+  // Partial snapshot omitting cosmetic keys preserves previous equipped visuals
+  const partial = [makePlayer({ id: 'u1', gdp: 5000, seen: now })];
+  const merged = mergeLeaderboardProfiles(prev, partial, 'u1', now);
+  assert.equal(merged[0].cosFrame, 'frame_neon');
+  assert.equal(merged[0].cosNameFx, 'nfx_rainbow');
+  assert.equal(merged[0].cosBadge, 'badge_diamond_member');
+  assert.equal(areLeaderboardListsEqual(prev, merged), true);
+
+  // Changing cosmetic updates equality check so row refreshes cleanly
+  const updated = [makePlayer({ id: 'u1', gdp: 5000, cosFrame: 'frame_royal_gold', seen: now })];
+  assert.equal(areLeaderboardListsEqual(prev, updated), false);
+});
+

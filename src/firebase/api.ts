@@ -31,8 +31,10 @@ import {
   cleanStickersMap,
   dayKeyFor,
   getActiveSubscription,
+  getEquippedCosmetics,
   migrateState,
   playerLevel,
+  sanitizeCosmeticIdField,
   sanitizeCountryCode,
   sanitizeStats,
   totalBuildings,
@@ -280,6 +282,7 @@ export async function createPlayerProfile(
         tx.set(uRef, { uid });
       }
       const activeSub = getActiveSubscription(baseState, effectiveNow);
+      const eqCos = getEquippedCosmetics(baseState);
       const prevRev =
         wSnap.exists() && Number.isFinite(Number(wSnap.data()?.rev))
           ? Math.max(0, Math.floor(Number(wSnap.data()?.rev)))
@@ -298,6 +301,9 @@ export async function createPlayerProfile(
         rank: rankVal,
         subTier: activeSub ? activeSub.def.id : '',
         subExp: activeSub ? Math.max(0, Math.min(1e13, Math.floor(activeSub.exp))) : 0,
+        cosFrame: sanitizeCosmeticIdField(eqCos.frame),
+        cosNameFx: sanitizeCosmeticIdField(eqCos.nameEffect),
+        cosBadge: sanitizeCosmeticIdField(eqCos.badge),
         lastSeen: serverTimestamp(),
         stats: sanitizeStats(undefined, { buildings: totalBuildings(baseState) }),
         createdAt: serverTimestamp(),
@@ -389,6 +395,7 @@ export async function syncSaveToCloud(params: {
             ),
           });
           const activeSub = getActiveSubscription(state, effectiveNow);
+          const eqCos = getEquippedCosmetics(state);
           tx.update(pRef, {
             gdp: gdpVal,
             cash,
@@ -397,6 +404,9 @@ export async function syncSaveToCloud(params: {
             rank: capValue(state.rank, CLOUD_MAX_RANK),
             subTier: activeSub ? activeSub.def.id : '',
             subExp: activeSub ? capValue(activeSub.exp, 1e13) : 0,
+            cosFrame: sanitizeCosmeticIdField(eqCos.frame),
+            cosNameFx: sanitizeCosmeticIdField(eqCos.nameEffect),
+            cosBadge: sanitizeCosmeticIdField(eqCos.badge),
             lastSeen: serverTimestamp(),
             stats: mergedStats,
           });
@@ -522,6 +532,7 @@ export async function syncSaveToCloud(params: {
       ),
     });
     const activeSub = getActiveSubscription(state, effectiveNow);
+    const eqCos = getEquippedCosmetics(state);
     const playerPayload = {
       gdp: gdpVal,
       cash,
@@ -530,6 +541,9 @@ export async function syncSaveToCloud(params: {
       rank: capValue(state.rank, CLOUD_MAX_RANK),
       subTier: activeSub ? activeSub.def.id : '',
       subExp: activeSub ? capValue(activeSub.exp, 1e13) : 0,
+      cosFrame: sanitizeCosmeticIdField(eqCos.frame),
+      cosNameFx: sanitizeCosmeticIdField(eqCos.nameEffect),
+      cosBadge: sanitizeCosmeticIdField(eqCos.badge),
       lastSeen: serverTimestamp(),
       stats: mergedStats,
     };
@@ -981,6 +995,9 @@ export async function sendGlobalChatMessage(params: {
   countryCode: string;
   rank: number;
   text: string;
+  cosFrame?: string;
+  cosNameFx?: string;
+  cosBadge?: string;
 }): Promise<void> {
   const activeUid = requireUid(params.uid);
   const cleanText = params.text.trim().slice(0, 200);
@@ -993,6 +1010,9 @@ export async function sendGlobalChatMessage(params: {
     name: cleanName,
     cc: sanitizeCountryCode(params.countryCode),
     rank: Math.max(0, Math.min(CLOUD_MAX_RANK, Math.floor(params.rank || 0))),
+    cosFrame: sanitizeCosmeticIdField(params.cosFrame),
+    cosNameFx: sanitizeCosmeticIdField(params.cosNameFx),
+    cosBadge: sanitizeCosmeticIdField(params.cosBadge),
     text: cleanText,
     createdAt: serverTimestamp(),
   });
@@ -1089,6 +1109,7 @@ export async function syncPublicProfileMetrics(params: {
   const gems = capValue(state.gems, 1e9);
   const gdp = Math.max(1, capValue(calculateGdp(state), 1e13));
   const activeSub = getActiveSubscription(state, nowSrvMs);
+  const eqCos = getEquippedCosmetics(state);
   const payload: Record<string, unknown> = {
     gdp,
     cash,
@@ -1097,6 +1118,9 @@ export async function syncPublicProfileMetrics(params: {
     rank: capValue(state.rank, CLOUD_MAX_RANK),
     subTier: activeSub ? activeSub.def.id : '',
     subExp: activeSub ? capValue(activeSub.exp, 1e13) : 0,
+    cosFrame: sanitizeCosmeticIdField(eqCos.frame),
+    cosNameFx: sanitizeCosmeticIdField(eqCos.nameEffect),
+    cosBadge: sanitizeCosmeticIdField(eqCos.badge),
     lastSeen: serverTimestamp(),
   };
   const bTotal = totalBuildings(state);

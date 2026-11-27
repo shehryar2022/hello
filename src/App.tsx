@@ -19,6 +19,7 @@ import {
   setDoc,
   type Unsubscribe,
 } from 'firebase/firestore';
+import { UnlockCelebrationModal, type UnlockCelebrationInfo } from './components/CosmeticIdentity';
 import { CashCoinIcon, Landmark, StickerArt, TabIcon } from './components/GameIcons';
 import { HeroPanel } from './components/HeroPanel';
 import { LoginGate } from './components/LoginGate';
@@ -101,7 +102,6 @@ import {
   areLeaderboardListsEqual,
   isHeartbeatDue,
   mergeLeaderboardProfiles,
-  shouldRefreshPresenceQuery,
 } from './firebase/presence';
 import {
   buildMeaningfulSaveFingerprint,
@@ -153,19 +153,25 @@ import {
   applyActivateGemBoost,
   applyBuyBooster,
   applyBuyBuilding,
+  applyBuyCosmeticBundle,
+  applyBuyCosmeticItem,
   applyBuyRank,
   applyBuySubscription,
   applyChangeGov,
   applyChangePolicyStance,
   applyClaimAchievement,
+  applyClaimDailySlot,
   applyClaimQuest,
+  applyClaimWeeklyMilestone,
   applyClaimWeeklyMission,
   applyCollectTax,
   applyCommitFiscalReform,
   applyDemolishBuilding,
   applyEnactNationalDecision,
+  applyEquipCosmetic,
   applyFixInfra,
   applyOfflineEarnings,
+  applySelectTheme,
   applySetBuildingPolicy,
   applyUnlockTech,
   applyUpgradeBuilding,
@@ -183,16 +189,23 @@ import {
   freshState,
   fuseSticker,
   getActiveSubscription,
+  getActiveThemeId,
+  getCosmeticDef,
+  getEquippedCosmetics,
   getExecDecisionQuote,
   getInfraDecayMult,
   getProjectSpeedMult,
+  getQuestCoinReward,
   getSubscriptionPrice,
   getTaxPoolCapSeconds,
+  getUnclaimedRewardsSummary,
   migrateState,
   playerLevel,
+  QUEST_POOL,
   resolveExecutiveDecision,
   rollWeeklySubPromo,
   rotateDailyQuestsIfNeeded,
+  sanitizeCosmeticIdField,
   selectDailyQuestIds,
   shouldRunOfflineEntryCheck,
   targetHappiness,
@@ -219,9 +232,12 @@ import type {
   ChatMessage,
   CityTimeMode,
   CityWeatherMode,
+  CosmeticItemDef,
   CountryTuple,
   DmRecipient,
+  EquippedCosmetics,
   GameState,
+  GameThemeId,
   GiftsSubTab,
   GovtSubTab,
   GovProject,
@@ -302,7 +318,10 @@ function areChatListsEqual(a: ChatMessage[], b: ChatMessage[]): boolean {
       x.text !== y.text ||
       x.name !== y.name ||
       x.cc !== y.cc ||
-      x.rank !== y.rank
+      x.rank !== y.rank ||
+      x.cosFrame !== y.cosFrame ||
+      x.cosNameFx !== y.cosNameFx ||
+      x.cosBadge !== y.cosBadge
     ) {
       return false;
     }
@@ -423,10 +442,20 @@ export default function App() {
   const authBusyRef = useRef<boolean>(false);
   const walletRevRef = useRef<number>(0);
   const expectedWalletRevRef = useRef<number | null>(null);
+  const [previewCosmeticId, setPreviewCosmeticId] = useState<string | null>(null);
+  const [previewThemeId, setPreviewThemeId] = useState<GameThemeId | null>(null);
+  const [unlockModal, setUnlockModal] = useState<UnlockCelebrationInfo | null>(null);
+  const [questBanner, setQuestBanner] = useState<{
+    questId: string;
+    title: string;
+    coins: number;
+    diamonds: number;
+  } | null>(null);
+  const notifiedReadyQuestsRef = useRef<Set<string>>(new Set());
+
   const [serverOffsetMs, setServerOffsetMs] = useState(0);
   const serverOffsetMsRef = useRef<number>(0);
   const serverTimeVerifiedRef = useRef<boolean>(false);
-  const [presenceEpoch, setPresenceEpoch] = useState(0);
   const leaderboardRawRef = useRef<PlayerProfile[]>([]);
   const lastHeartbeatSuccessAtRef = useRef<number>(0);
   const lastHeartbeatAttemptAtRef = useRef<number>(0);
@@ -489,7 +518,7 @@ export default function App() {
   const rankPositionRef = useRef<number>(1);
   const modalOpenRef = useRef<boolean>(false);
   const anyModalOpen = Boolean(
-    dialog || giftModal || settingsOpen || errorLogOpen || notifsOpen || profileView || needsOnboarding,
+    dialog || giftModal || settingsOpen || errorLogOpen || notifsOpen || profileView || needsOnboarding || unlockModal,
   );
   modalOpenRef.current = anyModalOpen;
 
@@ -501,7 +530,7 @@ export default function App() {
       serverOffsetMsRef.current = next;
       serverTimeVerifiedRef.current = true;
       setServerOffsetMs((prev) => (Math.abs(prev - next) >= 1000 ? next : prev));
-      if (shouldRefreshPresenceQuery(prevOffset, next, wasVerified)) {
+      if (!wasVerified || Math.abs(next - prevOffset) >= 5000) {
         const curUid = uidRef.current;
         if (curUid && leaderboardRawRef.current.length > 0) {
           const calibrated = mergeLeaderboardProfiles(
@@ -514,7 +543,6 @@ export default function App() {
           leaderboardRawRef.current = calibrated;
           setLeaderboard((prev) => (areLeaderboardListsEqual(prev, calibrated) ? prev : calibrated));
         }
-        setPresenceEpoch((n) => n + 1);
       }
     }
   }, []);
@@ -683,6 +711,18 @@ export default function App() {
     document.body.classList.toggle('update-locked', Boolean(updateAvailable));
     return () => document.body.classList.remove('update-locked');
   }, [updateAvailable]);
+
+  const activeThemeId = previewThemeId || getActiveThemeId(state);
+  useEffect(() => {
+    document.documentElement.dataset.theme = activeThemeId;
+  }, [activeThemeId]);
+
+  useEffect(() => {
+    if (tab !== 'shop' || shopSubTab !== 'diamond') {
+      setPreviewCosmeticId(null);
+      setPreviewThemeId(null);
+    }
+  }, [tab, shopSubTab]);
 
   // Track responsive mobile vs desktop viewport
   useEffect(() => {
@@ -1165,7 +1205,7 @@ export default function App() {
           <div>
             <p>Welcome back! Here is today&apos;s treasury bonus:</p>
             <p style={{ fontSize: 18, color: 'var(--gold)', fontFamily: 'var(--d)' }}>
-              +₨ {formatNumber(g.cashAdded)} {g.gemsAdded > 0 ? `· +${g.gemsAdded} Gems` : ''}
+              +₨ {formatNumber(g.cashAdded)} {g.gemsAdded > 0 ? `· +${g.gemsAdded} Diamonds` : ''}
               {g.sticker ? ` · ${g.sticker.n}` : ''}
             </p>
             {g.sticker && (
@@ -1504,7 +1544,6 @@ export default function App() {
         if (cloudSyncQuotaPausedRef.current && Date.now() - quotaPausedAtRef.current >= 60_000) {
           cloudSyncQuotaPausedRef.current = false;
         }
-        setPresenceEpoch((n) => n + 1);
         refreshCloudStatus();
         if ((pendingDirtyRef.current || cloudDirtyRef.current) && !cloudSyncQuotaPausedRef.current) {
           void performCloudSync(false);
@@ -1908,6 +1947,9 @@ export default function App() {
                 name: String(x.name || ''),
                 cc: String(x.cc || ''),
                 rank: Number(x.rank) || 0,
+                cosFrame: sanitizeCosmeticIdField(x.cosFrame),
+                cosNameFx: sanitizeCosmeticIdField(x.cosNameFx),
+                cosBadge: sanitizeCosmeticIdField(x.cosBadge),
                 text: String(x.text || ''),
                 ms: timestampToMs(x.createdAt),
               };
@@ -1991,18 +2033,11 @@ export default function App() {
       }
     }, 15_000);
 
-    const slideTimer = window.setInterval(() => {
-      if (!document.hidden) {
-        setPresenceEpoch((n) => n + 1);
-      }
-    }, HEARTBEAT_MS);
-
     return () => {
       window.clearInterval(pruneTimer);
-      window.clearInterval(slideTimer);
       unsub();
     };
-  }, [uid, cloudReady, needsOnboarding, kicked, presenceEpoch, handleSnapshotError]);
+  }, [uid, cloudReady, needsOnboarding, kicked, handleSnapshotError]);
 
   // Direct messages listener for active DM recipient (keyed only on primitive UID)
   const dmUid = dmRecipient?.uid || '';
@@ -2660,7 +2695,7 @@ export default function App() {
         addToast(`Tax Surge added +₨ ${formatNumber(res.bonusAmount)}!`);
       }
       if (res.portDrop.gems > 0) {
-        addToast(`Trade Port Export: +${res.portDrop.gems} Gem!`);
+        addToast(`Trade Port Export: +${res.portDrop.gems} Diamond!`);
       } else if (res.portDrop.sticker) {
         addToast(`Trade Port Export: ${res.portDrop.sticker.n} sticker!`);
       }
@@ -3088,7 +3123,7 @@ export default function App() {
   );
 
   const handleClaimQuest = useCallback(
-    (questId: string, _rewardGems: number, e: React.MouseEvent<HTMLButtonElement>) => {
+    (questId: string, _rewardGems: number, e?: React.MouseEvent<HTMLButtonElement>) => {
       if (isGameplayBlocked()) return;
       const today = dayKeyFor(Date.now() + serverOffsetMsRef.current);
       const rankPos = rankPositionRef.current;
@@ -3099,15 +3134,235 @@ export default function App() {
       saveLocal(res.state);
       playSfx('win', !!res.state.set.sfx);
       triggerBuzz(16, !!res.state.set.vib);
-      const rect = e.currentTarget.getBoundingClientRect();
-      spawnFloat(`+${res.gemsAdded} Gems`, rect.left + rect.width / 2, rect.top, '#5ccbff');
+      const rect = e?.currentTarget?.getBoundingClientRect();
+      spawnFloat(
+        `+₨ ${formatNumber(res.cashAdded)} · +${res.gemsAdded} 💎`,
+        rect ? rect.left + rect.width / 2 : window.innerWidth / 2,
+        rect ? rect.top : 160,
+        '#5ccbff',
+      );
       setState((prev) => {
         const recheck = applyClaimQuest(prev, questId, today, rankPos);
         return recheck.ok ? recheck.state : prev;
       });
+      setQuestBanner((prev) => (prev?.questId === questId ? null : prev));
+      addToast(
+        `${res.quest?.t || 'Quest'} claimed! +₨ ${formatNumber(res.cashAdded)} & +${res.gemsAdded} Diamonds`,
+      );
       scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
     },
-    [isGameplayBlocked, spawnFloat, saveLocal, scheduleCloudSync],
+    [addToast, isGameplayBlocked, spawnFloat, saveLocal, scheduleCloudSync],
+  );
+
+  const handleClaimDailySlot = useCallback(
+    (e: React.MouseEvent<HTMLButtonElement>) => {
+      if (isGameplayBlocked()) return;
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const roll = Math.random();
+      const res = applyClaimDailySlot(stateRef.current, nowSrv, () => roll);
+      if (!res.ok || !res.slot) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(18, !!res.state.set.vib);
+      const rect = e.currentTarget.getBoundingClientRect();
+      spawnFloat(
+        `+${res.diamondsAdded} Diamonds`,
+        rect.left + rect.width / 2,
+        rect.top,
+        '#5ccbff',
+      );
+      setState((prev) => {
+        const recheck = applyClaimDailySlot(prev, nowSrv, () => roll);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      addToast(
+        `Day ${res.slot.day} claimed! +₨ ${formatNumber(res.coinsAdded)} & +${res.diamondsAdded} Diamonds${
+          res.sticker ? ` · ${res.sticker.n}` : ''
+        }`,
+      );
+    },
+    [addToast, isGameplayBlocked, saveLocal, scheduleCloudSync, spawnFloat],
+  );
+
+  const handleClaimWeeklyMilestone = useCallback(
+    (milestoneId: string, e: React.MouseEvent<HTMLButtonElement>) => {
+      if (isGameplayBlocked()) return;
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const rankPos = rankPositionRef.current;
+      const res = applyClaimWeeklyMilestone(stateRef.current, milestoneId, nowSrv, rankPos);
+      if (!res.ok || !res.item) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(18, !!res.state.set.vib);
+      const rect = e.currentTarget.getBoundingClientRect();
+      spawnFloat(`+${res.diamondsAdded} Diamonds`, rect.left + rect.width / 2, rect.top, '#a88bff');
+      setState((prev) => {
+        const recheck = applyClaimWeeklyMilestone(prev, milestoneId, nowSrv, rankPos);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      addToast(
+        `${res.item.title} claimed! +₨ ${formatNumber(res.coinsAdded)} & +${res.diamondsAdded} Diamonds`,
+      );
+    },
+    [addToast, isGameplayBlocked, saveLocal, scheduleCloudSync, spawnFloat],
+  );
+
+  const syncLocalPubCosmetics = useCallback((nextState: GameState) => {
+    const eq = getEquippedCosmetics(nextState);
+    setPubProfile((prev) =>
+      prev
+        ? {
+            ...prev,
+            cosFrame: eq.frame || '',
+            cosNameFx: eq.nameEffect || '',
+            cosBadge: eq.badge || '',
+          }
+        : prev,
+    );
+  }, []);
+
+  const handlePreviewCosmetic = useCallback((item: CosmeticItemDef | null) => {
+    if (!item) {
+      setPreviewCosmeticId(null);
+      setPreviewThemeId(null);
+      return;
+    }
+    setPreviewCosmeticId((prev) => (prev === item.id ? null : item.id));
+    if (item.category === 'theme' && item.themeId) {
+      setPreviewThemeId((prev) => (prev === item.themeId ? null : item.themeId!));
+    } else {
+      setPreviewThemeId(null);
+    }
+  }, []);
+
+  const handleCancelCosmeticPreview = useCallback(() => {
+    setPreviewCosmeticId(null);
+    setPreviewThemeId(null);
+  }, []);
+
+  const handleBuyCosmeticItem = useCallback(
+    (itemId: string) => {
+      if (isGameplayBlocked()) return;
+      const res = applyBuyCosmeticItem(stateRef.current, itemId, true);
+      if (!res.ok || !res.item) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      syncLocalPubCosmetics(res.state);
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(20, !!res.state.set.vib);
+      setState((prev) => {
+        const recheck = applyBuyCosmeticItem(prev, itemId, true);
+        return recheck.ok ? recheck.state : prev;
+      });
+      setPreviewCosmeticId(null);
+      setPreviewThemeId(null);
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      setUnlockModal({
+        title: res.item.name,
+        subtitle: `${res.item.rarity} exclusive unlocked and applied to your nation identity.`,
+        icon: res.item.icon,
+        rarityLabel: res.item.rarity,
+        rewardSummary: `${res.item.previewTag} · ${res.item.desc}`,
+        accentColor: res.item.accentColor,
+      });
+    },
+    [addToast, isGameplayBlocked, saveLocal, scheduleCloudSync, syncLocalPubCosmetics],
+  );
+
+  const handleBuyCosmeticBundle = useCallback(
+    (bundleId: string) => {
+      if (isGameplayBlocked()) return;
+      const res = applyBuyCosmeticBundle(stateRef.current, bundleId, true);
+      if (!res.ok || !res.bundle) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      syncLocalPubCosmetics(res.state);
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(22, !!res.state.set.vib);
+      setState((prev) => {
+        const recheck = applyBuyCosmeticBundle(prev, bundleId, true);
+        return recheck.ok ? recheck.state : prev;
+      });
+      setPreviewCosmeticId(null);
+      setPreviewThemeId(null);
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      setUnlockModal({
+        title: res.bundle.name,
+        subtitle: `${res.unlockedIds.length} exclusive items unlocked & equipped together!`,
+        icon: '🎁',
+        rarityLabel: `${res.bundle.rarity} Collection`,
+        rewardSummary: `${res.bundle.badgeText} · ${res.bundle.desc}`,
+        accentColor: res.bundle.accentColor,
+      });
+    },
+    [addToast, isGameplayBlocked, saveLocal, scheduleCloudSync, syncLocalPubCosmetics],
+  );
+
+  const handleEquipCosmetic = useCallback(
+    (slot: keyof EquippedCosmetics, itemId: string | null) => {
+      if (isGameplayBlocked()) return;
+      const res = applyEquipCosmetic(stateRef.current, slot, itemId);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      syncLocalPubCosmetics(res.state);
+      playSfx('buy', !!res.state.set.sfx);
+      setState((prev) => {
+        const recheck = applyEquipCosmetic(prev, slot, itemId);
+        return recheck.ok ? recheck.state : prev;
+      });
+      setPreviewCosmeticId(null);
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      if (itemId) {
+        const def = getCosmeticDef(itemId);
+        addToast(`${def?.name || 'Cosmetic'} equipped!`);
+      } else {
+        addToast('Cosmetic unequipped.');
+      }
+    },
+    [addToast, isGameplayBlocked, saveLocal, scheduleCloudSync, syncLocalPubCosmetics],
+  );
+
+  const handleSelectTheme = useCallback(
+    (themeId: GameThemeId) => {
+      if (isGameplayBlocked()) return;
+      const res = applySelectTheme(stateRef.current, themeId);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('win', !!res.state.set.sfx);
+      setState((prev) => {
+        const recheck = applySelectTheme(prev, themeId);
+        return recheck.ok ? recheck.state : prev;
+      });
+      setPreviewCosmeticId(null);
+      setPreviewThemeId(null);
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      addToast('Theme updated!');
+    },
+    [addToast, isGameplayBlocked, saveLocal, scheduleCloudSync],
   );
 
   const handleClaimMilestone = useCallback(
@@ -3123,13 +3378,13 @@ export default function App() {
       playSfx('win', !!res.state.set.sfx);
       triggerBuzz(18, !!res.state.set.vib);
       const rect = e.currentTarget.getBoundingClientRect();
-      spawnFloat(`+${res.gemsAdded} Gems`, rect.left + rect.width / 2, rect.top, '#5ccbff');
+      spawnFloat(`+${res.gemsAdded} Diamonds`, rect.left + rect.width / 2, rect.top, '#5ccbff');
       setState((prev) => {
         const recheck = claimMilestone(prev, milestoneId);
         return recheck.ok ? recheck.state : prev;
       });
       scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
-      addToast(`Milestone completed! +${res.gemsAdded} Gems`);
+      addToast(`Milestone completed! +${res.gemsAdded} Diamonds`);
     },
     [addToast, isGameplayBlocked, spawnFloat, saveLocal, scheduleCloudSync],
   );
@@ -3150,13 +3405,13 @@ export default function App() {
       playSfx('win', !!res.state.set.sfx);
       triggerBuzz(18, !!res.state.set.vib);
       const rect = e.currentTarget.getBoundingClientRect();
-      spawnFloat(`+${res.gemsAdded} Gems`, rect.left + rect.width / 2, rect.top, '#5ccbff');
+      spawnFloat(`+${res.gemsAdded} Diamonds`, rect.left + rect.width / 2, rect.top, '#5ccbff');
       setState((prev) => {
         const recheck = applyClaimWeeklyMission(prev, missionId, wk, rankPos);
         return recheck.ok ? recheck.state : prev;
       });
       scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
-      addToast(`${wDef?.t || 'Weekly Mission'} claimed! +${res.gemsAdded} Gems`);
+      addToast(`${wDef?.t || 'Weekly Mission'} claimed! +${res.gemsAdded} Diamonds`);
     },
     [addToast, isGameplayBlocked, spawnFloat, saveLocal, scheduleCloudSync],
   );
@@ -3175,13 +3430,13 @@ export default function App() {
       playSfx('win', !!res.state.set.sfx);
       triggerBuzz(20, !!res.state.set.vib);
       const rect = e.currentTarget.getBoundingClientRect();
-      spawnFloat(`+${res.gemsAdded} Gems`, rect.left + rect.width / 2, rect.top, '#ffc23d');
+      spawnFloat(`+${res.gemsAdded} Diamonds`, rect.left + rect.width / 2, rect.top, '#ffc23d');
       setState((prev) => {
         const recheck = applyClaimAchievement(prev, achievementId);
         return recheck.ok ? recheck.state : prev;
       });
       scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
-      addToast(`${aDef?.n || 'Achievement'} unlocked! +${res.gemsAdded} Gems, +₨ ${formatNumber(res.cashAdded)}`);
+      addToast(`${aDef?.n || 'Achievement'} unlocked! +${res.gemsAdded} Diamonds, +₨ ${formatNumber(res.cashAdded)}`);
     },
     [addToast, isGameplayBlocked, spawnFloat, saveLocal, scheduleCloudSync],
   );
@@ -3422,7 +3677,7 @@ export default function App() {
       triggerBuzz(16, !!res.state.set.vib);
       const rect = e.currentTarget.getBoundingClientRect();
       spawnFloat(
-        `+₨ ${formatNumber(res.cashAdded)}${res.gemsAdded > 0 ? ` +${res.gemsAdded} Gems` : ''}`,
+        `+₨ ${formatNumber(res.cashAdded)}${res.gemsAdded > 0 ? ` +${res.gemsAdded} Diamonds` : ''}`,
         rect.left + rect.width / 2,
         rect.top,
         '#3fe0b0',
@@ -3433,7 +3688,7 @@ export default function App() {
       });
       scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       addToast(
-        `Subscription stipend: +₨ ${formatNumber(res.cashAdded)}${res.gemsAdded > 0 ? ` + ${res.gemsAdded} Gems` : ''}`,
+        `Subscription stipend: +₨ ${formatNumber(res.cashAdded)}${res.gemsAdded > 0 ? ` + ${res.gemsAdded} Diamonds` : ''}`,
       );
     },
     [addToast, isGameplayBlocked, spawnFloat, saveLocal, scheduleCloudSync],
@@ -3791,6 +4046,7 @@ export default function App() {
       const profile = pubProfileRef.current;
       const cur = stateRef.current;
       if (!currentUid || !profile) return false;
+      const eq = getEquippedCosmetics(cur);
       try {
         await sendGlobalChatMessage({
           uid: currentUid,
@@ -3798,6 +4054,9 @@ export default function App() {
           countryCode: cur.country[0],
           rank: cur.rank,
           text,
+          cosFrame: eq.frame,
+          cosNameFx: eq.nameEffect,
+          cosBadge: eq.badge,
         });
         return true;
       } catch (err) {
@@ -4048,6 +4307,49 @@ export default function App() {
   const dayKey = useMemo(() => dayKeyFor(srvMinute * 60_000), [srvMinute]);
   const weekKey = useMemo(() => weekKeyFor(srvMinute * 60_000), [srvMinute]);
 
+  const unclaimedSummary = useMemo(
+    () => getUnclaimedRewardsSummary(state, state.t + serverOffsetMs, rankPosition),
+    [state, serverOffsetMs, rankPosition],
+  );
+
+  useEffect(() => {
+    // Prune older day keys when day changes
+    const prefix = `${dayKey}:`;
+    for (const k of Array.from(notifiedReadyQuestsRef.current)) {
+      if (!k.startsWith(prefix)) notifiedReadyQuestsRef.current.delete(k);
+    }
+    if (gateOpen || anyModalOpen || tab === 'quest') return;
+    for (const qid of unclaimedSummary.readyQuestIds) {
+      const memKey = `${dayKey}:${qid}`;
+      if (!notifiedReadyQuestsRef.current.has(memKey)) {
+        notifiedReadyQuestsRef.current.add(memKey);
+        const qDef = QUEST_POOL.find((q) => q.id === qid);
+        if (qDef) {
+          setQuestBanner({
+            questId: qDef.id,
+            title: qDef.t,
+            coins: getQuestCoinReward(qDef),
+            diamonds: qDef.r,
+          });
+          playSfx('win', !!stateRef.current.set.sfx);
+          break;
+        }
+      }
+    }
+  }, [anyModalOpen, dayKey, gateOpen, tab, unclaimedSummary.readyQuestIds]);
+
+  const equippedCosmetics = useMemo(() => getEquippedCosmetics(state), [state.cos, state.cosEq]);
+  const previewCosmeticDef = useMemo(
+    () => (previewCosmeticId ? getCosmeticDef(previewCosmeticId) : undefined),
+    [previewCosmeticId],
+  );
+  const previewFrameId =
+    previewCosmeticDef?.category === 'profile_effect' ? previewCosmeticDef.id : undefined;
+  const previewNameEffectId =
+    previewCosmeticDef?.category === 'name_effect' ? previewCosmeticDef.id : undefined;
+  const previewAnimId =
+    previewCosmeticDef?.category === 'animation' ? previewCosmeticDef.id : undefined;
+
   // Mandatory Website Version Detection & Cross-Tab Update Lock
   useEffect(() => {
     const runningVersion = getRunningAppVersion();
@@ -4297,6 +4599,8 @@ export default function App() {
           pubProfile={pubProfile}
           rankPosition={rankPosition}
           unreadNotifs={unreadNotifs}
+          previewFrameId={previewFrameId}
+          previewNameEffectId={previewNameEffectId}
           onOpenProfile={openOwnProfile}
           onOpenSettings={handleOpenSettings}
           onOpenNotifications={handleOpenNotifications}
@@ -4313,6 +4617,7 @@ export default function App() {
             hiddenMobile={isMobile && tab !== 'build'}
             selectedBuildingId={selectedBuildingId}
             focusRequest={focusRequest}
+            previewAnimId={previewAnimId}
             onCollectTax={handleCollectTax}
             onActivateGemBoost={handleActivateGemBoost}
             onSelectBuilding={handleSelectBuilding}
@@ -4432,6 +4737,9 @@ export default function App() {
                 dayKey={dayKey}
                 weekKey={weekKey}
                 rankPosition={rankPosition}
+                serverOffsetMs={serverOffsetMs}
+                onClaimDailySlot={handleClaimDailySlot}
+                onClaimWeeklyMilestone={handleClaimWeeklyMilestone}
                 onClaimQuest={handleClaimQuest}
                 onClaimWeekly={handleClaimWeeklyMission}
                 onClaimAchievement={handleClaimAchievement}
@@ -4444,11 +4752,21 @@ export default function App() {
                 subTab={shopSubTab}
                 dayKey={dayKey}
                 serverOffsetMs={serverOffsetMs}
+                username={pubProfile?.username || state.country[1] || 'Leader'}
+                countryCode={state.country[0]}
+                previewCosmeticId={previewCosmeticId}
+                previewThemeId={previewThemeId}
                 onChangeSubTab={setShopSubTab}
                 onBuyRank={handleBuyRank}
                 onBuySubscription={handleBuySubscription}
                 onClaimSubDaily={handleClaimSubDaily}
                 onBuyBooster={handleBuyBooster}
+                onPreviewCosmetic={handlePreviewCosmetic}
+                onCancelCosmeticPreview={handleCancelCosmeticPreview}
+                onBuyCosmeticItem={handleBuyCosmeticItem}
+                onBuyCosmeticBundle={handleBuyCosmeticBundle}
+                onEquipCosmetic={handleEquipCosmetic}
+                onSelectTheme={handleSelectTheme}
               />
             )}
           </div>
@@ -4458,8 +4776,38 @@ export default function App() {
       <NavBar
         activeTab={tab}
         pendingIncomingGifts={pendingIncomingGifts}
+        unclaimedRewardsCount={unclaimedSummary.total}
         onSelectTab={setTab}
       />
+
+      {questBanner && !gateOpen && !anyModalOpen && (
+        <div className="quest-ready-banner" role="status" aria-live="polite" data-testid="quest-ready-banner">
+          <div className="qrb-ic" aria-hidden="true">
+            🏆
+          </div>
+          <div className="qrb-meta">
+            <b>Quest Completed: {questBanner.title}</b>
+            <small>
+              +₨ {formatNumber(questBanner.coins)} Coins &amp; +{questBanner.diamonds} Diamonds ready
+            </small>
+          </div>
+          <button
+            type="button"
+            className="btn gold sm"
+            onClick={(e) => handleClaimQuest(questBanner.questId, questBanner.diamonds, e)}
+          >
+            Claim
+          </button>
+          <button
+            type="button"
+            className="btn sm"
+            aria-label="Dismiss quest banner"
+            onClick={() => setQuestBanner(null)}
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {appErrors.length > 0 && (
         <button
@@ -4504,6 +4852,8 @@ export default function App() {
         profile={profileView}
         isMe={!profileView || profileView.id === uid || profileView.id === 'offline'}
         uid={uid}
+        ownCosmetics={equippedCosmetics}
+        animationsEnabled={Boolean(state.set.anim)}
         onClose={handleCloseProfile}
         onGift={handleGiftFromProfile}
         onMessage={handleMessageFromProfile}
@@ -4674,6 +5024,11 @@ export default function App() {
       )}
 
       <DialogModal dialog={dialog} onClose={handleCloseDialog} />
+      <UnlockCelebrationModal
+        info={unlockModal}
+        hasFanfare={equippedCosmetics.anim === 'anim_celebration'}
+        onClose={() => setUnlockModal(null)}
+      />
     </>
   );
 }

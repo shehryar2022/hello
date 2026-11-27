@@ -2052,7 +2052,7 @@ export const SUBSCRIPTIONS: SubscriptionDef[] = [
     projectSpeedMult: 1.05,
     dailyCash: 25_000,
     dailyGems: 0,
-    d: '2 Hours · +4% income, 3% build/upgrade discount, +5% project speed, ₨ 25K stipend',
+    d: '2 Hours · +4% income, 3% build/upgrade discount, +5% project speed, 25K Coins stipend',
   },
   {
     id: 'weekly',
@@ -2068,7 +2068,7 @@ export const SUBSCRIPTIONS: SubscriptionDef[] = [
     projectSpeedMult: 1.1,
     dailyCash: 150_000,
     dailyGems: 1,
-    d: '3 Days · +8% income, 6% build/upgrade discount, +10% project speed, ₨ 150K + 1 Gem/day',
+    d: '3 Days · +8% income, 6% build/upgrade discount, +10% project speed, 150K Coins + 1 Diamond/day',
   },
   {
     id: 'monthly',
@@ -2084,7 +2084,7 @@ export const SUBSCRIPTIONS: SubscriptionDef[] = [
     projectSpeedMult: 1.15,
     dailyCash: 750_000,
     dailyGems: 2,
-    d: '7 Days · +12% income, 10% build/upgrade discount, +15% project speed, ₨ 750K + 2 Gems/day',
+    d: '7 Days · +12% income, 10% build/upgrade discount, +15% project speed, 750K Coins + 2 Diamonds/day',
   },
 ];
 
@@ -2151,7 +2151,7 @@ export const EXEC_DECISIONS: ExecDecisionDef[] = [
     title: 'Global Tech Expo',
     summary: 'International innovators want to host a summit in your capital this quarter.',
     options: [
-      { label: 'Sponsor Pavilion', hint: 'Spend cash · +8% Happiness, +6% Approval & +1 Gem', variant: 'mint' },
+      { label: 'Sponsor Pavilion', hint: 'Spend cash · +8% Happiness, +6% Approval & +1 Diamond', variant: 'mint' },
       { label: 'Levy Booth Fees', hint: '+Cash windfall · −4% Happiness', variant: 'gold' },
     ],
   },
@@ -2351,6 +2351,6 @@ export const TAB_META: Record<
   rivals: { emoji: '📢', label: 'Players', subtitle: 'Live GDP rankings & diplomacy' },
   stickers: { emoji: '🪪', label: 'Stickers', subtitle: 'Collect, fuse, crates & gift' },
   trade: { emoji: '💱', label: 'Gifts', subtitle: 'Send and receive gifts' },
-  quest: { emoji: '📅', label: 'Quests', subtitle: 'Daily goals & milestones' },
-  shop: { emoji: '💳', label: 'Shop', subtitle: 'Ranks, subscriptions & boosters' },
+  quest: { emoji: '🎁', label: 'Rewards', subtitle: 'Daily rewards, weekly milestones & quests' },
+  shop: { emoji: '💎', label: 'Shop', subtitle: 'Regular Coin wing & Diamond Exclusives' },
 };

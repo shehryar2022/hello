@@ -12,7 +12,7 @@ import {
   getRecommendedShopItems,
   getSubscriptionPrice,
 } from '../../game/rules';
-import type { GameState, ShopSubTab, SubscriptionTierId } from '../../game/types';
+import type { CosmeticItemDef, EquippedCosmetics, GameState, GameThemeId, ShopSubTab, SubscriptionTierId } from '../../game/types';
 import {
   Award,
   BoosterIcon,
@@ -26,6 +26,7 @@ import {
   SubIcon,
   Zap,
 } from '../GameIcons';
+import { DiamondExclusivesShop } from '../shop/DiamondExclusivesShop';
 
 function formatSubRemaining(ms: number): string {
   if (ms <= 0) return 'Expired';
@@ -55,11 +56,21 @@ interface ShopTabProps {
   subTab: ShopSubTab;
   dayKey: string;
   serverOffsetMs?: number;
+  username?: string;
+  countryCode?: string;
+  previewCosmeticId?: string | null;
+  previewThemeId?: GameThemeId | null;
   onChangeSubTab: (sub: ShopSubTab) => void;
   onBuyRank: (rankId: number, e: React.MouseEvent<HTMLButtonElement>) => void;
   onBuySubscription: (tierId: SubscriptionTierId, e: React.MouseEvent<HTMLButtonElement>) => void;
   onClaimSubDaily: (e: React.MouseEvent<HTMLButtonElement>) => void;
   onBuyBooster: (boosterId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
+  onPreviewCosmetic?: (item: CosmeticItemDef | null) => void;
+  onCancelCosmeticPreview?: () => void;
+  onBuyCosmeticItem?: (itemId: string) => void;
+  onBuyCosmeticBundle?: (bundleId: string) => void;
+  onEquipCosmetic?: (slot: keyof EquippedCosmetics, itemId: string | null) => void;
+  onSelectTheme?: (themeId: GameThemeId) => void;
 }
 
 export const ShopTab: React.FC<ShopTabProps> = memo(({
@@ -67,11 +78,21 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
   subTab,
   dayKey,
   serverOffsetMs = 0,
+  username = 'Governor',
+  countryCode = 'PK',
+  previewCosmeticId = null,
+  previewThemeId = null,
   onChangeSubTab,
   onBuyRank,
   onBuySubscription,
   onClaimSubDaily,
   onBuyBooster,
+  onPreviewCosmetic,
+  onCancelCosmeticPreview,
+  onBuyCosmeticItem,
+  onBuyCosmeticBundle,
+  onEquipCosmetic,
+  onSelectTheme,
 }) => {
   const nowMs = (state.t || Date.now()) + serverOffsetMs;
   const currentRankNum = Math.max(1, Math.min(MAX_RANK, Math.floor(state.rank || 1)));
@@ -92,25 +113,73 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
     [activePromoSub, state, nowMs],
   );
 
+  const isRegularWing = subTab !== 'diamond';
+
   return (
     <div>
-      <div className="subtabs">
-        <button type="button" className={subTab === 'rank' ? 'on' : ''} onClick={() => onChangeSubTab('rank')}>
-          <Award size={14} />
-          <span>Ranks</span>
+      <div className="shop-wings" role="group" aria-label="Shop Wings">
+        <button
+          type="button"
+          className={`shop-wing-btn shop-wing-btn--coins ${isRegularWing ? 'on' : ''}`}
+          data-testid="shop-wing-regular"
+          onClick={() => {
+            if (!isRegularWing) onChangeSubTab('rank');
+          }}
+        >
+          <b>
+            <CashCoinIcon size={15} />
+            <span>Regular Shop — Coins</span>
+          </b>
+          <small>Ranks, Charters &amp; National Boosters</small>
         </button>
-        <button type="button" className={subTab === 'sub' ? 'on' : ''} onClick={() => onChangeSubTab('sub')}>
-          <Calendar size={14} />
-          <span>Subscriptions</span>
-          {activePromoPrice?.promoActive && <em>−{activePromoPrice.discountPct}%</em>}
-        </button>
-        <button type="button" className={subTab === 'boost' ? 'on' : ''} onClick={() => onChangeSubTab('boost')}>
-          <Zap size={14} />
-          <span>Boosters</span>
+
+        <button
+          type="button"
+          className={`shop-wing-btn shop-wing-btn--diamond ${!isRegularWing ? 'on' : ''}`}
+          data-testid="shop-wing-diamond"
+          onClick={() => onChangeSubTab('diamond')}
+        >
+          <b>
+            <GemDiamondIcon size={15} />
+            <span>Diamond Exclusives</span>
+          </b>
+          <small>Profile FX, Themes, Badges &amp; 3D Landmarks</small>
         </button>
       </div>
 
-      {subTab === 'rank' ? (
+      {isRegularWing && (
+        <div className="subtabs">
+          <button type="button" className={subTab === 'rank' ? 'on' : ''} onClick={() => onChangeSubTab('rank')}>
+            <Award size={14} />
+            <span>Ranks</span>
+          </button>
+          <button type="button" className={subTab === 'sub' ? 'on' : ''} onClick={() => onChangeSubTab('sub')}>
+            <Calendar size={14} />
+            <span>Subscriptions</span>
+            {activePromoPrice?.promoActive && <em>−{activePromoPrice.discountPct}%</em>}
+          </button>
+          <button type="button" className={subTab === 'boost' ? 'on' : ''} onClick={() => onChangeSubTab('boost')}>
+            <Zap size={14} />
+            <span>Boosters</span>
+          </button>
+        </div>
+      )}
+
+      {!isRegularWing ? (
+        <DiamondExclusivesShop
+          state={state}
+          username={username}
+          countryCode={countryCode}
+          previewItemId={previewCosmeticId}
+          previewThemeId={previewThemeId}
+          onPreviewItem={(item) => onPreviewCosmetic?.(item)}
+          onCancelPreview={() => onCancelCosmeticPreview?.()}
+          onBuyItem={(itemId) => onBuyCosmeticItem?.(itemId)}
+          onBuyBundle={(bundleId) => onBuyCosmeticBundle?.(bundleId)}
+          onEquipCosmetic={(slot, itemId) => onEquipCosmetic?.(slot, itemId)}
+          onSelectTheme={(themeId) => onSelectTheme?.(themeId)}
+        />
+      ) : subTab === 'rank' ? (
         <div>
           <div className="rk-hero">
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
@@ -490,11 +559,21 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
     prev.subTab !== next.subTab ||
     prev.dayKey !== next.dayKey ||
     prev.serverOffsetMs !== next.serverOffsetMs ||
+    prev.username !== next.username ||
+    prev.countryCode !== next.countryCode ||
+    prev.previewCosmeticId !== next.previewCosmeticId ||
+    prev.previewThemeId !== next.previewThemeId ||
     prev.onChangeSubTab !== next.onChangeSubTab ||
     prev.onBuyRank !== next.onBuyRank ||
     prev.onBuySubscription !== next.onBuySubscription ||
     prev.onClaimSubDaily !== next.onClaimSubDaily ||
-    prev.onBuyBooster !== next.onBuyBooster
+    prev.onBuyBooster !== next.onBuyBooster ||
+    prev.onPreviewCosmetic !== next.onPreviewCosmetic ||
+    prev.onCancelCosmeticPreview !== next.onCancelCosmeticPreview ||
+    prev.onBuyCosmeticItem !== next.onBuyCosmeticItem ||
+    prev.onBuyCosmeticBundle !== next.onBuyCosmeticBundle ||
+    prev.onEquipCosmetic !== next.onEquipCosmetic ||
+    prev.onSelectTheme !== next.onSelectTheme
   ) {
     return false;
   }
@@ -511,9 +590,15 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
     p.sub !== n.sub ||
     p.subPromo !== n.subPromo ||
     p.activeFx !== n.activeFx ||
-    p.boosterCd !== n.boosterCd
+    p.boosterCd !== n.boosterCd ||
+    p.cos !== n.cos ||
+    p.cosEq !== n.cosEq ||
+    p.theme !== n.theme
   ) {
     return false;
+  }
+  if (prev.subTab === 'diamond') {
+    return true;
   }
   const pNow = (p.t || 0) + (prev.serverOffsetMs || 0);
   const nNow = (n.t || 0) + (next.serverOffsetMs || 0);

@@ -11,7 +11,9 @@ import type {
   GraphicsSettings,
   RuntimePerfStats,
 } from '../game/types';
+import { getDiamondAssetBonuses } from '../game/cosmetics';
 import {
+  buildDiamondLandmarkGroup,
   buildPlotGroup,
   createCityMaterialLibrary,
   type AnimatedCityPart,
@@ -94,6 +96,8 @@ export class CityEngine {
 
   private plotGroups = new Map<string, THREE.Group>();
   private plotSignatures = new Map<string, string>();
+  private diamondLandmarkGroups = new Map<string, THREE.Group>();
+  private diamondAssetSig = '';
   private hitMeshes: THREE.Object3D[] = [];
   private animatedParts: AnimatedCityPart[] = [];
 
@@ -122,6 +126,8 @@ export class CityEngine {
 
   // Frame loop & FPS pacing
   private frameId = 0;
+  private loopScheduled = false;
+  private loopKind: 'raf' | 'timeout' | null = null;
   private lastTickMs = performance.now();
   private lastRenderMs = performance.now();
   private fpsSamples: number[] = [];
@@ -139,6 +145,7 @@ export class CityEngine {
   private pointerDownPos = { x: 0, y: 0, t: 0 };
   private lastHoverRaycastMs = 0;
   private resizeObserver: ResizeObserver | null = null;
+  private modalObserver: MutationObserver | null = null;
 
   // Bound listeners for clean removal
   private onPointerDownBound: (e: PointerEvent) => void;
@@ -147,6 +154,7 @@ export class CityEngine {
   private onKeyDownBound: (e: KeyboardEvent) => void;
   private onKeyUpBound: (e: KeyboardEvent) => void;
   private onBlurBound: () => void;
+  private onVisibilityChangeBound: () => void;
   private onContextLostBound: (e: Event) => void;
   private onContextRestoredBound: () => void;
   private onResizeBound: () => void;
@@ -333,12 +341,18 @@ export class CityEngine {
     this.onKeyDownBound = (e) => this.handleKeyDown(e);
     this.onKeyUpBound = (e) => this.handleKeyUp(e);
     this.onBlurBound = () => this.keysPressed.clear();
+    this.onVisibilityChangeBound = () => {
+      if (!document.hidden && this.shouldAnimate()) {
+        this.resumeLoop(true);
+      }
+    };
     this.onContextLostBound = (e) => {
       e.preventDefault();
       this.callbacks.onWebglLostChange(true);
     };
     this.onContextRestoredBound = () => {
       this.callbacks.onWebglLostChange(false);
+      this.resumeLoop(true);
     };
     this.onResizeBound = () => this.handleResize();
 
@@ -351,6 +365,16 @@ export class CityEngine {
     window.addEventListener('keydown', this.onKeyDownBound);
     window.addEventListener('keyup', this.onKeyUpBound);
     window.addEventListener('blur', this.onBlurBound);
+    document.addEventListener('visibilitychange', this.onVisibilityChangeBound);
+
+    if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined') {
+      this.modalObserver = new MutationObserver(() => {
+        if (this.shouldAnimate()) {
+          this.resumeLoop(true);
+        }
+      });
+      this.modalObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    }
 
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(() => this.handleResize());
@@ -364,7 +388,7 @@ export class CityEngine {
       this.renderer.compile(this.scene, this.camera);
     }
 
-    this.startLoop();
+    this.resumeLoop(true);
   }
 
   private buildStaticTerrainAndInfrastructure(): void {
@@ -524,14 +548,14 @@ export class CityEngine {
     }
   }
 
-  public syncState(state: GameState): void {
+  public syncState(state: GameState, serverOffsetMs = 0): void {
     if (this.disposed) return;
 
     this.timeMode = state.cityTimeMode || 'auto';
     this.weatherMode = state.cityWeather || 'clear';
 
     let rebuiltAny = false;
-    const now = Date.now();
+    const now = Date.now() + serverOffsetMs;
     const queuedIds = new Set(getConstructionQueue(state, now).map((q) => q.buildingId));
 
     for (const plot of CITY_PLOTS) {
@@ -565,6 +589,34 @@ export class CityEngine {
       this.plotGroups.set(plot.id, nextGroup);
     }
 
+    // Sync owned Diamond Landmarks / Exclusive Assets on the capital esplanade
+    const ownedAssets = getDiamondAssetBonuses(state).ownedAssetIds;
+    const nextAssetSig = ownedAssets.join(',');
+    if (nextAssetSig !== this.diamondAssetSig) {
+      this.diamondAssetSig = nextAssetSig;
+      rebuiltAny = true;
+      const ownedSet = new Set(ownedAssets);
+      for (const [id, grp] of Array.from(this.diamondLandmarkGroups.entries())) {
+        if (!ownedSet.has(id)) {
+          this.scene.remove(grp);
+          this.disposeObjectChildren(grp, true);
+          this.diamondLandmarkGroups.delete(id);
+        }
+      }
+      for (const assetId of ownedAssets) {
+        if (this.diamondLandmarkGroups.has(assetId)) continue;
+        const grp = buildDiamondLandmarkGroup({
+          assetId,
+          lib: this.lib,
+          animatedParts: this.animatedParts,
+        });
+        if (grp) {
+          this.scene.add(grp);
+          this.diamondLandmarkGroups.set(assetId, grp);
+        }
+      }
+    }
+
     if (rebuiltAny) {
       // Refresh raycast hitMeshes & animatedParts cleanly without stale references
       const freshHits: THREE.Object3D[] = [];
@@ -578,6 +630,9 @@ export class CityEngine {
     }
 
     this.updateSelectionVisuals();
+    if (this.shouldAnimate()) {
+      this.renderer.render(this.scene, this.camera);
+    }
   }
 
   private isDescendantOfScene(obj: THREE.Object3D): boolean {
@@ -589,13 +644,20 @@ export class CityEngine {
     return false;
   }
 
-  private disposeObjectChildren(group: THREE.Group): void {
+  private disposeObjectChildren(group: THREE.Group, disposeOwnedMaterials = false): void {
+    const sharedMats = new Set<THREE.Material>(this.lib.materials);
     group.traverse((obj) => {
       if ((obj as THREE.Mesh).isMesh) {
         const mesh = obj as THREE.Mesh;
         mesh.geometry?.dispose();
-        if (mesh.userData?.plotId && !Array.isArray(mesh.material)) {
-          mesh.material.dispose();
+        if (Array.isArray(mesh.material)) {
+          if (disposeOwnedMaterials) {
+            for (const mat of mesh.material) {
+              if (!sharedMats.has(mat)) mat.dispose();
+            }
+          }
+        } else if (mesh.userData?.plotId || (disposeOwnedMaterials && !sharedMats.has(mesh.material))) {
+          mesh.material?.dispose();
         }
       }
     });
@@ -700,8 +762,20 @@ export class CityEngine {
     this.camera.position.copy(this.controls.target).add(_v1);
   }
 
+  private shouldAnimate(): boolean {
+    if (this.disposed || this.paused || !this.visible) return false;
+    if (typeof document !== 'undefined') {
+      if (document.hidden || document.body.classList.contains('modal-open')) return false;
+    }
+    return true;
+  }
+
   public setPaused(paused: boolean): void {
+    const wasPaused = this.paused;
     this.paused = paused;
+    if (wasPaused && !paused && this.shouldAnimate()) {
+      this.resumeLoop(true);
+    }
   }
 
   public setVisible(visible: boolean): void {
@@ -710,6 +784,9 @@ export class CityEngine {
     if (!wasVisible && visible && !this.disposed) {
       this.lastTickMs = performance.now();
       this.handleResize();
+      if (this.shouldAnimate()) {
+        this.resumeLoop(true);
+      }
     }
   }
 
@@ -964,30 +1041,60 @@ export class CityEngine {
     }
   }
 
+  private resumeLoop(renderImmediate = false): void {
+    if (this.disposed) return;
+    this.lastTickMs = performance.now();
+    if (renderImmediate && this.visible) {
+      this.handleResize();
+      this.updateAtmosphere(0);
+      this.renderer.render(this.scene, this.camera);
+    }
+    if (this.loopScheduled || !this.shouldAnimate()) return;
+    this.startLoop();
+  }
+
+  private clearScheduledFrame(): void {
+    if (this.loopKind === 'raf') {
+      cancelAnimationFrame(this.frameId);
+    } else if (this.loopKind === 'timeout') {
+      window.clearTimeout(this.frameId);
+    }
+    this.loopScheduled = false;
+    this.loopKind = null;
+  }
+
   private startLoop(): void {
+    if (this.disposed || this.loopScheduled) return;
+
     const tick = () => {
+      this.loopScheduled = false;
+      this.loopKind = null;
       if (this.disposed) return;
 
       const scheduleNext = () => {
-        if (this.disposed) return;
+        if (this.disposed || this.loopScheduled || !this.shouldAnimate()) return;
+        this.loopScheduled = true;
         if (this.isSoftwareGl) {
+          this.loopKind = 'timeout';
           this.afterDraw(tick);
         } else {
+          this.loopKind = 'raf';
           this.frameId = requestAnimationFrame(tick);
         }
       };
 
       const now = performance.now();
-      const modalOpen = typeof document !== 'undefined' && document.body.classList.contains('modal-open');
-      if (document.hidden || !this.visible || this.paused || modalOpen) {
+      if (!this.shouldAnimate()) {
+        // Stop scheduling cleanly until visible/modal/visibilitychange wakes resumeLoop()
         this.lastTickMs = now;
-        this.frameId = window.setTimeout(tick, 180);
         return;
       }
 
       const fpsCap = resolveNumericFpsCap(this.settings.fpsTarget, this.isSoftwareGl);
       const minIntervalMs = 1000 / fpsCap;
       if (!this.isSoftwareGl && now - this.lastRenderMs < minIntervalMs - 1.5) {
+        this.loopScheduled = true;
+        this.loopKind = 'raf';
         this.frameId = requestAnimationFrame(tick);
         return;
       }
@@ -1072,17 +1179,19 @@ export class CityEngine {
       scheduleNext();
     };
 
+    this.loopScheduled = true;
     if (this.isSoftwareGl) {
+      this.loopKind = 'timeout';
       this.frameId = window.setTimeout(tick, 16);
     } else {
+      this.loopKind = 'raf';
       this.frameId = requestAnimationFrame(tick);
     }
   }
 
   public dispose(): void {
     this.disposed = true;
-    cancelAnimationFrame(this.frameId);
-    window.clearTimeout(this.frameId);
+    this.clearScheduledFrame();
 
     const dom = this.renderer.domElement;
     dom.removeEventListener('pointerdown', this.onPointerDownBound);
@@ -1093,6 +1202,8 @@ export class CityEngine {
     window.removeEventListener('keydown', this.onKeyDownBound);
     window.removeEventListener('keyup', this.onKeyUpBound);
     window.removeEventListener('blur', this.onBlurBound);
+    document.removeEventListener('visibilitychange', this.onVisibilityChangeBound);
+    this.modalObserver?.disconnect();
     this.resizeObserver?.disconnect();
     window.removeEventListener('resize', this.onResizeBound);
 
@@ -1101,6 +1212,10 @@ export class CityEngine {
       this.disposeObjectChildren(grp);
     }
     this.plotGroups.clear();
+    for (const grp of this.diamondLandmarkGroups.values()) {
+      this.disposeObjectChildren(grp, true);
+    }
+    this.diamondLandmarkGroups.clear();
 
     this.carMesh.geometry.dispose();
     (this.carMesh.material as THREE.Material).dispose();

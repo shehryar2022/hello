@@ -1001,3 +1001,107 @@ export function attachPlotProxy(group: THREE.Group, plot: CityPlotDef, height = 
   hitBox.layers.set(1);
   group.add(hitBox);
 }
+
+export const DIAMOND_LANDMARK_SLOTS: Record<string, { x: number; z: number; primary: number; accent: number }> = {
+  asset_aurora_obelisk: { x: 6, z: 39, primary: 0x37e6a0, accent: 0x38bdf8 },
+  asset_royal_fleet: { x: 23, z: 40, primary: 0xffc93c, accent: 0xfb7185 },
+  asset_diamond_spire: { x: 38, z: 39, primary: 0x7ee8ff, accent: 0x9b6dff },
+  asset_crystal_vault: { x: 54, z: 39, primary: 0xc084fc, accent: 0x7ee8ff },
+};
+
+/**
+ * Multi-part PBR architectural landmark rendered on the capital waterfront esplanade
+ * whenever a player owns one of the 4 Exclusive Diamond Assets.
+ */
+export function buildDiamondLandmarkGroup(params: {
+  assetId: string;
+  lib: CityMaterialLibrary;
+  animatedParts: AnimatedCityPart[];
+}): THREE.Group | null {
+  const { assetId, lib, animatedParts } = params;
+  const slot = DIAMOND_LANDMARK_SLOTS[assetId];
+  if (!slot) return null;
+
+  const g = new THREE.Group();
+  g.position.set(slot.x, 0, slot.z);
+  g.name = `diamond-asset:${assetId}`;
+
+  const crystalMat = new THREE.MeshPhysicalMaterial({
+    color: slot.primary,
+    emissive: new THREE.Color(slot.primary),
+    emissiveIntensity: 0.48,
+    roughness: 0.1,
+    metalness: 0.3,
+    clearcoat: 1,
+    envMapIntensity: 1.4,
+  });
+  const trimMat = new THREE.MeshStandardMaterial({
+    color: slot.accent,
+    emissive: new THREE.Color(slot.accent),
+    emissiveIntensity: 0.3,
+    roughness: 0.25,
+    metalness: 0.78,
+  });
+
+  // Grand tiered marble plinth
+  addBox(g, 8.6, 0.45, 7.4, 0, 0, 0, lib.concreteBase, false, true);
+  addBox(g, 6.8, 0.35, 5.8, 0, 0.45, 0, trimMat, false, true);
+
+  if (assetId === 'asset_aurora_obelisk') {
+    addBox(g, 2.4, 1.4, 2.4, 0, 0.8, 0, lib.brightSteel);
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 1.15, 11.5, 4), crystalMat);
+    shaft.rotation.y = Math.PI * 0.25;
+    shaft.position.set(0, 7.95, 0);
+    shaft.castShadow = true;
+    g.add(shaft);
+    const halo = new THREE.Mesh(new THREE.TorusGeometry(1.75, 0.14, 8, 24), trimMat);
+    halo.position.set(0, 11.6, 0);
+    halo.rotation.x = Math.PI * 0.35;
+    g.add(halo);
+    animatedParts.push({ obj: halo, kind: 'radar', speed: 1.15, phase: 0.2 });
+    const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.95, 0), crystalMat);
+    gem.position.set(0, 14.8, 0);
+    g.add(gem);
+    animatedParts.push({ obj: gem, kind: 'radar', speed: -1.4, phase: 0.5 });
+  } else if (assetId === 'asset_royal_fleet') {
+    // Sovereign Prestige Ceremonial Arch flanking the bridge approach
+    addBox(g, 1.35, 7.8, 1.8, -2.55, 0.8, 0, lib.brightSteel);
+    addBox(g, 1.35, 7.8, 1.8, 2.55, 0.8, 0, lib.brightSteel);
+    addBox(g, 7.4, 1.3, 2.1, 0, 8.6, 0, trimMat);
+    addBox(g, 5.8, 0.7, 1.5, 0, 9.9, 0, lib.goldAccent);
+    const crest = new THREE.Mesh(new THREE.OctahedronGeometry(1.1, 0), crystalMat);
+    crest.position.set(0, 11.9, 0);
+    g.add(crest);
+    animatedParts.push({ obj: crest, kind: 'radar', speed: 1.25, phase: 0.9 });
+  } else if (assetId === 'asset_diamond_spire') {
+    addBox(g, 4.4, 2.8, 4.4, 0, 0.8, 0, lib.glassFacade);
+    addBox(g, 3.2, 9.6, 3.2, 0, 3.6, 0, lib.glassFacade);
+    addBox(g, 3.4, 0.45, 3.4, 0, 8.2, 0, crystalMat, false);
+    addBox(g, 3.4, 0.45, 3.4, 0, 13.0, 0, trimMat, false);
+    const crown = new THREE.Mesh(new THREE.OctahedronGeometry(1.45, 0), crystalMat);
+    crown.position.set(0, 15.6, 0);
+    crown.scale.set(1, 1.55, 1);
+    g.add(crown);
+    animatedParts.push({ obj: crown, kind: 'radar', speed: 0.95, phase: 0.4 });
+  } else {
+    // asset_crystal_vault
+    addBox(g, 6.2, 3.6, 5.0, 0, 0.8, 0, lib.concreteBase);
+    for (const px of [-2.4, -0.8, 0.8, 2.4]) {
+      addCyl(g, 0.22, 0.24, 3.4, 8, px, 0.8, 2.45, trimMat);
+    }
+    const dome = new THREE.Mesh(
+      new THREE.SphereGeometry(2.35, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.55),
+      crystalMat,
+    );
+    dome.position.set(0, 4.4, 0);
+    dome.castShadow = true;
+    g.add(dome);
+    const beacon = new THREE.Mesh(new THREE.OctahedronGeometry(0.85, 0), crystalMat);
+    beacon.position.set(0, 7.6, 0);
+    g.add(beacon);
+    animatedParts.push({ obj: beacon, kind: 'beacon', speed: 2.0, phase: 1.3 });
+  }
+
+  return g;
+}
+

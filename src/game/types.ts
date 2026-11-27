@@ -10,8 +10,84 @@ export type TabId =
 
 export type PlayersSubTab = 'lb' | 'chat' | 'dm';
 export type GiftsSubTab = 'in' | 'out' | 'hist' | 'find';
-export type ShopSubTab = 'rank' | 'sub' | 'boost';
+export type ShopSubTab = 'rank' | 'sub' | 'boost' | 'diamond';
+export type ShopWing = 'regular' | 'exclusives';
 export type GovtSubTab = 'infra' | 'projects' | 'decisions' | 'research' | 'stats';
+
+export type CosmeticCategory =
+  | 'profile_effect'
+  | 'name_effect'
+  | 'theme'
+  | 'animation'
+  | 'badge'
+  | 'diamond_asset';
+
+export type CosmeticRarity = 'Rare' | 'Epic' | 'Legendary' | 'Exclusive';
+
+export type GameThemeId =
+  | 'midnight_galaxy'
+  | 'cyber_neon'
+  | 'royal_gold'
+  | 'diamond_crystal'
+  | 'aurora_nights'
+  | 'dark_luxury'
+  | 'ocean_blue'
+  | 'crimson_empire'
+  | 'emerald_kingdom'
+  | 'sunset_paradise';
+
+export interface CosmeticItemDef {
+  id: string;
+  name: string;
+  category: CosmeticCategory;
+  rarity: CosmeticRarity;
+  diamondsCost: number;
+  coinsCost?: number;
+  reqRank?: number;
+  previewTag: string;
+  icon: string;
+  desc: string;
+  themeId?: GameThemeId;
+  accentColor: string;
+  secondaryColor: string;
+  isDefaultFree?: boolean;
+  limitedLabel?: string;
+}
+
+export interface DiamondAssetDef extends CosmeticItemDef {
+  category: 'diamond_asset';
+  incomePctBonus: number;
+  hapBonus: number;
+  tradeBonusPct: number;
+}
+
+export interface CosmeticBundleDef {
+  id: string;
+  name: string;
+  rarity: CosmeticRarity;
+  diamondsCost: number;
+  coinsCost?: number;
+  itemIds: string[];
+  badgeText: string;
+  desc: string;
+  accentColor: string;
+  secondaryColor: string;
+}
+
+export interface EquippedCosmetics {
+  frame?: string;
+  nameEffect?: string;
+  badge?: string;
+  anim?: string;
+}
+
+export interface RewardHistoryEntry {
+  day: string;
+  label: string;
+  coins: number;
+  diamonds: number;
+  bonus?: string;
+}
 
 export type CountryTuple = [code: string, name: string, realGdp?: number];
 
@@ -409,6 +485,17 @@ export interface GameState {
   decisionsCd?: Record<string, number>;
   cityTimeMode?: CityTimeMode;
   cityWeather?: CityWeatherMode;
+  // Mega Master Update: Diamond Exclusives Cosmetics & Rewards Dashboard (v2 cloud pack compatible)
+  cos?: string[];
+  cosEq?: EquippedCosmetics;
+  theme?: GameThemeId;
+  dSlot?: number;
+  dLastDay?: string;
+  dHist?: RewardHistoryEntry[];
+  wMilDay?: string;
+  wMilClaim?: Record<string, number>;
+  wHist?: RewardHistoryEntry[];
+  qHist?: RewardHistoryEntry[];
 }
 
 export interface PlayerStats {
@@ -433,6 +520,9 @@ export interface PlayerProfile {
   rank: number;
   subTier?: SubscriptionTierId | '';
   subExp?: number;
+  cosFrame?: string;
+  cosNameFx?: string;
+  cosBadge?: string;
   lastSeen?: unknown;
   seen?: number;
   stats: PlayerStats;
@@ -526,6 +616,9 @@ export interface ChatMessage {
   name: string;
   cc: string;
   rank: number;
+  cosFrame?: string;
+  cosNameFx?: string;
+  cosBadge?: string;
   text: string;
   ms: number;
 }

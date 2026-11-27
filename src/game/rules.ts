@@ -43,11 +43,26 @@ import type {
   PlayerStats,
   PolicyCategoryId,
   QuestDef,
+  RewardHistoryEntry,
   StickerDef,
   SubPromoState,
   SubscriptionDef,
   SubscriptionTierId,
+  EquippedCosmetics,
+  GameThemeId,
 } from './types';
+import {
+  ALL_COSMETIC_ITEMS,
+  COSMETIC_BY_ID,
+  getDiamondAssetBonuses,
+  slotForCategory,
+  VALID_COSMETIC_ID_SET,
+  VALID_THEME_ID_SET,
+} from './cosmetics';
+import {
+  computeReadyAchievementCount,
+  getDailyRewardsView,
+} from './rewards';
 import {
   applyBuyBoosterV2,
   applyChangePolicyStance,
@@ -221,6 +236,16 @@ export function freshState(): GameState {
     decisionsCd: {},
     cityTimeMode: 'auto',
     cityWeather: 'clear',
+    cos: [],
+    cosEq: {},
+    theme: 'midnight_galaxy',
+    dSlot: 0,
+    dLastDay: '',
+    dHist: [],
+    wMilDay: '',
+    wMilClaim: {},
+    wHist: [],
+    qHist: [],
   };
 }
 
@@ -324,6 +349,16 @@ interface PackedV2Extension {
   dc?: Record<string, number>;
   ct?: CityTimeMode;
   cw?: CityWeatherMode;
+  co?: string[];
+  ce?: EquippedCosmetics;
+  th?: GameThemeId;
+  ds?: number;
+  dl?: string;
+  dh?: RewardHistoryEntry[];
+  wm?: string;
+  wc2?: Record<string, number>;
+  wh?: RewardHistoryEntry[];
+  qh?: RewardHistoryEntry[];
 }
 
 function unpackV2FromProvBudgetLog(rawLog: unknown): PackedV2Extension | null {
@@ -652,6 +687,80 @@ export function migrateState(
   const rawCw = raw?.cityWeather ?? v2Pack?.cw;
   s.cityWeather = rawCw === 'overcast' || rawCw === 'rain' ? rawCw : 'clear';
 
+  // Sanitize cosmetics, active theme & rewards dashboard state
+  const rawCos = Array.isArray(raw?.cos) ? raw.cos : v2Pack?.co;
+  const cosSet = new Set<string>();
+  if (Array.isArray(rawCos)) {
+    for (const id of rawCos) {
+      if (typeof id === 'string' && VALID_COSMETIC_ID_SET.has(id) && id !== 'theme_midnight_galaxy') {
+        cosSet.add(id);
+      }
+    }
+  }
+  s.cos = Array.from(cosSet);
+
+  const rawEq = (raw?.cosEq && typeof raw.cosEq === 'object' ? raw.cosEq : v2Pack?.ce) as Record<string, unknown> | undefined;
+  const cleanEq: EquippedCosmetics = {};
+  if (rawEq && typeof rawEq === 'object') {
+    for (const slot of ['frame', 'nameEffect', 'badge', 'anim'] as const) {
+      const id = rawEq[slot];
+      if (typeof id === 'string' && cosSet.has(id)) {
+        const def = COSMETIC_BY_ID.get(id);
+        if (def && slotForCategory(def.category) === slot) {
+          cleanEq[slot] = id;
+        }
+      }
+    }
+  }
+  s.cosEq = cleanEq;
+
+  const rawTheme = (raw?.theme ?? v2Pack?.th) as GameThemeId | undefined;
+  if (
+    rawTheme &&
+    VALID_THEME_ID_SET.has(rawTheme) &&
+    (rawTheme === 'midnight_galaxy' ||
+      ALL_COSMETIC_ITEMS.some((it) => it.category === 'theme' && it.themeId === rawTheme && cosSet.has(it.id)))
+  ) {
+    s.theme = rawTheme;
+  } else {
+    s.theme = 'midnight_galaxy';
+  }
+
+  const rawDSlot = Math.floor(Number(raw?.dSlot ?? v2Pack?.ds ?? 0));
+  s.dSlot = Number.isFinite(rawDSlot) ? Math.max(0, Math.min(5, rawDSlot)) : 0;
+  const rawDLast = raw?.dLastDay ?? v2Pack?.dl;
+  s.dLastDay = typeof rawDLast === 'string' ? rawDLast.slice(0, 16) : '';
+
+  const sanitizeHist = (input: unknown): RewardHistoryEntry[] => {
+    if (!Array.isArray(input)) return [];
+    const out: RewardHistoryEntry[] = [];
+    for (const item of input.slice(0, 8)) {
+      if (!item || typeof item !== 'object') continue;
+      const obj = item as Record<string, unknown>;
+      const day = typeof obj.day === 'string' ? obj.day.slice(0, 16) : '';
+      const label = typeof obj.label === 'string' ? obj.label.slice(0, 48) : '';
+      const coins = Math.max(0, Math.min(1e12, Math.floor(Number(obj.coins) || 0)));
+      const diamonds = Math.max(0, Math.min(1e6, Math.floor(Number(obj.diamonds) || 0)));
+      const bonus = typeof obj.bonus === 'string' && obj.bonus ? obj.bonus.slice(0, 32) : undefined;
+      if (day && label) out.push(bonus ? { day, label, coins, diamonds, bonus } : { day, label, coins, diamonds });
+    }
+    return out;
+  };
+  s.dHist = sanitizeHist(raw?.dHist ?? v2Pack?.dh);
+
+  const rawWDay = raw?.wMilDay ?? v2Pack?.wm;
+  s.wMilDay = typeof rawWDay === 'string' ? rawWDay.slice(0, 16) : '';
+  const rawWClaim = (raw?.wMilClaim && typeof raw.wMilClaim === 'object' ? raw.wMilClaim : v2Pack?.wc2) as Record<string, unknown> | undefined;
+  const cleanWClaim: Record<string, number> = {};
+  if (rawWClaim && typeof rawWClaim === 'object') {
+    for (const [k, v] of Object.entries(rawWClaim).slice(0, 10)) {
+      if (Number(v) > 0 && /^wm_[a-z0-9_]{1,24}$/.test(k)) cleanWClaim[k] = 1;
+    }
+  }
+  s.wMilClaim = cleanWClaim;
+  s.wHist = sanitizeHist(raw?.wHist ?? v2Pack?.wh);
+  s.qHist = sanitizeHist(raw?.qHist ?? v2Pack?.qh);
+
   // Strip province arrays cleanly AFTER idempotent migration
   const migrated = migrateLegacySaveToNational(raw || {}, s);
   delete (migrated as unknown as Record<string, unknown>).provinces;
@@ -768,6 +877,16 @@ export function cleanSavePayload(s: GameState, nowMs = Date.now()): Record<strin
   if (normalized.decisionsCd && Object.keys(normalized.decisionsCd).length > 0) pack.dc = normalized.decisionsCd;
   if (normalized.cityTimeMode && normalized.cityTimeMode !== 'auto') pack.ct = normalized.cityTimeMode;
   if (normalized.cityWeather && normalized.cityWeather !== 'clear') pack.cw = normalized.cityWeather;
+  if (normalized.cos && normalized.cos.length > 0) pack.co = normalized.cos;
+  if (normalized.cosEq && Object.keys(normalized.cosEq).length > 0) pack.ce = normalized.cosEq;
+  if (normalized.theme && normalized.theme !== 'midnight_galaxy') pack.th = normalized.theme;
+  if ((normalized.dSlot || 0) > 0) pack.ds = normalized.dSlot;
+  if (normalized.dLastDay) pack.dl = normalized.dLastDay;
+  if (normalized.dHist && normalized.dHist.length > 0) pack.dh = normalized.dHist.slice(0, 5);
+  if (normalized.wMilDay) pack.wm = normalized.wMilDay;
+  if (normalized.wMilClaim && Object.keys(normalized.wMilClaim).length > 0) pack.wc2 = normalized.wMilClaim;
+  if (normalized.wHist && normalized.wHist.length > 0) pack.wh = normalized.wHist.slice(0, 5);
+  if (normalized.qHist && normalized.qHist.length > 0) pack.qh = normalized.qHist.slice(0, 5);
 
   normalized.b = primaryB;
   normalized.gx = { ...normalized.gx, lvl: primaryLvl };
@@ -953,6 +1072,7 @@ export function targetHappiness(s: GameState, nowMs = Date.now()): number {
   else if (pNrg === 2) policyHap -= 5;
 
   const empBoostBonus = isBoosterActive(s, 'emp_boost', nowMs) ? 4 : 0;
+  const assetHapBonus = getDiamondAssetBonuses(s).hapBonus;
 
   return Math.max(
     5,
@@ -962,6 +1082,7 @@ export function targetHappiness(s: GameState, nowMs = Date.now()): number {
         techFlatHap +
         policyHap +
         empBoostBonus +
+        assetHapBonus +
         gxHappinessMod(s) +
         s.wel * 1.45 +
         s.edu * 0.55 +
@@ -1214,7 +1335,7 @@ export function canBuySubscription(
     const shortfall = Math.max(0, finalCost - safeCash);
     return {
       ok: false,
-      reason: `Not enough Coins (need ₨ ${formatNumber(finalCost)}, have ₨ ${formatNumber(safeCash)})`,
+      reason: `Not enough Coins (need ${formatNumber(finalCost)} Coins, have ${formatNumber(safeCash)} Coins)`,
       shortfall,
       required: finalCost,
       available: safeCash,
@@ -1236,14 +1357,14 @@ export function applyBuySubscription(
     return {
       ok: false,
       state: s,
-      reason: `Not enough Coins (need ₨ ${formatNumber(finalCost)}, have ₨ ${formatNumber(Math.floor(safeCash))})`,
+      reason: `Not enough Coins (need ${formatNumber(finalCost)} Coins, have ${formatNumber(Math.floor(safeCash))} Coins)`,
     };
   }
   const remainingCash = Math.max(0, safeCash - finalCost);
   const startAt = Math.max(0, Math.floor(nowMs));
   const exp = startAt + subDef.durMs;
   const existingLog = Array.isArray(s.gx?.log) ? s.gx.log : [];
-  const txEntry = `Subscription: ${subDef.n} (${subDef.durationLabel}) · −₨ ${formatNumber(finalCost)} · ${fmtSubStamp(startAt)}→${fmtSubStamp(exp)}`.slice(0, 120);
+  const txEntry = `Subscription: ${subDef.n} (${subDef.durationLabel}) · −${formatNumber(finalCost)} Coins · ${fmtSubStamp(startAt)}→${fmtSubStamp(exp)}`.slice(0, 120);
 
   return {
     ok: true,
@@ -1457,91 +1578,7 @@ export function claimMilestone(
   };
 }
 
-export const QUEST_POOL: QuestDef[] = [
-  { id: 'b10', t: 'Own 10 national buildings', f: (s) => totalBuildings(s), g: 10, r: 3 },
-  { id: 'inc50', t: 'Reach 50 income/sec', f: (s) => calculateIncome(s).net, g: 50, r: 5 },
-  { id: 'hap75', t: 'Happiness above 75', f: (s) => s.hap, g: 75, r: 4 },
-  { id: 'tech2', t: 'Build 2 Tech Parks', f: (s) => s.b?.tech_parks || 0, g: 2, r: 8 },
-  { id: 'inc500', t: 'Reach 500 income/sec', f: (s) => calculateIncome(s).net, g: 500, r: 15 },
-  { id: 'rank1', t: 'Become #1 in GDP', f: (s, ctx) => ((ctx?.rank ?? calculateOfflineRank(s)) === 1 ? 1 : 0), g: 1, r: 25 },
-  { id: 'stk10', t: 'Collect 10 unique stickers', f: (s) => stickerUniqueCount(s), g: 10, r: 8 },
-  { id: 'fuse1', t: 'Fuse a sticker', f: (s) => s.fused || 0, g: 1, r: 6 },
-  { id: 'streak7', t: 'Reach a 7-day login streak', f: (s) => s.streak || 0, g: 7, r: 12 },
-  { id: 'cash10k', t: 'Hold ₨ 10,000 Coins', f: (s) => s.cash, g: 10_000, r: 5 },
-  { id: 'cash100k', t: 'Hold ₨ 100,000 Coins', f: (s) => s.cash, g: 100_000, r: 12 },
-  { id: 'mills3', t: 'Build 3 Textile Mills', f: (s) => s.b?.textile_mills || 0, g: 3, r: 6 },
-  { id: 'air1', t: 'Build an Airport', f: (s) => s.b?.airports || 0, g: 1, r: 7 },
-  { id: 'hosp2', t: 'Build 2 Hospitals', f: (s) => s.b?.hospitals || 0, g: 2, r: 6 },
-  { id: 'shop2', t: 'Build 2 Shopping Centers', f: (s) => s.b?.shopping_centers || 0, g: 2, r: 6 },
-  { id: 'appr80', t: 'Approval above 80', f: (s) => s.appr, g: 80, r: 6 },
-  { id: 'b25', t: 'Own 25 national buildings', f: (s) => totalBuildings(s), g: 25, r: 8 },
-  { id: 'gems10', t: 'Hold 10 gems', f: (s) => s.gems, g: 10, r: 5 },
-  { id: 'stk5', t: 'Collect 5 unique stickers', f: (s) => stickerUniqueCount(s), g: 5, r: 4 },
-  { id: 'pop60', t: 'Population above 60M', f: (s) => s.pop, g: 60, r: 6 },
-  { id: 'solar3', t: 'Build 3 Solar Plants', f: (s) => s.b?.solar_plants || 0, g: 3, r: 6 },
-  { id: 'green3', t: 'Build 3 Greenhouses', f: (s) => s.b?.greenhouses || 0, g: 3, r: 6 },
-  { id: 'univ1', t: 'Build a University', f: (s) => s.b?.universities || 0, g: 1, r: 8 },
-  { id: 'rail2', t: 'Build 2 Railways', f: (s) => s.b?.railways || 0, g: 2, r: 10 },
-  { id: 'data1', t: 'Build a Data Center', f: (s) => s.b?.data_centers || 0, g: 1, r: 12 },
-  { id: 'res2', t: 'Build 2 Research Centers', f: (s) => s.b?.research_centers || 0, g: 2, r: 14 },
-  { id: 'b40', t: 'Own 40 national buildings', f: (s) => totalBuildings(s), g: 40, r: 14 },
-  { id: 'b60', t: 'Own 60 national buildings', f: (s) => totalBuildings(s), g: 60, r: 20 },
-  { id: 'inc2000', t: 'Reach 2,000 income/sec', f: (s) => calculateIncome(s).net, g: 2000, r: 20 },
-  { id: 'hap85', t: 'Happiness above 85', f: (s) => s.hap, g: 85, r: 8 },
-  { id: 'appr90', t: 'Approval above 90', f: (s) => s.appr, g: 90, r: 10 },
-  { id: 'cash1m', t: 'Hold ₨ 1,000,000 Coins', f: (s) => s.cash, g: 1_000_000, r: 18 },
-  { id: 'gems25', t: 'Hold 25 gems', f: (s) => s.gems, g: 25, r: 8 },
-  { id: 'stk20', t: 'Collect 20 unique stickers', f: (s) => stickerUniqueCount(s), g: 20, r: 15 },
-  { id: 'fuse3', t: 'Fuse 3 stickers', f: (s) => s.fused || 0, g: 3, r: 12 },
-  { id: 'pop80', t: 'Population above 80M', f: (s) => s.pop, g: 80, r: 10 },
-  { id: 'gdp10m', t: 'Real GDP above ₨ 10M', f: (s) => calculateGdp(s), g: 10_000_000, r: 20 },
-  { id: 'biz2', t: 'Own 2 Business Districts', f: (s) => s.b?.business_districts || 0, g: 2, r: 20 },
-  { id: 'streak14', t: 'Reach a 14-day login streak', f: (s) => s.streak || 0, g: 14, r: 20 },
-  { id: 'gdp25m', t: 'Real GDP above ₨ 25M', f: (s) => calculateGdp(s), g: 25_000_000, r: 30 },
-  { id: 'rank2buy', t: 'Promote to Citizen (Rank 2)', f: (s) => s.rank || MIN_RANK, g: 2, r: 10 },
-  { id: 'rank4buy', t: 'Promote to Business Owner (Rank 4)', f: (s) => s.rank || MIN_RANK, g: 4, r: 20 },
-  { id: 'rank7buy', t: 'Promote to Tycoon (Rank 7)', f: (s) => s.rank || MIN_RANK, g: 7, r: 40 },
-  { id: 'rank10buy', t: 'Promote to National Legend (Rank 10)', f: (s) => s.rank || MIN_RANK, g: 10, r: 60 },
-  {
-    id: 'boost1',
-    t: 'Activate a national booster',
-    f: (s) => BOOSTERS.filter((b) => (s.boosterCd?.[`ba_${b.id}`] || 0) > 0).length,
-    g: 1,
-    r: 5,
-  },
-  {
-    id: 'boost3',
-    t: 'Activate 3 different boosters',
-    f: (s) => BOOSTERS.filter((b) => (s.boosterCd?.[`ba_${b.id}`] || 0) > 0).length,
-    g: 3,
-    r: 10,
-  },
-  { id: 'wind2', t: 'Build 2 Wind Farms', f: (s) => s.b?.wind_farms || 0, g: 2, r: 8 },
-  { id: 'ports1', t: 'Build a Port', f: (s) => s.b?.ports || 0, g: 1, r: 12 },
-  { id: 'food2', t: 'Build 2 Food Processing Plants', f: (s) => s.b?.food_plant || 0, g: 2, r: 8 },
-  { id: 'roads3', t: 'Build 3 Roads', f: (s) => s.b?.roads || 0, g: 3, r: 6 },
-  { id: 'steel1', t: 'Build a Steel Plant', f: (s) => s.b?.steel_plants || 0, g: 1, r: 12 },
-  { id: 'train2', t: 'Build 2 Training Centers', f: (s) => s.b?.training_centers || 0, g: 2, r: 7 },
-];
-
-export function selectDailyQuestIds(dateStr: string): number[] {
-  let seed = 0;
-  for (let i = 0; i < dateStr.length; i++) {
-    seed = (seed * 31 + dateStr.charCodeAt(i)) >>> 0;
-  }
-  const rnd = () => {
-    seed = (seed * 1664525 + 1013904223) >>> 0;
-    return seed / 4294967296;
-  };
-  const idx = [...Array(QUEST_POOL.length).keys()];
-  for (let i = idx.length - 1; i > 0; i--) {
-    const j = Math.floor(rnd() * (i + 1));
-    const tmp = idx[i];
-    idx[i] = idx[j];
-    idx[j] = tmp;
-  }
-  return idx.slice(0, 3);
-}
+// Daily Quests have been removed; keep national milestones & weekly strategic missions intact.
 
 export function sanitizeStats(
   raw: Partial<PlayerStats> | undefined,
@@ -1623,7 +1660,7 @@ export function resolveExecutiveDecision(
     next.hap = Math.min(100, next.hap + 8);
     next.appr = Math.min(100, next.appr + 6);
     next.gems = Math.min(1e9, safeGems + 1);
-    return { ok: true, state: next, summary: `Sponsored Tech Expo (−₨ ${formatNumber(quote.spendCost)}): +8% Hap, +6% Appr, +1 Gem!` };
+    return { ok: true, state: next, summary: `Sponsored Tech Expo (−₨ ${formatNumber(quote.spendCost)}): +8% Hap, +6% Appr, +1 Diamond!` };
   }
   if (decisionId === 'grid_crunch') {
     next.hap = Math.min(100, next.hap + 6);
@@ -1692,7 +1729,7 @@ export function getRecommendedBuildings(
     if (hapPick) rec[hapPick.def.id] = 'Happiness Fix';
   } else if ((s.b?.ports || 0) === 0) {
     const portPick = buildable.find((x) => x.def.id === 'ports' && !rec[x.def.id]);
-    if (portPick) rec[portPick.def.id] = 'Trade & Gems';
+    if (portPick) rec[portPick.def.id] = 'Trade & Diamonds';
   }
 
   if (Object.keys(rec).length === 0) {
@@ -1975,54 +2012,28 @@ export function applyChangeGov(
   };
 }
 
-export function applyClaimQuest(
+export function getUnclaimedRewardsSummary(
   s: GameState,
-  questId: string,
-  todayKey: string,
-  rankPos: number,
-): { ok: boolean; state: GameState; gemsAdded: number; reason?: string } {
-  if (s.claimed?.[questId]) return { ok: false, state: s, gemsAdded: 0, reason: 'Already claimed' };
-  const activeIds =
-    s.questIds?.length === 3 && s.questDay === todayKey ? s.questIds : selectDailyQuestIds(todayKey);
-  const qIndex = QUEST_POOL.findIndex((q) => q.id === questId);
-  if (qIndex < 0 || !activeIds.includes(qIndex)) {
-    return { ok: false, state: s, gemsAdded: 0, reason: 'Quest not active today' };
-  }
-  const q = QUEST_POOL[qIndex];
-  if (q.f(s, { rank: rankPos }) < q.g) {
-    return { ok: false, state: s, gemsAdded: 0, reason: 'Objective not yet completed' };
-  }
-  const cleanClaimed: Record<string, number> = {};
-  if (s.questDay === todayKey) {
-    for (const [k, v] of Object.entries(s.claimed || {}).slice(0, 19)) {
-      if (Number(v) > 0) cleanClaimed[k] = 1;
-    }
-  }
-  cleanClaimed[questId] = 1;
-  const safeGems = Number.isFinite(s.gems) ? Math.max(0, Math.floor(s.gems)) : 0;
+  nowMs = Date.now(),
+  _rankPos = 999,
+): {
+  dailyReady: number;
+  weeklyReady: number;
+  questReady: number;
+  achReady: number;
+  total: number;
+  readyQuestIds: string[];
+} {
+  const dailyView = getDailyRewardsView(s, nowMs);
+  const dailyReady = dailyView.canClaimToday ? 1 : 0;
+  const achReady = computeReadyAchievementCount(s);
   return {
-    ok: true,
-    gemsAdded: q.r,
-    state: {
-      ...s,
-      questDay: todayKey,
-      questIds: activeIds,
-      gems: Math.min(1e9, safeGems + q.r),
-      claimed: cleanClaimed,
-    },
-  };
-}
-
-export function rotateDailyQuestsIfNeeded(s: GameState, nowMs = Date.now()): GameState {
-  const todayKey = dayKeyFor(nowMs);
-  if (s.questDay === todayKey && s.questIds?.length === 3) {
-    return s;
-  }
-  return {
-    ...s,
-    questDay: todayKey,
-    questIds: selectDailyQuestIds(todayKey),
-    claimed: s.questDay === todayKey ? s.claimed : {},
+    dailyReady,
+    weeklyReady: 0,
+    questReady: 0,
+    achReady,
+    total: dailyReady + achReady,
+    readyQuestIds: [],
   };
 }
 
@@ -2190,16 +2201,6 @@ export function computeDailyAndOfflineChecks(
   const currentWeek = weekKeyFor(nowMs);
   let changed = false;
 
-  if (working.questDay !== todayKey) {
-    working = {
-      ...working,
-      questDay: todayKey,
-      questIds: selectDailyQuestIds(todayKey),
-      claimed: {},
-    };
-    changed = true;
-  }
-
   if (working.weeklyDay !== currentWeek) {
     working = {
       ...working,
@@ -2328,4 +2329,6 @@ export {
   POLICY_BOUNDS,
 };
 
+export * from './cosmetics';
+export * from './rewards';
 export { TZ };

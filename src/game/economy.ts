@@ -26,6 +26,7 @@ import {
   EV_SLOT_MS,
   LEGACY_BUILDING_MIGRATION_MAP,
 } from './constants';
+import { getDiamondAssetBonuses } from './cosmetics';
 import type {
   BoosterDef,
   BoosterId,
@@ -1266,10 +1267,12 @@ export function computeEconomySnapshot(
         (b.trade_center || 0) * 0.035 +
         (b.convention_center || 0) * 0.03,
     );
+  const assetBonuses = getDiamondAssetBonuses(s);
   if (pInd === 1) baseTradeExportBonus += 0.1;
   if (pAgr === 2) baseTradeExportBonus += 0.12;
   if (pTrd === 1) baseTradeExportBonus += 0.16;
   if (pTrd === 2) baseTradeExportBonus -= 0.08;
+  baseTradeExportBonus += assetBonuses.tradeBonus;
   baseTradeExportBonus = Math.max(-0.08, Math.min(0.85, baseTradeExportBonus));
   const tradeExportBonus = Math.max(
     -0.08,
@@ -1336,7 +1339,8 @@ export function computeEconomySnapshot(
     evMult *
     gov.inc *
     subMult *
-    getTechIncomeMult(s);
+    getTechIncomeMult(s) *
+    assetBonuses.incomeMult;
 
   const totalMult = macroMult * prodMult;
   const buildingGross = baseGross * totalMult;

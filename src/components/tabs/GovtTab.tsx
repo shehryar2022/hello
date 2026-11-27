@@ -655,7 +655,7 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
                           {dec.apprDelta > 0 ? `+${dec.apprDelta}` : dec.apprDelta}% Appr
                         </span>
                       )}
-                      {dec.gemsDelta && <span style={{ color: 'var(--gold)' }}>+{dec.gemsDelta} Gems</span>}
+                      {dec.gemsDelta && <span style={{ color: 'var(--gold)' }}>+{dec.gemsDelta} Diamonds</span>}
                     </div>
                   </div>
                   <button
