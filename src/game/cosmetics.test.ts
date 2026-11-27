@@ -14,13 +14,24 @@ import {
   applyEquipCosmetic,
   applySelectTheme,
   canBuyCosmeticItem,
+  filterAndSortCosmetics,
+  formatCoinPrice,
+  formatCombinedPrice,
+  formatDiamondPrice,
   getActiveThemeId,
+  getAvailableExclusiveCount,
   getBundlePurchaseQuote,
+  getBundleValueSummary,
+  getCosmeticCategoryCounts,
+  getCosmeticDef,
   getDiamondAssetBonuses,
   getEquippedCosmetics,
+  hasActivePreview,
   isCosmeticOwned,
   isThemeOwned,
+  resolveEffectiveCosmeticPreview,
   sanitizeCosmeticIdField,
+  toggleItemInPreviewLoadout,
 } from './cosmetics';
 import {
   ALLOWED_SAVE_KEYS,
@@ -188,3 +199,67 @@ test('sanitizeCosmeticIdField rejects tampered or oversized cosmetic IDs', () =>
   assert.equal(sanitizeCosmeticIdField('A'.repeat(40)), '');
   assert.equal(sanitizeCosmeticIdField(12345), '');
 });
+
+test('Multi-cosmetic preview stacking composes compatible slots without mutating inventory', () => {
+  const s = freshState();
+  s.gems = 40;
+  const frameItem = getCosmeticDef('frame_neon')!;
+  const nameItem = getCosmeticDef('nfx_rainbow')!;
+  const themeItem = getCosmeticDef('theme_cyber_neon')!;
+  const landmarkItem = getCosmeticDef('asset_aurora_obelisk')!;
+
+  let loadout = toggleItemInPreviewLoadout({}, frameItem);
+  loadout = toggleItemInPreviewLoadout(loadout, nameItem);
+  loadout = toggleItemInPreviewLoadout(loadout, themeItem);
+  loadout = toggleItemInPreviewLoadout(loadout, landmarkItem);
+
+  assert.equal(hasActivePreview(loadout), true);
+  const resolved = resolveEffectiveCosmeticPreview(s, loadout);
+  assert.equal(resolved.frame, 'frame_neon');
+  assert.equal(resolved.nameEffect, 'nfx_rainbow');
+  assert.equal(resolved.themeId, 'cyber_neon');
+  assert.equal(resolved.landmarkId, 'asset_aurora_obelisk');
+  assert.equal(resolved.previewCount, 4);
+
+  // Toggling an already previewed item removes only that slot cleanly
+  loadout = toggleItemInPreviewLoadout(loadout, nameItem);
+  const afterToggle = resolveEffectiveCosmeticPreview(s, loadout);
+  assert.equal(afterToggle.nameEffect, undefined);
+  assert.equal(afterToggle.frame, 'frame_neon');
+
+  // Reset leaves player inventory untouched
+  assert.equal((s.cos || []).length, 0);
+  assert.equal(getEquippedCosmetics(s).frame, undefined);
+});
+
+test('Marketplace filters, sorting, category counts, bundle math, and coin formatting match exact specs', () => {
+  const s = freshState();
+  s.rank = 2;
+  s.gems = 50;
+
+  const counts = getCosmeticCategoryCounts();
+  assert.equal(counts.all, 42);
+  assert.equal(counts.bundle, 4);
+  assert.equal(counts.diamond_asset, 4);
+  assert.equal(getAvailableExclusiveCount(s), 41); // midnight_galaxy default owned
+
+  const asc = filterAndSortCosmetics(s, ALL_COSMETIC_ITEMS, { sortBy: 'price_asc', ownership: 'unowned' });
+  assert.ok(asc.length > 0);
+  for (let i = 1; i < asc.length; i += 1) {
+    assert.ok(asc[i].diamondsCost >= asc[i - 1].diamondsCost);
+  }
+
+  const dualLandmarks = filterAndSortCosmetics(s, DIAMOND_ASSETS, { price: 'dual_currency', ownership: 'available' });
+  assert.ok(dualLandmarks.every((x) => (x.coinsCost || 0) > 0 && (!x.reqRank || x.reqRank <= s.rank)));
+
+  const cyberBundle = getBundleValueSummary(s, 'bundle_cyber_horizon');
+  assert.equal(cyberBundle.individualDiamondsTotal, 12 + 18 + 16 + 20);
+  assert.equal(cyberBundle.savedDiamonds, 66 - 46);
+  assert.equal(cyberBundle.savingsPct, Math.round((20 / 66) * 100));
+
+  assert.equal(formatDiamondPrice(26), '26 Diamonds');
+  assert.equal(formatCoinPrice(250_000), '250K Coins');
+  assert.equal(formatCombinedPrice(26, 120_000), '26 Diamonds + 120K Coins');
+  assert.equal(formatCoinPrice(120_000).includes('₨'), false);
+});
+

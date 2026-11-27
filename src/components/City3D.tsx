@@ -55,6 +55,8 @@ export interface City3DProps {
   serverOffsetMs?: number;
   selectedBuildingId: string | null;
   focusRequest?: { id: string; seq: number } | null;
+  previewLandmarkId?: string | null;
+  landmarkFocusRequest?: { id: string; seq: number } | null;
   onSelectBuilding: (id: string | null) => void;
   onBuyBuilding: (id: string, qty: 1 | 5) => void;
   onUpgradeBuilding: (id: string) => void;
@@ -78,6 +80,8 @@ const City3DInner: React.FC<City3DProps> = ({
   serverOffsetMs = 0,
   selectedBuildingId,
   focusRequest,
+  previewLandmarkId = null,
+  landmarkFocusRequest,
   onSelectBuilding,
   onBuyBuilding,
   onUpgradeBuilding,
@@ -167,16 +171,16 @@ const City3DInner: React.FC<City3DProps> = ({
       .filter((id) => id.startsWith('asset_'))
       .sort()
       .join(',');
-    return `${bEntries}|${lvlEntries}|${queueIds}|${ownedAssets}|${state.cityTimeMode || 'auto'}|${state.cityWeather || 'clear'}`;
-  }, [state.b, state.gx?.lvl, state.milestones, state.cos, state.cityTimeMode, state.cityWeather]);
+    return `${bEntries}|${lvlEntries}|${queueIds}|${ownedAssets}|${previewLandmarkId || ''}|${state.cityTimeMode || 'auto'}|${state.cityWeather || 'clear'}`;
+  }, [state.b, state.gx?.lvl, state.milestones, state.cos, previewLandmarkId, state.cityTimeMode, state.cityWeather]);
 
   const latestStateRef = useRef(state);
   latestStateRef.current = state;
 
   // Push game state changes imperatively into 3D scene only when visual 3D state changes
   useEffect(() => {
-    engineRef.current?.syncState(latestStateRef.current, serverOffsetMs);
-  }, [citySyncSignature, serverOffsetMs]);
+    engineRef.current?.syncState(latestStateRef.current, serverOffsetMs, previewLandmarkId);
+  }, [citySyncSignature, serverOffsetMs, previewLandmarkId]);
 
   useEffect(() => {
     engineRef.current?.applyGraphicsSettings(graphics);
@@ -197,6 +201,12 @@ const City3DInner: React.FC<City3DProps> = ({
       engineRef.current?.focusBuilding(focusRequest.id);
     }
   }, [focusRequest]);
+
+  useEffect(() => {
+    if (landmarkFocusRequest?.id) {
+      engineRef.current?.focusDiamondLandmark(landmarkFocusRequest.id);
+    }
+  }, [landmarkFocusRequest]);
 
   const nowMs = (state.t || Date.now()) + serverOffsetMs;
   const builtTotal = totalBuildings(state);

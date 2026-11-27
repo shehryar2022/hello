@@ -66,17 +66,6 @@ export function rewardsDayKey(nowMs = Date.now()): string {
   return KARACHI_YMD.format(new Date(safe));
 }
 
-export function rewardsWeekKey(nowMs = Date.now()): string {
-  const ymd = rewardsDayKey(nowMs);
-  const [y, m, d] = ymd.split('-').map(Number);
-  const utcDate = new Date(Date.UTC(y, m - 1, d));
-  const dayNum = utcDate.getUTCDay() || 7;
-  utcDate.setUTCDate(utcDate.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(utcDate.getUTCFullYear(), 0, 1));
-  const weekNo = Math.ceil((((utcDate.getTime() - yearStart.getTime()) / 86_400_000) + 1) / 7);
-  return `${utcDate.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
-}
-
 function getKarachiParts(nowMs: number) {
   const safe = Number.isFinite(nowMs) ? nowMs : Date.now();
   const parts = KARACHI_YMD_HMS.formatToParts(new Date(safe));

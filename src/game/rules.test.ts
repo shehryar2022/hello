@@ -22,7 +22,6 @@ import {
   applyBuyRank,
   applyBuySubscription,
   applyChangeGov,
-  applyClaimQuest,
   applyCollectTax,
   applyCommitFiscalReform,
   applyFixInfra,
@@ -63,12 +62,10 @@ import {
   migrateState,
   MILESTONES,
   presetToFiscalDraft,
-  QUEST_POOL,
   resolveExecutiveDecision,
   rollTradePortExport,
   rollWeeklySubPromo,
   sanitizeStats,
-  selectDailyQuestIds,
   shouldRunOfflineEntryCheck,
   targetHappiness,
   taxInfo,
@@ -283,12 +280,6 @@ test('fiscal reform drafts, milestones, target happiness, and daily quests', () 
   assert.equal(msRes.ok, true);
   assert.equal(msRes.gemsAdded, MILESTONES[0].r);
   assert.equal(claimMilestone(msRes.state, MILESTONES[0].id).ok, false);
-
-  const q1 = selectDailyQuestIds('Wed Nov 25 2026');
-  const q2 = selectDailyQuestIds('Wed Nov 25 2026');
-  assert.deepEqual(q1, q2);
-  assert.equal(q1.length, 3);
-  assert.equal(new Set(q1).size, 3);
 
   const stats = sanitizeStats({ buildings: 4 });
   assert.deepEqual(Object.keys(stats).sort(), [
@@ -820,30 +811,6 @@ test('atomic gameplay updaters prevent double-click double-spend, double-collect
   assert.equal(gov1.state.gov, 'tech');
   assert.equal(applyChangeGov(gov1.state, 'wlf', now + 1000).ok, false);
 
-  const todayKey = '2026-11-26';
-  const qIds = selectDailyQuestIds(todayKey);
-  const firstQuest = QUEST_POOL[qIds[0]];
-  const qState = freshState();
-  qState.questDay = todayKey;
-  qState.questIds = qIds;
-  qState.cash = 1_000_000_000;
-  qState.gems = 50;
-  for (const k of Object.keys(qState.b)) {
-    qState.b[k] = 5;
-  }
-  qState.hap = 100;
-  qState.appr = 95;
-  qState.pop = 500;
-  qState.fused = 20;
-  qState.streak = 20;
-  qState.rank = 10;
-  qState.boosterCd = { ba_prod_boost: 1, ba_income_boost: 1, ba_emp_boost: 1 };
-  qState.stk = Object.fromEntries(STICKERS.slice(0, 22).map((st) => [st.id, 1]));
-  const qc1 = applyClaimQuest(qState, firstQuest.id, todayKey, 1);
-  assert.equal(qc1.ok, true);
-  assert.equal(qc1.gemsAdded, firstQuest.r);
-  assert.equal(applyClaimQuest(qc1.state, firstQuest.id, todayKey, 1).ok, false);
-
   const sanitized = migrateState({
     fused: -5,
     gx: {
@@ -1098,26 +1065,6 @@ test('NaN or non-finite cash and gems cannot bypass purchase guards', () => {
   assert.equal(resolveExecutiveDecision(nanCashState, 'tech_expo', 0, 0, now).ok, false);
   assert.equal(buyStickerCrate(nanCashState, 'cash', now).ok, false);
   assert.equal(buyStickerCrate(nanCashState, 'gems', now).ok, false);
-});
-
-test('rotateDailyQuestsIfNeeded rolls quests & resets claims on new Asia/Karachi day without mid-day reset', async () => {
-  const { rotateDailyQuestsIfNeeded, dayKeyFor } = await import('./rules');
-  const day1 = Date.UTC(2026, 10, 26, 10, 0, 0);
-  const key1 = dayKeyFor(day1);
-  const s1 = freshState();
-  s1.questDay = key1;
-  s1.questIds = selectDailyQuestIds(key1);
-  s1.claimed = { 0: 1, 1: 1 };
-
-  const sameDay = rotateDailyQuestsIfNeeded(s1, day1 + 60_000);
-  assert.equal(sameDay, s1);
-  assert.deepEqual(sameDay.claimed, { 0: 1, 1: 1 });
-
-  const nextDay = rotateDailyQuestsIfNeeded(s1, day1 + 86_400_000);
-  assert.notEqual(nextDay, s1);
-  assert.equal(nextDay.questDay, dayKeyFor(day1 + 86_400_000));
-  assert.deepEqual(nextDay.claimed, {});
-  assert.equal(nextDay.questIds.length, 3);
 });
 
 test('reward claim functions preserve finite cash & gems even if pre-existing wallet field was NaN', () => {

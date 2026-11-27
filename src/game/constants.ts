@@ -2351,6 +2351,6 @@ export const TAB_META: Record<
   rivals: { emoji: '📢', label: 'Players', subtitle: 'Live GDP rankings & diplomacy' },
   stickers: { emoji: '🪪', label: 'Stickers', subtitle: 'Collect, fuse, crates & gift' },
   trade: { emoji: '💱', label: 'Gifts', subtitle: 'Send and receive gifts' },
-  quest: { emoji: '🎁', label: 'Rewards', subtitle: 'Daily rewards, weekly milestones & quests' },
+  quest: { emoji: '🎁', label: 'Rewards', subtitle: 'Daily rewards, weekly missions & achievements' },
   shop: { emoji: '💎', label: 'Shop', subtitle: 'Regular Coin wing & Diamond Exclusives' },
 };

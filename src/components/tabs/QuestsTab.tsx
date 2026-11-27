@@ -4,13 +4,10 @@ import { RewardsDashboard } from '../rewards/RewardsDashboard';
 
 interface QuestsTabProps {
   state: GameState;
-  dayKey: string;
   weekKey: string;
   rankPosition: number;
   serverOffsetMs?: number;
   onClaimDailySlot?: (e: React.MouseEvent<HTMLButtonElement>) => void;
-  onClaimWeeklyMilestone?: (milestoneId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
-  onClaimQuest: (questId: string, rewardGems: number, e: React.MouseEvent<HTMLButtonElement>) => void;
   onClaimWeekly?: (missionId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
   onClaimAchievement?: (achievementId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
   onClaimMilestone: (milestoneId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
@@ -18,13 +15,10 @@ interface QuestsTabProps {
 
 export const QuestsTab: React.FC<QuestsTabProps> = memo(({
   state,
-  dayKey,
   weekKey,
   rankPosition,
   serverOffsetMs = 0,
   onClaimDailySlot,
-  onClaimWeeklyMilestone,
-  onClaimQuest,
   onClaimWeekly,
   onClaimAchievement,
   onClaimMilestone,
@@ -32,13 +26,10 @@ export const QuestsTab: React.FC<QuestsTabProps> = memo(({
   return (
     <RewardsDashboard
       state={state}
-      dayKey={dayKey}
       weekKey={weekKey}
       rankPosition={rankPosition}
       serverOffsetMs={serverOffsetMs}
       onClaimDailySlot={onClaimDailySlot}
-      onClaimWeeklyMilestone={onClaimWeeklyMilestone}
-      onClaimQuest={onClaimQuest}
       onClaimWeekly={onClaimWeekly}
       onClaimAchievement={onClaimAchievement}
       onClaimMilestone={onClaimMilestone}
@@ -46,13 +37,10 @@ export const QuestsTab: React.FC<QuestsTabProps> = memo(({
   );
 }, (prev, next) => {
   if (
-    prev.dayKey !== next.dayKey ||
     prev.weekKey !== next.weekKey ||
     prev.rankPosition !== next.rankPosition ||
     prev.serverOffsetMs !== next.serverOffsetMs ||
     prev.onClaimDailySlot !== next.onClaimDailySlot ||
-    prev.onClaimWeeklyMilestone !== next.onClaimWeeklyMilestone ||
-    prev.onClaimQuest !== next.onClaimQuest ||
     prev.onClaimWeekly !== next.onClaimWeekly ||
     prev.onClaimAchievement !== next.onClaimAchievement ||
     prev.onClaimMilestone !== next.onClaimMilestone
@@ -65,13 +53,6 @@ export const QuestsTab: React.FC<QuestsTabProps> = memo(({
     p.dSlot === n.dSlot &&
     p.dLastDay === n.dLastDay &&
     p.dHist === n.dHist &&
-    p.wMilDay === n.wMilDay &&
-    p.wMilClaim === n.wMilClaim &&
-    p.wHist === n.wHist &&
-    p.qHist === n.qHist &&
-    p.questDay === n.questDay &&
-    p.questIds === n.questIds &&
-    p.claimed === n.claimed &&
     p.weeklyDay === n.weeklyDay &&
     p.weeklyClaimed === n.weeklyClaimed &&
     p.achievements === n.achievements &&

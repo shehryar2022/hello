@@ -161,8 +161,6 @@ import {
   applyChangePolicyStance,
   applyClaimAchievement,
   applyClaimDailySlot,
-  applyClaimQuest,
-  applyClaimWeeklyMilestone,
   applyClaimWeeklyMission,
   applyCollectTax,
   applyCommitFiscalReform,
@@ -185,6 +183,7 @@ import {
   claimSubscriptionDaily,
   cleanStickersMap,
   computeDailyAndOfflineChecks,
+  formatCoinsCompact,
   formatNumber,
   freshState,
   fuseSticker,
@@ -195,23 +194,22 @@ import {
   getExecDecisionQuote,
   getInfraDecayMult,
   getProjectSpeedMult,
-  getQuestCoinReward,
   getSubscriptionPrice,
   getTaxPoolCapSeconds,
   getUnclaimedRewardsSummary,
   migrateState,
   playerLevel,
-  QUEST_POOL,
+  resolveEffectiveCosmeticPreview,
   resolveExecutiveDecision,
   rollWeeklySubPromo,
-  rotateDailyQuestsIfNeeded,
   sanitizeCosmeticIdField,
-  selectDailyQuestIds,
   shouldRunOfflineEntryCheck,
   targetHappiness,
   tickConstructionQueue,
   tierOfCompletedTrades,
+  toggleItemInPreviewLoadout,
   weekKeyFor,
+  type CosmeticPreviewLoadout,
   type DailyOfflineCheckResult,
 } from './game/rules';
 import {
@@ -234,6 +232,7 @@ import type {
   CityWeatherMode,
   CosmeticItemDef,
   CountryTuple,
+  DiamondAssetDef,
   DmRecipient,
   EquippedCosmetics,
   GameState,
@@ -442,16 +441,10 @@ export default function App() {
   const authBusyRef = useRef<boolean>(false);
   const walletRevRef = useRef<number>(0);
   const expectedWalletRevRef = useRef<number | null>(null);
-  const [previewCosmeticId, setPreviewCosmeticId] = useState<string | null>(null);
-  const [previewThemeId, setPreviewThemeId] = useState<GameThemeId | null>(null);
+  const [previewLoadout, setPreviewLoadout] = useState<CosmeticPreviewLoadout>({});
+  const [landmarkFocusRequest, setLandmarkFocusRequest] = useState<{ id: string; seq: number } | null>(null);
+  const landmarkFocusSeqRef = useRef(0);
   const [unlockModal, setUnlockModal] = useState<UnlockCelebrationInfo | null>(null);
-  const [questBanner, setQuestBanner] = useState<{
-    questId: string;
-    title: string;
-    coins: number;
-    diamonds: number;
-  } | null>(null);
-  const notifiedReadyQuestsRef = useRef<Set<string>>(new Set());
 
   const [serverOffsetMs, setServerOffsetMs] = useState(0);
   const serverOffsetMsRef = useRef<number>(0);
@@ -712,15 +705,21 @@ export default function App() {
     return () => document.body.classList.remove('update-locked');
   }, [updateAvailable]);
 
-  const activeThemeId = previewThemeId || getActiveThemeId(state);
+  const activeThemeId = previewLoadout.themeId || getActiveThemeId(state);
   useEffect(() => {
     document.documentElement.dataset.theme = activeThemeId;
   }, [activeThemeId]);
 
   useEffect(() => {
     if (tab !== 'shop' || shopSubTab !== 'diamond') {
-      setPreviewCosmeticId(null);
-      setPreviewThemeId(null);
+      setPreviewLoadout((prev) => {
+        if (tab === 'build' && prev.landmarkId) {
+          return prev.frame || prev.nameEffect || prev.badge || prev.anim || prev.themeId
+            ? { landmarkId: prev.landmarkId, focusItemId: prev.landmarkId }
+            : prev;
+        }
+        return {};
+      });
     }
   }, [tab, shopSubTab]);
 
@@ -2251,26 +2250,23 @@ export default function App() {
         const clearedSub =
           prev.sub?.tier && prev.sub?.exp && prev.sub.exp <= nowSrv ? {} : prev.sub;
 
-        const nextNational: GameState = rotateDailyQuestsIfNeeded(
-          {
-            ...prev,
-            cash: nextCash,
-            taxPool: nextTaxPool,
-            day: nextDay,
-            hap: nextHap,
-            appr: nextAppr,
-            pop: nextPop,
-            boost: Math.max(0, (prev.boost || 0) - 1),
-            ev: nextEv,
-            hist: nextHist,
-            activeFx: nextActiveFx,
-            gx: nextGx,
-            sub: clearedSub,
-            subPromo: nextSubPromo,
-            t: now,
-          },
-          nowSrv,
-        );
+        const nextNational: GameState = {
+          ...prev,
+          cash: nextCash,
+          taxPool: nextTaxPool,
+          day: nextDay,
+          hap: nextHap,
+          appr: nextAppr,
+          pop: nextPop,
+          boost: Math.max(0, (prev.boost || 0) - 1),
+          ev: nextEv,
+          hist: nextHist,
+          activeFx: nextActiveFx,
+          gx: nextGx,
+          sub: clearedSub,
+          subPromo: nextSubPromo,
+          t: now,
+        };
 
         return tickConstructionQueue(nextNational, nowSrv).state;
       });
@@ -3122,38 +3118,6 @@ export default function App() {
     [addToast, isGameplayBlocked, spawnFloat, saveLocal, scheduleCloudSync],
   );
 
-  const handleClaimQuest = useCallback(
-    (questId: string, _rewardGems: number, e?: React.MouseEvent<HTMLButtonElement>) => {
-      if (isGameplayBlocked()) return;
-      const today = dayKeyFor(Date.now() + serverOffsetMsRef.current);
-      const rankPos = rankPositionRef.current;
-      const res = applyClaimQuest(stateRef.current, questId, today, rankPos);
-      if (!res.ok) return;
-
-      stateRef.current = res.state;
-      saveLocal(res.state);
-      playSfx('win', !!res.state.set.sfx);
-      triggerBuzz(16, !!res.state.set.vib);
-      const rect = e?.currentTarget?.getBoundingClientRect();
-      spawnFloat(
-        `+₨ ${formatNumber(res.cashAdded)} · +${res.gemsAdded} 💎`,
-        rect ? rect.left + rect.width / 2 : window.innerWidth / 2,
-        rect ? rect.top : 160,
-        '#5ccbff',
-      );
-      setState((prev) => {
-        const recheck = applyClaimQuest(prev, questId, today, rankPos);
-        return recheck.ok ? recheck.state : prev;
-      });
-      setQuestBanner((prev) => (prev?.questId === questId ? null : prev));
-      addToast(
-        `${res.quest?.t || 'Quest'} claimed! +₨ ${formatNumber(res.cashAdded)} & +${res.gemsAdded} Diamonds`,
-      );
-      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
-    },
-    [addToast, isGameplayBlocked, spawnFloat, saveLocal, scheduleCloudSync],
-  );
-
   const handleClaimDailySlot = useCallback(
     (e: React.MouseEvent<HTMLButtonElement>) => {
       if (isGameplayBlocked()) return;
@@ -3181,37 +3145,9 @@ export default function App() {
       });
       scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       addToast(
-        `Day ${res.slot.day} claimed! +₨ ${formatNumber(res.coinsAdded)} & +${res.diamondsAdded} Diamonds${
+        `Day ${res.slot.day} claimed! +${formatCoinsCompact(res.coinsAdded)} Coins & +${res.diamondsAdded} Diamonds${
           res.sticker ? ` · ${res.sticker.n}` : ''
         }`,
-      );
-    },
-    [addToast, isGameplayBlocked, saveLocal, scheduleCloudSync, spawnFloat],
-  );
-
-  const handleClaimWeeklyMilestone = useCallback(
-    (milestoneId: string, e: React.MouseEvent<HTMLButtonElement>) => {
-      if (isGameplayBlocked()) return;
-      const nowSrv = Date.now() + serverOffsetMsRef.current;
-      const rankPos = rankPositionRef.current;
-      const res = applyClaimWeeklyMilestone(stateRef.current, milestoneId, nowSrv, rankPos);
-      if (!res.ok || !res.item) {
-        if (res.reason) addToast(res.reason);
-        return;
-      }
-      stateRef.current = res.state;
-      saveLocal(res.state);
-      playSfx('win', !!res.state.set.sfx);
-      triggerBuzz(18, !!res.state.set.vib);
-      const rect = e.currentTarget.getBoundingClientRect();
-      spawnFloat(`+${res.diamondsAdded} Diamonds`, rect.left + rect.width / 2, rect.top, '#a88bff');
-      setState((prev) => {
-        const recheck = applyClaimWeeklyMilestone(prev, milestoneId, nowSrv, rankPos);
-        return recheck.ok ? recheck.state : prev;
-      });
-      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
-      addToast(
-        `${res.item.title} claimed! +₨ ${formatNumber(res.coinsAdded)} & +${res.diamondsAdded} Diamonds`,
       );
     },
     [addToast, isGameplayBlocked, saveLocal, scheduleCloudSync, spawnFloat],
@@ -3231,24 +3167,43 @@ export default function App() {
     );
   }, []);
 
-  const handlePreviewCosmetic = useCallback((item: CosmeticItemDef | null) => {
-    if (!item) {
-      setPreviewCosmeticId(null);
-      setPreviewThemeId(null);
-      return;
-    }
-    setPreviewCosmeticId((prev) => (prev === item.id ? null : item.id));
-    if (item.category === 'theme' && item.themeId) {
-      setPreviewThemeId((prev) => (prev === item.themeId ? null : item.themeId!));
-    } else {
-      setPreviewThemeId(null);
-    }
+  const handleTogglePreviewCosmetic = useCallback((item: CosmeticItemDef) => {
+    setPreviewLoadout((prev) => toggleItemInPreviewLoadout(prev, item));
   }, []);
 
   const handleCancelCosmeticPreview = useCallback(() => {
-    setPreviewCosmeticId(null);
-    setPreviewThemeId(null);
+    setPreviewLoadout({});
   }, []);
+
+  const handleResetCosmeticPreview = useCallback(() => {
+    setPreviewLoadout({});
+    if (isGameplayBlocked()) return;
+    const nextState: GameState = {
+      ...stateRef.current,
+      cosEq: {},
+      theme: 'midnight_galaxy',
+    };
+    stateRef.current = nextState;
+    saveLocal(nextState);
+    syncLocalPubCosmetics(nextState);
+    setState((prev) => ({ ...prev, cosEq: {}, theme: 'midnight_galaxy' }));
+    scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+    addToast('Identity & theme reset to Default (Midnight Galaxy).');
+  }, [addToast, isGameplayBlocked, saveLocal, scheduleCloudSync, syncLocalPubCosmetics]);
+
+  const handlePreviewLandmarkInCity = useCallback((asset: DiamondAssetDef) => {
+    setPreviewLoadout((prev) => ({
+      ...prev,
+      landmarkId: asset.id,
+      focusItemId: asset.id,
+    }));
+    landmarkFocusSeqRef.current += 1;
+    setLandmarkFocusRequest({ id: asset.id, seq: landmarkFocusSeqRef.current });
+    if (window.innerWidth < 1024) {
+      setTab('build');
+    }
+    addToast(`Previewing ${asset.name} in your 3D Capital!`);
+  }, [addToast]);
 
   const handleBuyCosmeticItem = useCallback(
     (itemId: string) => {
@@ -3267,8 +3222,17 @@ export default function App() {
         const recheck = applyBuyCosmeticItem(prev, itemId, true);
         return recheck.ok ? recheck.state : prev;
       });
-      setPreviewCosmeticId(null);
-      setPreviewThemeId(null);
+      setPreviewLoadout((prev) => {
+        const next = { ...prev };
+        if (res.item?.category === 'profile_effect') delete next.frame;
+        if (res.item?.category === 'name_effect') delete next.nameEffect;
+        if (res.item?.category === 'badge') delete next.badge;
+        if (res.item?.category === 'animation') delete next.anim;
+        if (res.item?.category === 'theme') delete next.themeId;
+        if (res.item?.category === 'diamond_asset') delete next.landmarkId;
+        if (next.focusItemId === itemId) delete next.focusItemId;
+        return next;
+      });
       scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       setUnlockModal({
         title: res.item.name,
@@ -3299,8 +3263,7 @@ export default function App() {
         const recheck = applyBuyCosmeticBundle(prev, bundleId, true);
         return recheck.ok ? recheck.state : prev;
       });
-      setPreviewCosmeticId(null);
-      setPreviewThemeId(null);
+      setPreviewLoadout({});
       scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       setUnlockModal({
         title: res.bundle.name,
@@ -3330,7 +3293,11 @@ export default function App() {
         const recheck = applyEquipCosmetic(prev, slot, itemId);
         return recheck.ok ? recheck.state : prev;
       });
-      setPreviewCosmeticId(null);
+      setPreviewLoadout((prev) => {
+        const next = { ...prev };
+        delete next[slot];
+        return next;
+      });
       scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       if (itemId) {
         const def = getCosmeticDef(itemId);
@@ -3357,8 +3324,11 @@ export default function App() {
         const recheck = applySelectTheme(prev, themeId);
         return recheck.ok ? recheck.state : prev;
       });
-      setPreviewCosmeticId(null);
-      setPreviewThemeId(null);
+      setPreviewLoadout((prev) => {
+        const next = { ...prev };
+        delete next.themeId;
+        return next;
+      });
       scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       addToast('Theme updated!');
     },
@@ -3593,7 +3563,7 @@ export default function App() {
             <p style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: 16, color: '#ffe082' }}>
               <span>Price:</span>
               <CashCoinIcon size={16} />
-              <b>₨ {formatNumber(price.finalCost)} Coins</b>
+              <b>{formatNumber(price.finalCost)} Coins</b>
               {price.promoActive && (
                 <span className="dim" style={{ fontSize: 12 }}>
                   (−{price.discountPct}% Weekly Deal)
@@ -3601,13 +3571,13 @@ export default function App() {
               )}
             </p>
             <p className="dim" style={{ fontSize: 13 }}>
-              Balance: ₨ {formatNumber(currentCash)} → ₨ {formatNumber(afterCash)} Coins
+              Balance: {formatNumber(currentCash)} → {formatNumber(afterCash)} Coins
             </p>
           </div>
         ),
         actions: [
           {
-            label: `Confirm (₨ ${formatNumber(price.finalCost)})`,
+            label: `Confirm (${formatCoinsCompact(price.finalCost)} Coins)`,
             variant: 'gold',
             onClick: () => {
               if (confirmed || subBuyBusyRef.current) return;
@@ -3627,7 +3597,7 @@ export default function App() {
                 triggerBuzz(20, !!res.state.set.vib);
                 const paidCost = res.paidCost ?? price.finalCost;
                 spawnFloat(
-                  `−₨ ${formatNumber(paidCost)}`,
+                  `−${formatCoinsCompact(paidCost)} Coins`,
                   anchorRect.left + anchorRect.width / 2,
                   anchorRect.top,
                   '#ffc23d',
@@ -3644,7 +3614,7 @@ export default function App() {
                   scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
                 }
                 addToast(
-                  `${subDef.n} (${subDef.durationLabel}) activated for ₨ ${formatNumber(paidCost)} Coins!`,
+                  `${subDef.n} (${subDef.durationLabel}) activated for ${formatCoinsCompact(paidCost)} Coins!`,
                 );
               } finally {
                 subBuyBusyRef.current = false;
@@ -3677,7 +3647,7 @@ export default function App() {
       triggerBuzz(16, !!res.state.set.vib);
       const rect = e.currentTarget.getBoundingClientRect();
       spawnFloat(
-        `+₨ ${formatNumber(res.cashAdded)}${res.gemsAdded > 0 ? ` +${res.gemsAdded} Diamonds` : ''}`,
+        `+${formatCoinsCompact(res.cashAdded)} Coins${res.gemsAdded > 0 ? ` +${res.gemsAdded} Diamonds` : ''}`,
         rect.left + rect.width / 2,
         rect.top,
         '#3fe0b0',
@@ -3688,7 +3658,7 @@ export default function App() {
       });
       scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       addToast(
-        `Subscription stipend: +₨ ${formatNumber(res.cashAdded)}${res.gemsAdded > 0 ? ` + ${res.gemsAdded} Diamonds` : ''}`,
+        `Charter stipend: +${formatCoinsCompact(res.cashAdded)} Coins${res.gemsAdded > 0 ? ` + ${res.gemsAdded} Diamonds` : ''}`,
       );
     },
     [addToast, isGameplayBlocked, spawnFloat, saveLocal, scheduleCloudSync],
@@ -4312,43 +4282,15 @@ export default function App() {
     [state, serverOffsetMs, rankPosition],
   );
 
-  useEffect(() => {
-    // Prune older day keys when day changes
-    const prefix = `${dayKey}:`;
-    for (const k of Array.from(notifiedReadyQuestsRef.current)) {
-      if (!k.startsWith(prefix)) notifiedReadyQuestsRef.current.delete(k);
-    }
-    if (gateOpen || anyModalOpen || tab === 'quest') return;
-    for (const qid of unclaimedSummary.readyQuestIds) {
-      const memKey = `${dayKey}:${qid}`;
-      if (!notifiedReadyQuestsRef.current.has(memKey)) {
-        notifiedReadyQuestsRef.current.add(memKey);
-        const qDef = QUEST_POOL.find((q) => q.id === qid);
-        if (qDef) {
-          setQuestBanner({
-            questId: qDef.id,
-            title: qDef.t,
-            coins: getQuestCoinReward(qDef),
-            diamonds: qDef.r,
-          });
-          playSfx('win', !!stateRef.current.set.sfx);
-          break;
-        }
-      }
-    }
-  }, [anyModalOpen, dayKey, gateOpen, tab, unclaimedSummary.readyQuestIds]);
-
   const equippedCosmetics = useMemo(() => getEquippedCosmetics(state), [state.cos, state.cosEq]);
-  const previewCosmeticDef = useMemo(
-    () => (previewCosmeticId ? getCosmeticDef(previewCosmeticId) : undefined),
-    [previewCosmeticId],
+  const effectiveCosmetics = useMemo(
+    () => resolveEffectiveCosmeticPreview(state, previewLoadout),
+    [state, previewLoadout],
   );
-  const previewFrameId =
-    previewCosmeticDef?.category === 'profile_effect' ? previewCosmeticDef.id : undefined;
-  const previewNameEffectId =
-    previewCosmeticDef?.category === 'name_effect' ? previewCosmeticDef.id : undefined;
-  const previewAnimId =
-    previewCosmeticDef?.category === 'animation' ? previewCosmeticDef.id : undefined;
+  const previewFrameId = previewLoadout.frame;
+  const previewNameEffectId = previewLoadout.nameEffect;
+  const previewAnimId = previewLoadout.anim;
+  const previewLandmarkId = effectiveCosmetics.landmarkId || null;
 
   // Mandatory Website Version Detection & Cross-Tab Update Lock
   useEffect(() => {
@@ -4618,6 +4560,8 @@ export default function App() {
             selectedBuildingId={selectedBuildingId}
             focusRequest={focusRequest}
             previewAnimId={previewAnimId}
+            previewLandmarkId={previewLandmarkId}
+            landmarkFocusRequest={landmarkFocusRequest}
             onCollectTax={handleCollectTax}
             onActivateGemBoost={handleActivateGemBoost}
             onSelectBuilding={handleSelectBuilding}
@@ -4734,13 +4678,10 @@ export default function App() {
             {tab === 'quest' && (
               <QuestsTab
                 state={state}
-                dayKey={dayKey}
                 weekKey={weekKey}
                 rankPosition={rankPosition}
                 serverOffsetMs={serverOffsetMs}
                 onClaimDailySlot={handleClaimDailySlot}
-                onClaimWeeklyMilestone={handleClaimWeeklyMilestone}
-                onClaimQuest={handleClaimQuest}
                 onClaimWeekly={handleClaimWeeklyMission}
                 onClaimAchievement={handleClaimAchievement}
                 onClaimMilestone={handleClaimMilestone}
@@ -4754,15 +4695,16 @@ export default function App() {
                 serverOffsetMs={serverOffsetMs}
                 username={pubProfile?.username || state.country[1] || 'Leader'}
                 countryCode={state.country[0]}
-                previewCosmeticId={previewCosmeticId}
-                previewThemeId={previewThemeId}
+                previewLoadout={previewLoadout}
                 onChangeSubTab={setShopSubTab}
                 onBuyRank={handleBuyRank}
                 onBuySubscription={handleBuySubscription}
                 onClaimSubDaily={handleClaimSubDaily}
                 onBuyBooster={handleBuyBooster}
-                onPreviewCosmetic={handlePreviewCosmetic}
+                onTogglePreviewCosmetic={handleTogglePreviewCosmetic}
                 onCancelCosmeticPreview={handleCancelCosmeticPreview}
+                onResetCosmeticPreview={handleResetCosmeticPreview}
+                onPreviewLandmarkInCity={handlePreviewLandmarkInCity}
                 onBuyCosmeticItem={handleBuyCosmeticItem}
                 onBuyCosmeticBundle={handleBuyCosmeticBundle}
                 onEquipCosmetic={handleEquipCosmetic}
@@ -4779,35 +4721,6 @@ export default function App() {
         unclaimedRewardsCount={unclaimedSummary.total}
         onSelectTab={setTab}
       />
-
-      {questBanner && !gateOpen && !anyModalOpen && (
-        <div className="quest-ready-banner" role="status" aria-live="polite" data-testid="quest-ready-banner">
-          <div className="qrb-ic" aria-hidden="true">
-            🏆
-          </div>
-          <div className="qrb-meta">
-            <b>Quest Completed: {questBanner.title}</b>
-            <small>
-              +₨ {formatNumber(questBanner.coins)} Coins &amp; +{questBanner.diamonds} Diamonds ready
-            </small>
-          </div>
-          <button
-            type="button"
-            className="btn gold sm"
-            onClick={(e) => handleClaimQuest(questBanner.questId, questBanner.diamonds, e)}
-          >
-            Claim
-          </button>
-          <button
-            type="button"
-            className="btn sm"
-            aria-label="Dismiss quest banner"
-            onClick={() => setQuestBanner(null)}
-          >
-            ✕
-          </button>
-        </div>
-      )}
 
       {appErrors.length > 0 && (
         <button

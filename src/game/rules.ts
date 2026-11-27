@@ -1578,7 +1578,6 @@ export function claimMilestone(
   };
 }
 
-// Daily Quests have been removed; keep national milestones & weekly strategic missions intact.
 
 export function sanitizeStats(
   raw: Partial<PlayerStats> | undefined,
@@ -2015,7 +2014,7 @@ export function applyChangeGov(
 export function getUnclaimedRewardsSummary(
   s: GameState,
   nowMs = Date.now(),
-  _rankPos = 999,
+  rankPos = 999,
 ): {
   dailyReady: number;
   weeklyReady: number;
@@ -2026,13 +2025,26 @@ export function getUnclaimedRewardsSummary(
 } {
   const dailyView = getDailyRewardsView(s, nowMs);
   const dailyReady = dailyView.canClaimToday ? 1 : 0;
+
+  const currentWeek = weekKeyFor(nowMs);
+  const weeklyIndices = selectWeeklyMissionIds(currentWeek);
+  const weeklyClaimed = s.weeklyDay === currentWeek ? s.weeklyClaimed || {} : {};
+  let weeklyMissionReady = 0;
+  for (const idx of weeklyIndices) {
+    const m = WEEKLY_MISSIONS[idx];
+    if (m && !weeklyClaimed[m.id] && m.f(s, { rank: rankPos }) >= m.g) {
+      weeklyMissionReady += 1;
+    }
+  }
+  const weeklyReady = weeklyMissionReady;
   const achReady = computeReadyAchievementCount(s);
+
   return {
     dailyReady,
-    weeklyReady: 0,
+    weeklyReady,
     questReady: 0,
     achReady,
-    total: dailyReady + achReady,
+    total: dailyReady + weeklyReady + achReady,
     readyQuestIds: [],
   };
 }

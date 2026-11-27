@@ -3,6 +3,7 @@ import { BOOSTERS, MAX_RANK, RANKS, SUBSCRIPTIONS } from '../../game/constants';
 import {
   canBuyBooster,
   canBuySubscription,
+  formatCoinsCompact,
   formatNumber,
   getActiveShopIncomeBooster,
   getActiveSubscription,
@@ -11,8 +12,17 @@ import {
   getRecommendedBoosters,
   getRecommendedShopItems,
   getSubscriptionPrice,
+  type CosmeticPreviewLoadout,
 } from '../../game/rules';
-import type { CosmeticItemDef, EquippedCosmetics, GameState, GameThemeId, ShopSubTab, SubscriptionTierId } from '../../game/types';
+import type {
+  CosmeticItemDef,
+  DiamondAssetDef,
+  EquippedCosmetics,
+  GameState,
+  GameThemeId,
+  ShopSubTab,
+  SubscriptionTierId,
+} from '../../game/types';
 import {
   Award,
   BoosterIcon,
@@ -58,15 +68,16 @@ interface ShopTabProps {
   serverOffsetMs?: number;
   username?: string;
   countryCode?: string;
-  previewCosmeticId?: string | null;
-  previewThemeId?: GameThemeId | null;
+  previewLoadout: CosmeticPreviewLoadout;
   onChangeSubTab: (sub: ShopSubTab) => void;
   onBuyRank: (rankId: number, e: React.MouseEvent<HTMLButtonElement>) => void;
   onBuySubscription: (tierId: SubscriptionTierId, e: React.MouseEvent<HTMLButtonElement>) => void;
   onClaimSubDaily: (e: React.MouseEvent<HTMLButtonElement>) => void;
   onBuyBooster: (boosterId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
-  onPreviewCosmetic?: (item: CosmeticItemDef | null) => void;
+  onTogglePreviewCosmetic?: (item: CosmeticItemDef) => void;
   onCancelCosmeticPreview?: () => void;
+  onResetCosmeticPreview?: () => void;
+  onPreviewLandmarkInCity?: (asset: DiamondAssetDef) => void;
   onBuyCosmeticItem?: (itemId: string) => void;
   onBuyCosmeticBundle?: (bundleId: string) => void;
   onEquipCosmetic?: (slot: keyof EquippedCosmetics, itemId: string | null) => void;
@@ -80,15 +91,16 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
   serverOffsetMs = 0,
   username = 'Governor',
   countryCode = 'PK',
-  previewCosmeticId = null,
-  previewThemeId = null,
+  previewLoadout,
   onChangeSubTab,
   onBuyRank,
   onBuySubscription,
   onClaimSubDaily,
   onBuyBooster,
-  onPreviewCosmetic,
+  onTogglePreviewCosmetic,
   onCancelCosmeticPreview,
+  onResetCosmeticPreview,
+  onPreviewLandmarkInCity,
   onBuyCosmeticItem,
   onBuyCosmeticBundle,
   onEquipCosmetic,
@@ -113,11 +125,36 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
     [activePromoSub, state, nowMs],
   );
 
+  const safeGems = Math.max(0, Math.floor(Number.isFinite(state.gems) ? state.gems : 0));
+  const safeCash = Math.max(0, Math.floor(Number.isFinite(state.cash) ? state.cash : 0));
   const isRegularWing = subTab !== 'diamond';
 
   return (
-    <div>
-      <div className="shop-wings" role="group" aria-label="Shop Wings">
+    <div className="store-shell" data-testid="shop-marketplace">
+      {/* Ref 1 Store Bar: STORE title + clean Coin & Diamond balance counters */}
+      <div className="store-topbar">
+        <div className="store-topbar-title">
+          <span className="store-wordmark">STORE</span>
+          <span className="store-wing-tag">
+            {isRegularWing ? 'Regular Coin Store' : 'Diamond Marketplace'}
+          </span>
+        </div>
+        <div className="store-balances">
+          <span className="store-bal-chip store-bal-chip--dia" title="Diamond Balance">
+            <GemDiamondIcon size={15} />
+            <b>{safeGems.toLocaleString('en-US')}</b>
+            <small>Diamonds</small>
+          </span>
+          <span className="store-bal-chip store-bal-chip--coin" title="Coin Balance">
+            <CashCoinIcon size={15} />
+            <b>{formatNumber(safeCash)}</b>
+            <small>Coins</small>
+          </span>
+        </div>
+      </div>
+
+      {/* 1. TWO-WING MAIN SHOP NAVIGATION */}
+      <div className="shop-wings" role="group" aria-label="Main Shop Navigation">
         <button
           type="button"
           className={`shop-wing-btn shop-wing-btn--coins ${isRegularWing ? 'on' : ''}`}
@@ -127,10 +164,10 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
           }}
         >
           <b>
-            <CashCoinIcon size={15} />
-            <span>Regular Shop — Coins</span>
+            <span aria-hidden="true">🪙</span>
+            <span>Regular Shop</span>
           </b>
-          <small>Ranks, Charters &amp; National Boosters</small>
+          <small>Ranks, Charters, National Boosters &amp; Economy Items</small>
         </button>
 
         <button
@@ -140,10 +177,10 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
           onClick={() => onChangeSubTab('diamond')}
         >
           <b>
-            <GemDiamondIcon size={15} />
+            <span aria-hidden="true">💎</span>
             <span>Diamond Exclusives</span>
           </b>
-          <small>Profile FX, Themes, Badges &amp; 3D Landmarks</small>
+          <small>Profile FX, Themes, Badges, Animations &amp; 3D Landmarks</small>
         </button>
       </div>
 
@@ -155,7 +192,7 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
           </button>
           <button type="button" className={subTab === 'sub' ? 'on' : ''} onClick={() => onChangeSubTab('sub')}>
             <Calendar size={14} />
-            <span>Subscriptions</span>
+            <span>Charters</span>
             {activePromoPrice?.promoActive && <em>−{activePromoPrice.discountPct}%</em>}
           </button>
           <button type="button" className={subTab === 'boost' ? 'on' : ''} onClick={() => onChangeSubTab('boost')}>
@@ -170,10 +207,11 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
           state={state}
           username={username}
           countryCode={countryCode}
-          previewItemId={previewCosmeticId}
-          previewThemeId={previewThemeId}
-          onPreviewItem={(item) => onPreviewCosmetic?.(item)}
+          previewLoadout={previewLoadout}
+          onTogglePreviewItem={(item) => onTogglePreviewCosmetic?.(item)}
           onCancelPreview={() => onCancelCosmeticPreview?.()}
+          onResetToDefault={() => onResetCosmeticPreview?.()}
+          onPreviewLandmarkInCity={(asset) => onPreviewLandmarkInCity?.(asset)}
           onBuyItem={(itemId) => onBuyCosmeticItem?.(itemId)}
           onBuyBundle={(bundleId) => onBuyCosmeticBundle?.(bundleId)}
           onEquipCosmetic={(slot, itemId) => onEquipCosmetic?.(slot, itemId)}
@@ -237,7 +275,7 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
                       <div className="rk-reqs">
                         <span className={`rk-req ${elig.missingGdp === 0 ? 'met' : 'miss'}`}>
                           {elig.missingGdp === 0 ? <CheckCircle2 size={11} /> : <span className="rk-dot" />}
-                          <span>GDP ₨ {formatNumber(r.minGdp)}</span>
+                          <span>GDP {formatNumber(r.minGdp)}</span>
                         </span>
                         <span className={`rk-req ${elig.missingBuildings === 0 ? 'met' : 'miss'}`}>
                           {elig.missingBuildings === 0 ? <CheckCircle2 size={11} /> : <span className="rk-dot" />}
@@ -270,7 +308,15 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
                       title={elig.reason}
                       onClick={(e) => onBuyRank(r.id, e)}
                     >
-                      {isNext ? `Promote · ₨ ${formatNumber(r.cost)}` : `Rank ${r.id - 1} req`}
+                      {isNext ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <span>Promote ·</span>
+                          <CashCoinIcon size={12} />
+                          <span>{formatCoinsCompact(r.cost)} Coins</span>
+                        </span>
+                      ) : (
+                        `Rank ${r.id - 1} req`
+                      )}
                     </button>
                   )}
                 </div>
@@ -295,11 +341,11 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
                 <span>Random weekly offer unlocked on <b>{activePromoSub.n}</b>:</span>
                 <span className="price-strike" style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
                   <CashCoinIcon size={12} />
-                  ₨ {formatNumber(activePromoPrice.baseCost)}
+                  {formatCoinsCompact(activePromoPrice.baseCost)} Coins
                 </span>
                 <b className="ok" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                   <CashCoinIcon size={13} />
-                  ₨ {formatNumber(activePromoPrice.finalCost)} Coins
+                  {formatCoinsCompact(activePromoPrice.finalCost)} Coins
                 </b>
               </p>
             </div>
@@ -309,15 +355,15 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
               <p style={{ display: 'flex', alignItems: 'center', gap: 6, margin: 0 }}>
                 <Calendar size={15} color="#5ccbff" />
-                <b>National Coin Subscriptions</b>
+                <b>National Coin Charters</b>
               </p>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12.5, fontWeight: 700, color: '#ffe082' }}>
                 <CashCoinIcon size={14} />
-                <span>₨ {formatNumber(Math.max(0, Math.floor(Number.isFinite(state.cash) ? state.cash : 0)))} Coins</span>
+                <span>{formatNumber(safeCash)} Coins</span>
               </span>
             </div>
             <p className="dim" style={{ marginTop: 4 }}>
-              Three Coin-funded national charters: 2 Hours (100K), 3 Days (1M), or 7 Days (10M Coins). No duplicate deductions or stacking exploits.
+              Three Coin-funded national charters: 2 Hours (100K Coins), 3 Days (1M Coins), or 7 Days (10M Coins). No duplicate deductions or stacking exploits.
             </p>
             {activeSub ? (
               <div style={{ marginTop: 8 }}>
@@ -340,7 +386,7 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
                       <>
                         <CashCoinIcon size={14} />
                         <span>
-                          {activeSub.def.id === 'daily' ? 'Claim Stipend' : 'Claim Daily'} (₨ {formatNumber(activeSub.def.dailyCash)}
+                          {activeSub.def.id === 'daily' ? 'Claim Stipend' : 'Claim Daily'} ({formatCoinsCompact(activeSub.def.dailyCash)} Coins
                         </span>
                         {activeSub.def.dailyGems > 0 && (
                           <>
@@ -361,7 +407,7 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
               </div>
             ) : (
               <p className="dim" style={{ marginTop: 6 }}>
-                No active subscription — choose 2 Hours (100K), 3 Days (1M), or 7 Days (10M) below.
+                No active charter — choose 2 Hours (100K Coins), 3 Days (1M Coins), or 7 Days (10M Coins) below.
               </p>
             )}
           </div>
@@ -413,7 +459,7 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
                     </p>
                     {shortfall > 0 && (
                       <p style={{ marginTop: 3, fontSize: 11.5, color: '#ff8da8' }}>
-                        Need ₨ {formatNumber(shortfall)} more Coins
+                        Need {formatNumber(shortfall)} more Coins
                       </p>
                     )}
                   </div>
@@ -438,11 +484,11 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
                           {price.promoActive && (
                             <span className="price-strike" style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
                               <CashCoinIcon size={11} />
-                              ₨ {formatNumber(price.baseCost)}
+                              {formatCoinsCompact(price.baseCost)} Coins
                             </span>
                           )}
                           <CashCoinIcon size={13} />
-                          <span>₨ {formatNumber(price.finalCost)}</span>
+                          <span>{formatCoinsCompact(price.finalCost)} Coins</span>
                         </span>
                       )}
                     </button>
@@ -458,7 +504,7 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
             return (
               <div className="gxc" style={{ marginTop: 10 }}>
                 <p style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 4 }}>
-                  Recent Subscription Transactions
+                  Recent Charter Transactions
                 </p>
                 {subLogs.map((entry, idx) => (
                   <p key={`${idx}-${entry}`} className="dim" style={{ fontSize: 12 }}>
@@ -496,7 +542,13 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
               const info = getBoosterActivationInfo(state, b.id, nowMs);
               const check = canBuyBooster(state, b, nowMs);
               const recReason = boosterRec[b.id];
-              const label = info.active && b.dur > 0
+              const priceLabel = (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <CashCoinIcon size={12} />
+                  <span>{formatCoinsCompact(b.cost)} Coins</span>
+                </span>
+              );
+              const statusLabel = info.active && b.dur > 0
                 ? `Active ${info.activeLeftSec}s`
                 : check.cooldownLeftSec > 0
                   ? `${check.cooldownLeftSec}s CD`
@@ -506,7 +558,7 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
                       ? 'Primed'
                       : info.usedToday >= info.dailyLimit
                         ? `Limit ${info.usedToday}/${info.dailyLimit}`
-                        : `₨ ${formatNumber(b.cost)}`;
+                        : null;
 
               return (
                 <div
@@ -544,7 +596,7 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
                     title={check.reason}
                     onClick={(e) => onBuyBooster(b.id, e)}
                   >
-                    {label}
+                    {statusLabel || priceLabel}
                   </button>
                 </div>
               );
@@ -561,15 +613,16 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
     prev.serverOffsetMs !== next.serverOffsetMs ||
     prev.username !== next.username ||
     prev.countryCode !== next.countryCode ||
-    prev.previewCosmeticId !== next.previewCosmeticId ||
-    prev.previewThemeId !== next.previewThemeId ||
+    prev.previewLoadout !== next.previewLoadout ||
     prev.onChangeSubTab !== next.onChangeSubTab ||
     prev.onBuyRank !== next.onBuyRank ||
     prev.onBuySubscription !== next.onBuySubscription ||
     prev.onClaimSubDaily !== next.onClaimSubDaily ||
     prev.onBuyBooster !== next.onBuyBooster ||
-    prev.onPreviewCosmetic !== next.onPreviewCosmetic ||
+    prev.onTogglePreviewCosmetic !== next.onTogglePreviewCosmetic ||
     prev.onCancelCosmeticPreview !== next.onCancelCosmeticPreview ||
+    prev.onResetCosmeticPreview !== next.onResetCosmeticPreview ||
+    prev.onPreviewLandmarkInCity !== next.onPreviewLandmarkInCity ||
     prev.onBuyCosmeticItem !== next.onBuyCosmeticItem ||
     prev.onBuyCosmeticBundle !== next.onBuyCosmeticBundle ||
     prev.onEquipCosmetic !== next.onEquipCosmetic ||
@@ -617,7 +670,6 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
     }
     return true;
   }
-  // subTab === 'boost': re-render per second when any booster or cooldown is counting down
   if (getActiveShopIncomeBooster(p, pNow).active || getActiveShopIncomeBooster(n, nNow).active) {
     return Math.floor(pNow / 1000) === Math.floor(nNow / 1000);
   }

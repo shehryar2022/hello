@@ -45,6 +45,8 @@ interface HeroPanelProps {
   selectedBuildingId: string | null;
   focusRequest?: { id: string; seq: number } | null;
   previewAnimId?: string;
+  previewLandmarkId?: string | null;
+  landmarkFocusRequest?: { id: string; seq: number } | null;
   onCollectTax: (e: React.MouseEvent<HTMLButtonElement>) => void;
   onActivateGemBoost: () => void;
   onSelectBuilding: (id: string | null) => void;
@@ -67,6 +69,8 @@ export const HeroPanel: React.FC<HeroPanelProps> = memo(({
   selectedBuildingId,
   focusRequest,
   previewAnimId,
+  previewLandmarkId = null,
+  landmarkFocusRequest,
   onCollectTax,
   onActivateGemBoost,
   onSelectBuilding,
@@ -164,6 +168,8 @@ export const HeroPanel: React.FC<HeroPanelProps> = memo(({
           serverOffsetMs={serverOffsetMs}
           selectedBuildingId={selectedBuildingId}
           focusRequest={focusRequest}
+          previewLandmarkId={previewLandmarkId}
+          landmarkFocusRequest={landmarkFocusRequest}
           onSelectBuilding={onSelectBuilding}
           onBuyBuilding={onBuyBuilding}
           onUpgradeBuilding={onUpgradeBuilding}

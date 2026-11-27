@@ -3,16 +3,11 @@ import { ACHIEVEMENTS, WEEKLY_MISSIONS } from '../../game/constants';
 import {
   formatCountdownShort,
   getDailyRewardsView,
-  getQuestCoinReward,
-  getWeeklyRewardsView,
   msUntilNextKarachiDay,
-  msUntilNextKarachiMonday,
 } from '../../game/rewards';
 import {
   formatNumber,
   MILESTONES,
-  QUEST_POOL,
-  selectDailyQuestIds,
   selectWeeklyMissionIds,
 } from '../../game/rules';
 import type { GameState } from '../../game/types';
@@ -24,15 +19,12 @@ import {
   GemDiamondIcon,
   Gift,
   Sparkles,
-  Target,
   Trophy,
 } from '../GameIcons';
 
-const KarachiCountdown = memo(function KarachiCountdown({
-  mode,
+const DailyResetCountdown = memo(function DailyResetCountdown({
   serverOffsetMs = 0,
 }: {
-  mode: 'daily' | 'weekly';
   serverOffsetMs?: number;
 }) {
   const [tick, setTick] = useState(0);
@@ -44,27 +36,21 @@ const KarachiCountdown = memo(function KarachiCountdown({
 
   void tick;
   const nowMs = Date.now() + serverOffsetMs;
-  const msLeft = mode === 'daily' ? msUntilNextKarachiDay(nowMs) : msUntilNextKarachiMonday(nowMs);
+  const msLeft = msUntilNextKarachiDay(nowMs);
   return (
     <span className="rw-timer">
       <Calendar size={12} />
-      <span>
-        {mode === 'daily' ? 'Resets in ' : 'Monday Reset '}
-        {formatCountdownShort(msLeft)}
-      </span>
+      <span>Resets in {formatCountdownShort(msLeft)}</span>
     </span>
   );
 });
 
 export interface RewardsDashboardProps {
   state: GameState;
-  dayKey: string;
   weekKey: string;
   rankPosition: number;
   serverOffsetMs?: number;
   onClaimDailySlot?: (e: React.MouseEvent<HTMLButtonElement>) => void;
-  onClaimWeeklyMilestone?: (milestoneId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
-  onClaimQuest: (questId: string, rewardGems: number, e: React.MouseEvent<HTMLButtonElement>) => void;
   onClaimWeekly?: (missionId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
   onClaimAchievement?: (achievementId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
   onClaimMilestone: (milestoneId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
@@ -72,28 +58,17 @@ export interface RewardsDashboardProps {
 
 export const RewardsDashboard = memo(function RewardsDashboard({
   state,
-  dayKey,
   weekKey,
   rankPosition,
   serverOffsetMs = 0,
   onClaimDailySlot,
-  onClaimWeeklyMilestone,
-  onClaimQuest,
   onClaimWeekly,
   onClaimAchievement,
   onClaimMilestone,
 }: RewardsDashboardProps) {
   const nowMs = (state.t || Date.now()) + serverOffsetMs;
   const dailyView = useMemo(() => getDailyRewardsView(state, nowMs), [state, nowMs]);
-  const weeklyView = useMemo(
-    () => getWeeklyRewardsView(state, nowMs, rankPosition),
-    [state, nowMs, rankPosition],
-  );
 
-  const ids = useMemo(
-    () => (state.questIds?.length === 3 && state.questDay === dayKey ? state.questIds : selectDailyQuestIds(dayKey)),
-    [state.questIds, state.questDay, dayKey],
-  );
   const weeklyIndices = useMemo(() => selectWeeklyMissionIds(weekKey), [weekKey]);
   const weeklyClaimed = state.weeklyDay === weekKey ? state.weeklyClaimed || {} : {};
   const unlockedAchCount = useMemo(
@@ -101,18 +76,16 @@ export const RewardsDashboard = memo(function RewardsDashboard({
     [state.achievements],
   );
 
-  const questHistory = Array.isArray(state.qHist) ? state.qHist : [];
-
   return (
     <div className="rw-dash" data-testid="rewards-dashboard">
-      {/* SECTION 1: DAILY REWARDS (STRICTLY 5 SLOTS) */}
+      {/* SECTION 1: DAILY REWARDS (5-DAY CYCLE) */}
       <section className="rw-section" aria-label="Daily Rewards" data-testid="daily-rewards-section">
         <div className="rw-sec-hdr">
           <h3>
             <Gift size={17} color="#3fe0b0" />
             <span>Daily Rewards (5-Day Cycle)</span>
           </h3>
-          <KarachiCountdown mode="daily" serverOffsetMs={serverOffsetMs} />
+          <DailyResetCountdown serverOffsetMs={serverOffsetMs} />
         </div>
 
         <div className="rw-daily-grid">
@@ -179,161 +152,8 @@ export const RewardsDashboard = memo(function RewardsDashboard({
         )}
       </section>
 
-      {/* SECTION 2: WEEKLY REWARDS (STRICTLY 5 MILESTONES, INDEPENDENT OF DAILY) */}
-      <section className="rw-section" aria-label="Weekly Rewards" data-testid="weekly-rewards-section">
-        <div className="rw-sec-hdr">
-          <h3>
-            <Sparkles size={17} color="#5ccbff" />
-            <span>Weekly Rewards ({weeklyView.claimedCount}/5 Claimed)</span>
-          </h3>
-          <KarachiCountdown mode="weekly" serverOffsetMs={serverOffsetMs} />
-        </div>
-
-        <div className="rw-weekly-grid">
-          {weeklyView.items.map((item) => {
-            const isClaimed = item.status === 'claimed';
-            const isAvail = item.status === 'available';
-            return (
-              <div
-                key={item.id}
-                className="row"
-                style={{ '--c': isClaimed ? '#3fe0b0' : isAvail ? '#5ccbff' : '#a58cff' } as React.CSSProperties}
-                data-testid={`weekly-milestone-${item.id}`}
-              >
-                <div className="em" style={{ fontSize: 20 }}>
-                  {isClaimed ? <CheckCircle2 size={22} color="#3fe0b0" /> : <span aria-hidden="true">{item.icon}</span>}
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <h2>
-                    <span>{item.title}</span>
-                    <span className="lv" style={{ color: 'var(--cy)', borderColor: 'rgba(92,203,255,0.4)' }}>
-                      +{item.diamonds} <GemDiamondIcon size={11} />
-                    </span>
-                    <span className="lv">
-                      +₨ {formatNumber(item.coins)} <CashCoinIcon size={11} />
-                    </span>
-                  </h2>
-                  <p>
-                    {item.desc} ({formatNumber(Math.floor(item.progress))} / {formatNumber(item.goal)})
-                  </p>
-                  <div className="bar" style={{ marginTop: 6 }}>
-                    <i style={{ width: `${item.pct}%`, '--c': isClaimed ? '#3fe0b0' : '#5ccbff' } as React.CSSProperties} />
-                  </div>
-                </div>
-                {isClaimed ? (
-                  <span className="lv" style={{ background: 'var(--mint)', color: '#04332a' }}>
-                    Claimed
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    className={`btn sm ${isAvail ? 'gold' : 'no'}`}
-                    disabled={!isAvail || !onClaimWeeklyMilestone}
-                    onClick={(e) => onClaimWeeklyMilestone?.(item.id, e)}
-                  >
-                    {isAvail ? 'Claim' : `${item.pct}%`}
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {weeklyView.history.length > 0 && (
-          <div className="rw-hist">
-            <span className="rw-hist-title">Recent Weekly Milestone Claims</span>
-            {weeklyView.history.slice(0, 4).map((h, i) => (
-              <div key={`${h.day}-${h.label}-${i}`} className="rw-hist-row">
-                <span>
-                  <b>{h.label}</b> · {h.day}
-                </span>
-                <span style={{ color: 'var(--cy)' }}>
-                  +₨ {formatNumber(h.coins)} · +{h.diamonds} Diamonds
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* SECTION 3: DAILY QUESTS, WEEKLY STRATEGIC MISSIONS, ACHIEVEMENTS & MILESTONES */}
-      <section className="rw-section" aria-label="Quests and Milestones">
-        <div className="rw-sec-hdr">
-          <h3>
-            <Target size={17} color="#ffc23d" />
-            <span>Daily Quests ({dayKey})</span>
-          </h3>
-          <span className="dim" style={{ fontSize: 11.5 }}>
-            Earn both Coins &amp; Diamonds
-          </span>
-        </div>
-
-        <div className="list">
-          {ids.map((idx) => {
-            const q = QUEST_POOL[idx] || QUEST_POOL[0];
-            const cur = q.f(state, { rank: rankPosition });
-            const pct = Math.max(0, Math.min(100, (cur / q.g) * 100));
-            const isClaimed = !!state.claimed?.[q.id];
-            const isReady = !isClaimed && cur >= q.g;
-            const coinReward = getQuestCoinReward(q);
-
-            return (
-              <div key={q.id} className="row" style={{ '--c': isClaimed ? '#3fe0b0' : '#ffc23d' } as React.CSSProperties}>
-                <div className="em">
-                  {isClaimed ? <CheckCircle2 size={22} color="#3fe0b0" /> : <Target size={22} color="#ffc23d" />}
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <h2>
-                    <span>{q.t}</span>
-                    <span className="lv" style={{ color: 'var(--cy)', borderColor: 'rgba(92,203,255,0.4)' }}>
-                      +{q.r} <GemDiamondIcon size={11} />
-                    </span>
-                    <span className="lv">
-                      +₨ {formatNumber(coinReward)} <CashCoinIcon size={11} />
-                    </span>
-                  </h2>
-                  <p>
-                    {Math.min(Math.floor(cur), q.g).toLocaleString('en-US')} / {q.g.toLocaleString('en-US')}
-                  </p>
-                  <div className="bar" style={{ marginTop: 6 }}>
-                    <i style={{ width: `${pct}%`, '--c': isClaimed ? '#3fe0b0' : '#ffc23d' } as React.CSSProperties} />
-                  </div>
-                </div>
-                {isClaimed ? (
-                  <span className="lv" style={{ background: 'var(--mint)', color: '#04332a' }}>
-                    Claimed
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    className={`btn sm ${isReady ? 'gold' : 'no'}`}
-                    disabled={!isReady}
-                    onClick={(e) => onClaimQuest(q.id, q.r, e)}
-                  >
-                    {isReady ? 'Claim Reward' : `${Math.floor(pct)}%`}
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {questHistory.length > 0 && (
-          <div className="rw-hist">
-            <span className="rw-hist-title">Quest Claim History</span>
-            {questHistory.slice(0, 4).map((h, i) => (
-              <div key={`${h.day}-${h.label}-${i}`} className="rw-hist-row">
-                <span>
-                  <b>{h.label}</b> · {h.day}
-                </span>
-                <span style={{ color: 'var(--gold)' }}>
-                  +₨ {formatNumber(h.coins)} · +{h.diamonds} Diamonds
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-
+      {/* SECTION 2: WEEKLY STRATEGIC MISSIONS, ACHIEVEMENTS & MILESTONES */}
+      <section className="rw-section" aria-label="Missions and Milestones">
         <div className="tradelim" style={{ marginTop: 4 }}>
           <span>
             <Sparkles size={14} color="#5ccbff" /> Weekly Strategic Missions

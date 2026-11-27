@@ -1118,3 +1118,254 @@ export function sanitizeCosmeticIdField(id: unknown): string {
   const clean = id.trim();
   return /^[a-z0-9_]{0,36}$/.test(clean) ? clean : '';
 }
+
+export type DxCategoryFilter = 'all' | 'bundle' | CosmeticCategory;
+export type DxRarityFilter = 'all' | CosmeticRarity;
+export type DxPriceFilter = 'all' | 'diamonds_only' | 'dual_currency' | 'under_25';
+export type DxOwnershipFilter = 'all' | 'available' | 'owned' | 'unowned' | 'rank_locked';
+export type DxSortBy = 'recommended' | 'price_asc' | 'price_desc' | 'rarity' | 'newest';
+
+export interface DxFilterOptions {
+  category?: DxCategoryFilter;
+  search?: string;
+  rarity?: DxRarityFilter;
+  price?: DxPriceFilter;
+  ownership?: DxOwnershipFilter;
+  sortBy?: DxSortBy;
+}
+
+export interface CosmeticPreviewLoadout {
+  frame?: string;
+  nameEffect?: string;
+  badge?: string;
+  anim?: string;
+  themeId?: GameThemeId;
+  landmarkId?: string;
+  focusItemId?: string;
+}
+
+export function hasActivePreview(loadout: CosmeticPreviewLoadout): boolean {
+  return Boolean(
+    loadout.frame ||
+      loadout.nameEffect ||
+      loadout.badge ||
+      loadout.anim ||
+      loadout.themeId ||
+      loadout.landmarkId ||
+      loadout.focusItemId,
+  );
+}
+
+export function isItemActiveInPreviewLoadout(
+  loadout: CosmeticPreviewLoadout,
+  item: CosmeticItemDef,
+): boolean {
+  if (item.category === 'profile_effect') return loadout.frame === item.id;
+  if (item.category === 'name_effect') return loadout.nameEffect === item.id;
+  if (item.category === 'badge') return loadout.badge === item.id;
+  if (item.category === 'animation') return loadout.anim === item.id;
+  if (item.category === 'theme') return Boolean(item.themeId && loadout.themeId === item.themeId);
+  if (item.category === 'diamond_asset') return loadout.landmarkId === item.id;
+  return false;
+}
+
+function pickFallbackFocusId(next: CosmeticPreviewLoadout): string | undefined {
+  if (next.landmarkId) return next.landmarkId;
+  if (next.frame) return next.frame;
+  if (next.nameEffect) return next.nameEffect;
+  if (next.badge) return next.badge;
+  if (next.anim) return next.anim;
+  if (next.themeId) {
+    const t = THEME_ITEMS.find((x) => x.themeId === next.themeId);
+    if (t) return t.id;
+  }
+  return undefined;
+}
+
+export function toggleItemInPreviewLoadout(
+  prev: CosmeticPreviewLoadout,
+  item: CosmeticItemDef | null,
+): CosmeticPreviewLoadout {
+  if (!item) return {};
+  const next: CosmeticPreviewLoadout = { ...prev };
+  const active = isItemActiveInPreviewLoadout(prev, item);
+
+  if (item.category === 'profile_effect') {
+    if (active) delete next.frame;
+    else next.frame = item.id;
+  } else if (item.category === 'name_effect') {
+    if (active) delete next.nameEffect;
+    else next.nameEffect = item.id;
+  } else if (item.category === 'badge') {
+    if (active) delete next.badge;
+    else next.badge = item.id;
+  } else if (item.category === 'animation') {
+    if (active) delete next.anim;
+    else next.anim = item.id;
+  } else if (item.category === 'theme' && item.themeId) {
+    if (active) delete next.themeId;
+    else next.themeId = item.themeId;
+  } else if (item.category === 'diamond_asset') {
+    if (active) delete next.landmarkId;
+    else next.landmarkId = item.id;
+  }
+
+  if (active) {
+    if (prev.focusItemId === item.id) {
+      const fallback = pickFallbackFocusId(next);
+      if (fallback) next.focusItemId = fallback;
+      else delete next.focusItemId;
+    }
+  } else {
+    next.focusItemId = item.id;
+  }
+  return next;
+}
+
+export function resolveEffectiveCosmeticPreview(
+  s: GameState,
+  loadout: CosmeticPreviewLoadout,
+): {
+  frame?: string;
+  nameEffect?: string;
+  badge?: string;
+  anim?: string;
+  themeId: GameThemeId;
+  landmarkId?: string;
+  focusItem: CosmeticItemDef | null;
+  previewCount: number;
+} {
+  const eq = getEquippedCosmetics(s);
+  const activeTheme = getActiveThemeId(s);
+  const focusItem = loadout.focusItemId ? COSMETIC_BY_ID.get(loadout.focusItemId) || null : null;
+  const previewKeys = [
+    loadout.frame,
+    loadout.nameEffect,
+    loadout.badge,
+    loadout.anim,
+    loadout.themeId,
+    loadout.landmarkId,
+  ].filter(Boolean);
+
+  return {
+    frame: loadout.frame || eq.frame,
+    nameEffect: loadout.nameEffect || eq.nameEffect,
+    badge: loadout.badge || eq.badge,
+    anim: loadout.anim || eq.anim,
+    themeId: loadout.themeId || activeTheme,
+    landmarkId: loadout.landmarkId,
+    focusItem,
+    previewCount: previewKeys.length,
+  };
+}
+
+export function formatDiamondPrice(diamonds: number): string {
+  const v = Math.max(0, Math.floor(Number.isFinite(diamonds) ? diamonds : 0));
+  return `${v.toLocaleString('en-US')} Diamonds`;
+}
+
+export function formatCoinPrice(coins: number): string {
+  return `${formatCoinsCompact(coins)} Coins`;
+}
+
+export function formatCombinedPrice(diamonds: number, coins?: number): string {
+  const parts: string[] = [];
+  if (diamonds > 0) parts.push(formatDiamondPrice(diamonds));
+  if (coins && coins > 0) parts.push(formatCoinPrice(coins));
+  return parts.length ? parts.join(' + ') : 'Included';
+}
+
+export function getCosmeticCategoryCounts(): Record<DxCategoryFilter, number> {
+  return {
+    all: ALL_COSMETIC_ITEMS.length,
+    bundle: COSMETIC_BUNDLES.length,
+    profile_effect: PROFILE_FRAMES.length,
+    name_effect: NAME_EFFECTS.length,
+    theme: THEME_ITEMS.length,
+    animation: PREMIUM_ANIMATIONS.length,
+    badge: EXCLUSIVE_BADGES.length,
+    diamond_asset: DIAMOND_ASSETS.length,
+  };
+}
+
+export function getAvailableExclusiveCount(s: GameState): number {
+  let count = 0;
+  for (const item of ALL_COSMETIC_ITEMS) {
+    if (!isCosmeticOwned(s, item.id)) count += 1;
+  }
+  return count;
+}
+
+export function filterAndSortCosmetics(
+  s: GameState,
+  items: CosmeticItemDef[],
+  opts: DxFilterOptions,
+): CosmeticItemDef[] {
+  const rankNow = Math.max(MIN_RANK, Math.floor(Number(s.rank) || MIN_RANK));
+  const query = (opts.search || '').trim().toLowerCase();
+  const rarityFilter = opts.rarity || 'all';
+  const priceFilter = opts.price || 'all';
+  const ownershipFilter = opts.ownership || 'all';
+  const sortBy = opts.sortBy || 'recommended';
+
+  const filtered = items.filter((item) => {
+    if (opts.category && opts.category !== 'all' && opts.category !== 'bundle' && item.category !== opts.category) {
+      return false;
+    }
+    if (rarityFilter !== 'all' && item.rarity !== rarityFilter) {
+      return false;
+    }
+    if (priceFilter === 'diamonds_only' && (item.coinsCost || 0) > 0) {
+      return false;
+    }
+    if (priceFilter === 'dual_currency' && !(item.coinsCost && item.coinsCost > 0)) {
+      return false;
+    }
+    if (priceFilter === 'under_25' && item.diamondsCost > 24) {
+      return false;
+    }
+    const owned = isCosmeticOwned(s, item.id);
+    const rankLocked = Boolean(item.reqRank && rankNow < item.reqRank);
+    if (ownershipFilter === 'owned' && !owned) return false;
+    if (ownershipFilter === 'unowned' && owned) return false;
+    if (ownershipFilter === 'rank_locked' && !rankLocked) return false;
+    if (ownershipFilter === 'available' && (owned || rankLocked)) return false;
+
+    if (query) {
+      const hay = `${item.name} ${item.previewTag} ${item.desc} ${item.rarity} ${item.category}`.toLowerCase();
+      if (!hay.includes(query)) return false;
+    }
+    return true;
+  });
+
+  const sorted = [...filtered];
+  sorted.sort((a, b) => {
+    if (sortBy === 'price_asc') {
+      if (a.diamondsCost !== b.diamondsCost) return a.diamondsCost - b.diamondsCost;
+      return (a.coinsCost || 0) - (b.coinsCost || 0);
+    }
+    if (sortBy === 'price_desc') {
+      if (b.diamondsCost !== a.diamondsCost) return b.diamondsCost - a.diamondsCost;
+      return (b.coinsCost || 0) - (a.coinsCost || 0);
+    }
+    if (sortBy === 'rarity') {
+      const rw = getRarityWeight(b.rarity) - getRarityWeight(a.rarity);
+      if (rw !== 0) return rw;
+      return b.diamondsCost - a.diamondsCost;
+    }
+    if (sortBy === 'newest') {
+      return getCosmeticCatalogIndex(b.id) - getCosmeticCatalogIndex(a.id);
+    }
+    // recommended: purchasable first, then unowned, then owned, preserving rarity/curated priority
+    const aOwned = isCosmeticOwned(s, a.id) ? 1 : 0;
+    const bOwned = isCosmeticOwned(s, b.id) ? 1 : 0;
+    if (aOwned !== bOwned) return aOwned - bOwned;
+    const aBuyable = canBuyCosmeticItem(s, a.id).ok ? 0 : 1;
+    const bBuyable = canBuyCosmeticItem(s, b.id).ok ? 0 : 1;
+    if (aBuyable !== bBuyable) return aBuyable - bBuyable;
+    return getCosmeticCatalogIndex(a.id) - getCosmeticCatalogIndex(b.id);
+  });
+
+  return sorted;
+}
+

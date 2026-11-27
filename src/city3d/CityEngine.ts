@@ -16,6 +16,7 @@ import {
   buildDiamondLandmarkGroup,
   buildPlotGroup,
   createCityMaterialLibrary,
+  DIAMOND_LANDMARK_SLOTS,
   type AnimatedCityPart,
   type CityMaterialLibrary,
 } from './buildingModels';
@@ -548,7 +549,7 @@ export class CityEngine {
     }
   }
 
-  public syncState(state: GameState, serverOffsetMs = 0): void {
+  public syncState(state: GameState, serverOffsetMs = 0, previewLandmarkId?: string | null): void {
     if (this.disposed) return;
 
     this.timeMode = state.cityTimeMode || 'auto';
@@ -589,21 +590,27 @@ export class CityEngine {
       this.plotGroups.set(plot.id, nextGroup);
     }
 
-    // Sync owned Diamond Landmarks / Exclusive Assets on the capital esplanade
+    // Sync owned Diamond Landmarks + any active shop preview landmark on the capital esplanade
     const ownedAssets = getDiamondAssetBonuses(state).ownedAssetIds;
-    const nextAssetSig = ownedAssets.join(',');
+    const desiredAssets =
+      previewLandmarkId &&
+      DIAMOND_LANDMARK_SLOTS[previewLandmarkId] &&
+      !ownedAssets.includes(previewLandmarkId)
+        ? [...ownedAssets, previewLandmarkId]
+        : ownedAssets;
+    const nextAssetSig = desiredAssets.join(',');
     if (nextAssetSig !== this.diamondAssetSig) {
       this.diamondAssetSig = nextAssetSig;
       rebuiltAny = true;
-      const ownedSet = new Set(ownedAssets);
+      const desiredSet = new Set(desiredAssets);
       for (const [id, grp] of Array.from(this.diamondLandmarkGroups.entries())) {
-        if (!ownedSet.has(id)) {
+        if (!desiredSet.has(id)) {
           this.scene.remove(grp);
           this.disposeObjectChildren(grp, true);
           this.diamondLandmarkGroups.delete(id);
         }
       }
-      for (const assetId of ownedAssets) {
+      for (const assetId of desiredAssets) {
         if (this.diamondLandmarkGroups.has(assetId)) continue;
         const grp = buildDiamondLandmarkGroup({
           assetId,
@@ -752,6 +759,14 @@ export class CityEngine {
     this.setSelectedBuilding(buildingId);
     this.camGoalTarget = new THREE.Vector3(plot.x, 2.5, plot.z);
     this.camGoalPos = new THREE.Vector3(plot.x + 18, 17, plot.z + 24);
+  }
+
+  public focusDiamondLandmark(assetId: string): void {
+    const slot = DIAMOND_LANDMARK_SLOTS[assetId];
+    if (!slot) return;
+    this.setSelectedBuilding(null);
+    this.camGoalTarget = new THREE.Vector3(slot.x, 4.5, slot.z);
+    this.camGoalPos = new THREE.Vector3(slot.x + 13, 14.5, slot.z + 19);
   }
 
   public zoomBy(deltaScale: number): void {
