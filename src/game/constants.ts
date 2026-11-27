@@ -1039,9 +1039,9 @@ export const SUBSCRIPTIONS: SubscriptionDef[] = [
     incomeMult: 1.04,
     discountRate: 0.03,
     projectSpeedMult: 1.05,
-    dailyCash: 200_000,
+    dailyCash: 25_000,
     dailyGems: 0,
-    d: '2 Hours · +4% income, 3% build/upgrade discount, +5% project speed, ₨ 200K stipend',
+    d: '2 Hours · +4% income, 3% build/upgrade discount, +5% project speed, ₨ 25K stipend',
   },
   {
     id: 'weekly',
@@ -1055,9 +1055,9 @@ export const SUBSCRIPTIONS: SubscriptionDef[] = [
     incomeMult: 1.08,
     discountRate: 0.06,
     projectSpeedMult: 1.1,
-    dailyCash: 900_000,
+    dailyCash: 150_000,
     dailyGems: 1,
-    d: '3 Days · +8% income, 6% build/upgrade discount, +10% project speed, ₨ 900K + 1 Gem/day',
+    d: '3 Days · +8% income, 6% build/upgrade discount, +10% project speed, ₨ 150K + 1 Gem/day',
   },
   {
     id: 'monthly',
@@ -1071,9 +1071,9 @@ export const SUBSCRIPTIONS: SubscriptionDef[] = [
     incomeMult: 1.12,
     discountRate: 0.1,
     projectSpeedMult: 1.15,
-    dailyCash: 3_500_000,
+    dailyCash: 750_000,
     dailyGems: 2,
-    d: '7 Days · +12% income, 10% build/upgrade discount, +15% project speed, ₨ 3.5M + 2 Gems/day',
+    d: '7 Days · +12% income, 10% build/upgrade discount, +15% project speed, ₨ 750K + 2 Gems/day',
   },
 ];
 

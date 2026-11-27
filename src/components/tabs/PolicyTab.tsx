@@ -426,6 +426,7 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
   );
 }, (prev, next) => {
   if (
+    prev.serverOffsetMs !== next.serverOffsetMs ||
     prev.uid !== next.uid ||
     prev.onCommitFiscalReform !== next.onCommitFiscalReform ||
     prev.onChangePolicyStance !== next.onChangePolicyStance ||

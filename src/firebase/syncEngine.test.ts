@@ -13,6 +13,7 @@ import {
   SYNC_COALESCE_DEBOUNCE_MS,
   SYNC_IMMEDIATE_DELAY_MS,
   SYNC_MAX_WAIT_MS,
+  UserCloudWriteQueue,
 } from './syncEngine';
 import { isSessionStillValid } from './accountSession';
 import { filterAndSortLeaderboard } from './presence';
@@ -376,4 +377,105 @@ test('11. Measured coalesced sync latency & Spark write efficiency benchmark', a
   assert.ok(delays[0] < 1_000, `Immediate sync target <1000ms, measured ${delays[0].toFixed(1)}ms`);
   assert.ok(delays[1] < 1_500, `Coalesced burst sync target <1500ms, measured ${delays[1].toFixed(1)}ms`);
   controller.reset(true);
+});
+
+test('12. CAS failed-precondition version conflict is classified as version-conflict and uses bounded jitter backoff', () => {
+  const err1 = classifySyncError({
+    code: 'failed-precondition',
+    message: 'the stored version does not match the required base version',
+  });
+  assert.equal(err1.kind, 'version-conflict');
+  assert.notEqual(err1.kind, 'fatal');
+
+  const errNotInit = classifySyncError({
+    code: 'failed-precondition',
+    message: 'Player profile not initialized',
+  });
+  assert.equal(errNotInit.kind, 'not-initialized');
+
+  const b1 = computeSyncRetryBackoffMs(1, 0.25);
+  assert.equal(b1, 500);
+  const b3 = computeSyncRetryBackoffMs(3, 0.25);
+  assert.equal(b3, 3125);
+});
+
+test('13. UserCloudWriteQueue strictly serializes concurrent mutations FIFO and aborts stale tasks on account switch', async () => {
+  const q = new UserCloudWriteQueue('user_1', 1);
+  let active = 0;
+  let maxConcurrent = 0;
+  const order: string[] = [];
+
+  const makeTask = (label: string, ms: number) =>
+    q.enqueue(async () => {
+      active += 1;
+      maxConcurrent = Math.max(maxConcurrent, active);
+      order.push(`${label}:start`);
+      await new Promise((r) => setTimeout(r, ms));
+      order.push(`${label}:end`);
+      active -= 1;
+      return label;
+    });
+
+  const results = await Promise.all([
+    makeTask('save', 20),
+    makeTask('metrics', 5),
+    makeTask('rank', 10),
+    makeTask('trade', 5),
+  ]);
+
+  assert.equal(maxConcurrent, 1, 'Concurrent writes for the same UID must never overlap');
+  assert.deepEqual(results, ['save', 'metrics', 'rank', 'trade']);
+  assert.deepEqual(order, [
+    'save:start',
+    'save:end',
+    'metrics:start',
+    'metrics:end',
+    'rank:start',
+    'rank:end',
+    'trade:start',
+    'trade:end',
+  ]);
+  assert.equal(q.isBusy(), false);
+
+  // Account switch invalidates queued & future writes cleanly
+  const q2 = new UserCloudWriteQueue('user_1', 2);
+  let ranSecond = false;
+  const p1 = q2.enqueue(async () => {
+    await new Promise((r) => setTimeout(r, 20));
+    return 'first';
+  });
+  const p2 = q2.enqueue(async () => {
+    ranSecond = true;
+    return 'second';
+  });
+  await new Promise((r) => setTimeout(r, 2));
+  q2.invalidate();
+
+  assert.equal(await p1, 'first');
+  await assert.rejects(p2, (err: { code?: string }) => err?.code === 'aborted');
+  assert.equal(ranSecond, false);
+});
+
+test('14. Conflict merge with preWriteWallet applies local in-flight spend without granting free buildings or duplicating coins', () => {
+  const preWriteWallet = { cash: 1000, gems: 10, stk: {} };
+  const localAfterSpend = {
+    ...freshState(),
+    cash: 400, // Spent 600 locally while save write was in flight
+    gems: 8, // Spent 2 gems locally
+    b: { ...freshState().b, farms: 3 },
+    t: 12_000,
+  };
+  const resolved = resolveWalletRevisionConflict({
+    localState: localAfterSpend,
+    serverWallet: { cash: 5000, gems: 10, stk: {} }, // e.g. received +4000 gift on server concurrently
+    serverSave: { cash: 1000, gems: 10, t: 10_000 },
+    hasLocalMutationsDuringWrite: true,
+    preWriteWallet,
+  });
+
+  // 5000 authoritative server wallet - 600 local spend = 4400 (never 5000 free building!)
+  assert.equal(resolved.nextState.cash, 4400);
+  assert.equal(resolved.nextState.gems, 8);
+  assert.equal(resolved.nextState.b.farms, 3);
+  assert.equal(resolved.shouldFollowUpSync, true);
 });

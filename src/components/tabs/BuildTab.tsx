@@ -228,7 +228,12 @@ export const BuildTab: React.FC<BuildTabProps> = memo(({ state, serverOffsetMs =
     </div>
   );
 }, (prev, next) => {
-  if (prev.onBuyBuilding !== next.onBuyBuilding || prev.state.cash !== next.state.cash || prev.state.rank !== next.state.rank) {
+  if (
+    prev.serverOffsetMs !== next.serverOffsetMs ||
+    prev.onBuyBuilding !== next.onBuyBuilding ||
+    prev.state.cash !== next.state.cash ||
+    prev.state.rank !== next.state.rank
+  ) {
     return false;
   }
   const pNow = (prev.state.t || 0) + (prev.serverOffsetMs || 0);

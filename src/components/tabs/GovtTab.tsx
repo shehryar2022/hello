@@ -697,6 +697,7 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
   );
 }, (prev, next) => {
   if (
+    prev.serverOffsetMs !== next.serverOffsetMs ||
     prev.subTab !== next.subTab ||
     prev.uid !== next.uid ||
     prev.projects !== next.projects ||

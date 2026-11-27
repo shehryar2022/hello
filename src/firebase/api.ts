@@ -195,6 +195,7 @@ export async function createPlayerProfile(
   sid: string,
   onKicked: () => void,
   expectedUid?: string,
+  nowSrvMs?: number,
 ): Promise<{
   restoredSave?: Partial<GameState>;
   wallet?: { cash: number; gems: number; stk: Record<string, number> };
@@ -230,9 +231,10 @@ export async function createPlayerProfile(
         throw makeError('already-exists', 'Username already taken');
       }
 
+      const effectiveNow = typeof nowSrvMs === 'number' && Number.isFinite(nowSrvMs) ? nowSrvMs : Date.now();
       const oldRaw = sSnap.exists() ? (sSnap.data()?.save as Partial<GameState> | undefined) : undefined;
-      const baseState = oldRaw ? migrateState(oldRaw) : state;
-      const cleanedSave = cleanSavePayload(baseState);
+      const baseState = oldRaw ? migrateState(oldRaw, effectiveNow) : state;
+      const cleanedSave = cleanSavePayload(baseState, effectiveNow);
       const cash = capValue(cleanedSave.cash, 1e13);
       const gems = capValue(cleanedSave.gems, 1e9);
       const stk = cleanStickersMap(cleanedSave.stk);
@@ -277,7 +279,7 @@ export async function createPlayerProfile(
       if (!uSnap.exists()) {
         tx.set(uRef, { uid });
       }
-      const activeSub = getActiveSubscription(baseState, Date.now());
+      const activeSub = getActiveSubscription(baseState, effectiveNow);
       const prevRev =
         wSnap.exists() && Number.isFinite(Number(wSnap.data()?.rev))
           ? Math.max(0, Math.floor(Number(wSnap.data()?.rev)))
@@ -329,15 +331,17 @@ export async function syncSaveToCloud(params: {
   completedTradesCount: number;
   rev: number;
   sid: string;
+  nowSrvMs?: number;
   onKicked: () => void;
 }): Promise<{
   accepted: boolean;
   wallet: { cash: number; gems: number; stk: Record<string, number>; rev: number };
   serverSave?: Partial<GameState>;
 }> {
-  const { expectedUid, state, pubStats, completedTradesCount, rev, sid, onKicked } = params;
+  const { expectedUid, state, pubStats, completedTradesCount, rev, sid, nowSrvMs, onKicked } = params;
   const activeUid = requireUid(expectedUid);
-  const cleanedSave = cleanSavePayload(state);
+  const effectiveNow = typeof nowSrvMs === 'number' && Number.isFinite(nowSrvMs) ? nowSrvMs : Date.now();
+  const cleanedSave = cleanSavePayload(state, effectiveNow);
   const cash = capValue(cleanedSave.cash, 1e13);
   const gems = capValue(cleanedSave.gems, 1e9);
   const stk = cleanStickersMap(cleanedSave.stk);
@@ -384,7 +388,7 @@ export async function syncSaveToCloud(params: {
               completedTradesCount,
             ),
           });
-          const activeSub = getActiveSubscription(state, Date.now());
+          const activeSub = getActiveSubscription(state, effectiveNow);
           tx.update(pRef, {
             gdp: gdpVal,
             cash,
@@ -433,12 +437,11 @@ export async function syncSaveToCloud(params: {
       throw err;
     }
 
-    // Pinpoint & salvage fallback: verify player/session/wallet BEFORE writing saves/{uid}
-    // so an outdated tab or lower rev can never overwrite newer cloud progress.
+    // Pinpoint & atomic salvage fallback: verify player/session/wallet BEFORE committing
+    // an atomic writeBatch across wallet + saves (plus players when rules allow) so
+    // wallet.rev never advances if saves/{uid} fails and outdated tabs never overwrite cloud saves.
     const uid = requireUid(activeUid);
     let firstFatalErr: unknown = null;
-    let savedDocOk = false;
-    let walletDocOk = false;
     let nextRev = Math.max(1, rev + 1);
 
     const pRef = doc(db, 'players', uid);
@@ -474,101 +477,101 @@ export async function syncSaveToCloud(params: {
     }
 
     const wRef = doc(db, 'players', uid, 'private', 'wallet');
-    try {
-      const wSnap = await getDoc(wRef);
-      const wData = wSnap.exists() ? wSnap.data() : null;
-      const curRev =
-        wData && Number.isFinite(Number(wData.rev)) ? Math.max(0, Math.floor(Number(wData.rev))) : 0;
-      if (wData && curRev !== rev) {
-        if (wData.sid && wData.sid !== sid) {
-          onKicked();
-          throw makeError('aborted', 'Another session is active');
-        }
-        const sSnapFallback = await getDoc(doc(db, 'saves', uid)).catch(() => null);
-        const serverSaveFallback =
-          sSnapFallback && sSnapFallback.exists()
-            ? (sSnapFallback.data()?.save as Partial<GameState> | undefined)
-            : undefined;
-        return {
-          accepted: false,
-          wallet: {
-            cash: capValue(wData.cash, 1e13),
-            gems: capValue(wData.gems, 1e9),
-            stk: cleanStickersMap(wData.stk),
-            rev: curRev,
-          },
-          serverSave: serverSaveFallback,
-        };
-      }
-      nextRev = Math.min(1e9, curRev + 1);
-      await setDoc(wRef, {
-        cash,
-        gems,
-        stk,
-        rev: nextRev,
-        sid,
-        t: serverTimestamp(),
-      });
-      walletDocOk = true;
-    } catch (walletErr) {
-      if ((walletErr as { code?: string })?.code === 'aborted') throw walletErr;
-      const info = recordFirestoreError(walletErr, OperationType.WRITE, `players/${uid}/private/wallet`);
-      console.error('Firestore Error: ', JSON.stringify(info));
-      if (!firstFatalErr) firstFatalErr = walletErr;
-    }
-
     const sRef = doc(db, 'saves', uid);
-    try {
-      await setDoc(sRef, { save: cleanedSave });
-      savedDocOk = true;
-    } catch (saveErr) {
-      const info = recordFirestoreError(saveErr, OperationType.WRITE, `saves/${uid}`);
-      console.error('Firestore Error: ', JSON.stringify(info));
-      if (!firstFatalErr) firstFatalErr = saveErr;
+    const wSnap = await getDoc(wRef);
+    const wData = wSnap.exists() ? wSnap.data() : null;
+    const curRev =
+      wData && Number.isFinite(Number(wData.rev)) ? Math.max(0, Math.floor(Number(wData.rev))) : 0;
+    if (wData && curRev !== rev) {
+      if (wData.sid && wData.sid !== sid) {
+        onKicked();
+        throw makeError('aborted', 'Another session is active');
+      }
+      const sSnapFallback = await getDoc(sRef).catch(() => null);
+      const serverSaveFallback =
+        sSnapFallback && sSnapFallback.exists()
+          ? (sSnapFallback.data()?.save as Partial<GameState> | undefined)
+          : undefined;
+      return {
+        accepted: false,
+        wallet: {
+          cash: capValue(wData.cash, 1e13),
+          gems: capValue(wData.gems, 1e9),
+          stk: cleanStickersMap(wData.stk),
+          rev: curRev,
+        },
+        serverSave: serverSaveFallback,
+      };
     }
 
-    try {
-      const mergedStats = sanitizeStats(existingStats, {
-        buildings: totalBuildings(state),
-        completedTrades: Math.max(
-          existingStats?.completedTrades || 0,
-          pubStats?.completedTrades || 0,
-          completedTradesCount,
-        ),
-      });
-      const activeSub = getActiveSubscription(state, Date.now());
-      await updateDoc(pRef, {
-        gdp: gdpVal,
-        cash,
-        gems,
-        level: capValue(playerLevel(state), 10_000_000) || 1,
-        rank: capValue(state.rank, MAX_RANK),
-        subTier: activeSub ? activeSub.def.id : '',
-        subExp: activeSub ? capValue(activeSub.exp, 1e13) : 0,
-        lastSeen: serverTimestamp(),
-        stats: mergedStats,
-      });
-    } catch (playerErr) {
-      const info = recordFirestoreError(playerErr, OperationType.UPDATE, `players/${uid}`);
-      console.error('Firestore Error: ', JSON.stringify(info));
-      if (!firstFatalErr) firstFatalErr = playerErr;
-    }
+    nextRev = Math.min(1e9, curRev + 1);
+    const walletPayload = {
+      cash,
+      gems,
+      stk,
+      rev: nextRev,
+      sid,
+      t: serverTimestamp(),
+    };
+    const mergedStats = sanitizeStats(existingStats, {
+      buildings: totalBuildings(state),
+      completedTrades: Math.max(
+        existingStats?.completedTrades || 0,
+        pubStats?.completedTrades || 0,
+        completedTradesCount,
+      ),
+    });
+    const activeSub = getActiveSubscription(state, effectiveNow);
+    const playerPayload = {
+      gdp: gdpVal,
+      cash,
+      gems,
+      level: capValue(playerLevel(state), 10_000_000) || 1,
+      rank: capValue(state.rank, MAX_RANK),
+      subTier: activeSub ? activeSub.def.id : '',
+      subExp: activeSub ? capValue(activeSub.exp, 1e13) : 0,
+      lastSeen: serverTimestamp(),
+      stats: mergedStats,
+    };
 
-    if (savedDocOk && walletDocOk) {
-      if (firstFatalErr) {
+    try {
+      const fullBatch = writeBatch(db);
+      fullBatch.set(wRef, walletPayload);
+      fullBatch.set(sRef, { save: cleanedSave });
+      fullBatch.update(pRef, playerPayload);
+      await fullBatch.commit();
+      return {
+        accepted: true,
+        wallet: { cash, gems, stk, rev: nextRev },
+      };
+    } catch (batchErr) {
+      if (!isPermissionDeniedError(batchErr)) {
+        const info = recordFirestoreError(batchErr, OperationType.WRITE, `saves/${uid}`);
+        console.error('Firestore Error: ', JSON.stringify(info));
+        throw batchErr;
+      }
+      // Retry atomic 2-doc batch (wallet + save only) if leaderboard player profile update triggered rules error
+      try {
+        const coreBatch = writeBatch(db);
+        coreBatch.set(wRef, walletPayload);
+        coreBatch.set(sRef, { save: cleanedSave });
+        await coreBatch.commit();
+        recordFirestoreError(batchErr, OperationType.UPDATE, `players/${uid}`);
         recordAppError({
           source: 'sync',
           message: 'Cloud save succeeded (leaderboard update hit a rules error — see details above).',
           path: `players/${uid}`,
         });
+        return {
+          accepted: true,
+          wallet: { cash, gems, stk, rev: nextRev },
+        };
+      } catch (coreErr) {
+        const info = recordFirestoreError(coreErr, OperationType.WRITE, `saves/${uid}`);
+        console.error('Firestore Error: ', JSON.stringify(info));
+        throw firstFatalErr || coreErr;
       }
-      return {
-        accepted: true,
-        wallet: { cash, gems, stk, rev: nextRev },
-      };
     }
-
-    throw firstFatalErr || err;
   }
 }
 
@@ -1267,7 +1270,14 @@ export function buildQueryHelpers() {
 export async function promoteRankOnline(params: {
   targetRank: number;
   sid: string;
-}): Promise<{ usedServer: boolean; nextCash?: number; walletRev?: number; gdp?: number }> {
+}): Promise<{
+  usedServer: boolean;
+  rejected?: boolean;
+  error?: string;
+  nextCash?: number;
+  walletRev?: number;
+  gdp?: number;
+}> {
   const fnBase =
     typeof import.meta !== 'undefined' && import.meta.env
       ? (import.meta.env.VITE_FUNCTIONS_BASE_URL as string | undefined)
@@ -1285,14 +1295,23 @@ export async function promoteRankOnline(params: {
       },
       body: JSON.stringify({ targetRank: params.targetRank, sid: params.sid }),
     });
-    if (!res.ok) return { usedServer: false };
-    const data = (await res.json()) as {
+    const data = (await res.json().catch(() => null)) as {
       ok?: boolean;
+      error?: string;
       nextCash?: number;
       walletRev?: number;
       gdp?: number;
-    };
-    if (!data?.ok) return { usedServer: false };
+    } | null;
+    if (res.status === 400) {
+      return {
+        usedServer: true,
+        rejected: true,
+        error: data?.error || 'RANK_PROMOTION_REJECTED',
+      };
+    }
+    if (!res.ok || !data?.ok) {
+      return { usedServer: false };
+    }
     return {
       usedServer: true,
       nextCash: data.nextCash,

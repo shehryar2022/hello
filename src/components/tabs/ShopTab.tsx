@@ -270,7 +270,9 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
                     {canClaimDaily ? (
                       <>
                         <CashCoinIcon size={14} />
-                        <span>Claim Daily (₨ {formatNumber(activeSub.def.dailyCash)}</span>
+                        <span>
+                          {activeSub.def.id === 'daily' ? 'Claim Stipend' : 'Claim Daily'} (₨ {formatNumber(activeSub.def.dailyCash)}
+                        </span>
                         {activeSub.def.dailyGems > 0 && (
                           <>
                             <span>+ {activeSub.def.dailyGems}</span>
@@ -487,6 +489,7 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
   if (
     prev.subTab !== next.subTab ||
     prev.dayKey !== next.dayKey ||
+    prev.serverOffsetMs !== next.serverOffsetMs ||
     prev.onChangeSubTab !== next.onChangeSubTab ||
     prev.onBuyRank !== next.onBuyRank ||
     prev.onBuySubscription !== next.onBuySubscription ||

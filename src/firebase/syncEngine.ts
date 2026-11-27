@@ -75,12 +75,15 @@ export function computeCloudSyncStatus(input: SyncStatusInput): CloudStatusBadge
 
 /**
  * Computes bounded exponential backoff in ms for transient network/server errors.
- * Fast initial retry (~400ms -> 1.2s -> 3.0s) so reconnection/transient glitches
- * resolve within the 1–5s SLA without infinite retry loops.
+ * Fast initial retry (~400ms -> 1.0s -> 2.5s) with optional jitter so concurrent
+ * tabs don't collide in lockstep without creating infinite retry loops.
  */
-export function computeSyncRetryBackoffMs(attemptNumber: number): number {
+export function computeSyncRetryBackoffMs(attemptNumber: number, jitterRatio = 0): number {
   const n = Math.max(1, Math.floor(attemptNumber));
-  return Math.min(5_000, Math.round(400 * Math.pow(2.5, n - 1)));
+  const base = Math.min(5_000, Math.round(400 * Math.pow(2.5, n - 1)));
+  if (!Number.isFinite(jitterRatio) || jitterRatio <= 0) return base;
+  const clampedJitter = Math.min(0.5, Math.max(0, jitterRatio));
+  return Math.min(6_000, Math.round(base * (1 + clampedJitter)));
 }
 
 /**
@@ -112,8 +115,8 @@ export function buildPublicMetricsFingerprint(
  * Ensures idle tabs execute 0 unnecessary Firestore writes while any cash/taxPool/
  * building/policy/quest/sub change is captured promptly.
  */
-export function buildMeaningfulSaveFingerprint(state: GameState): string {
-  const cleaned = cleanSavePayload(state) as Partial<GameState>;
+export function buildMeaningfulSaveFingerprint(state: GameState, nowSrvMs?: number): string {
+  const cleaned = cleanSavePayload(state, nowSrvMs) as Partial<GameState>;
   return JSON.stringify({
     cash: Math.floor(Number(cleaned.cash) || 0),
     gems: Math.floor(Number(cleaned.gems) || 0),
@@ -200,8 +203,9 @@ export function resolveWalletRevisionConflict(params: {
   serverWallet: { cash: number; gems: number; stk: Record<string, number> };
   serverSave?: Partial<GameState> | null;
   hasLocalMutationsDuringWrite: boolean;
+  preWriteWallet?: { cash: number; gems: number; stk: Record<string, number> };
 }): { nextState: GameState; shouldFollowUpSync: boolean } {
-  const { localState, serverWallet, serverSave, hasLocalMutationsDuringWrite } = params;
+  const { localState, serverWallet, serverSave, hasLocalMutationsDuringWrite, preWriteWallet } = params;
   const srvT = Number(serverSave?.t || 0);
   const locT = Number(localState.t || 0);
   const adoptServerSave = Boolean(serverSave && srvT > locT + 1500 && !hasLocalMutationsDuringWrite);
@@ -213,10 +217,22 @@ export function resolveWalletRevisionConflict(params: {
       }
     : localState;
 
+  // When a local spend (building, rank, sub, crate) occurred while a save write was in flight,
+  // deduct only the negative delta against serverWallet so the player never receives free purchases
+  // from adopting pre-spend serverWallet balances, while never duplicating Coins/Gems.
+  let mergedCash = serverWallet.cash;
+  let mergedGems = serverWallet.gems;
+  if (hasLocalMutationsDuringWrite && !adoptServerSave && preWriteWallet) {
+    const localCashSpend = Math.min(0, (Number(localState.cash) || 0) - (Number(preWriteWallet.cash) || 0));
+    const localGemsSpend = Math.min(0, (Number(localState.gems) || 0) - (Number(preWriteWallet.gems) || 0));
+    mergedCash = Math.max(0, Math.min(1e13, mergedCash + localCashSpend));
+    mergedGems = Math.max(0, Math.min(1e9, mergedGems + localGemsSpend));
+  }
+
   const nextState: GameState = {
     ...base,
-    cash: serverWallet.cash,
-    gems: serverWallet.gems,
+    cash: mergedCash,
+    gems: mergedGems,
     stk: serverWallet.stk,
   };
 
@@ -228,10 +244,20 @@ export function resolveWalletRevisionConflict(params: {
 
 /**
  * Classifies a Firebase/network error to determine if it is offline/transient,
- * permission-denied, quota exceeded, or session-displaced.
+ * version-conflict (CAS/failed-precondition), permission-denied, quota exceeded,
+ * or session-displaced.
  */
 export function classifySyncError(err: unknown, isNavigatorOnline = true): {
-  kind: 'displaced' | 'account-changed' | 'not-initialized' | 'permission' | 'quota' | 'offline' | 'transient' | 'fatal';
+  kind:
+    | 'displaced'
+    | 'account-changed'
+    | 'not-initialized'
+    | 'version-conflict'
+    | 'permission'
+    | 'quota'
+    | 'offline'
+    | 'transient'
+    | 'fatal';
   code: string;
   message: string;
 } {
@@ -254,6 +280,12 @@ export function classifySyncError(err: unknown, isNavigatorOnline = true): {
   if (code === 'failed-precondition' && /not initialized/i.test(message)) {
     return { kind: 'not-initialized', code, message };
   }
+  if (
+    code === 'failed-precondition' ||
+    /stored version does not match|required base version|base version|version conflict/i.test(combined)
+  ) {
+    return { kind: 'version-conflict', code: code || 'failed-precondition', message };
+  }
   if (code === 'permission-denied' || /permission-denied|missing or insufficient permissions/i.test(combined)) {
     return { kind: 'permission', code, message };
   }
@@ -267,6 +299,63 @@ export function classifySyncError(err: unknown, isNavigatorOnline = true): {
     return { kind: 'transient', code, message };
   }
   return { kind: 'fatal', code, message };
+}
+
+/**
+ * Per-user FIFO serialized cloud write queue.
+ * Ensures at most ONE Firestore mutation touching `wallet`, `players/{uid}`, or `saves/{uid}`
+ * runs at a time for a given `(uid, authSeq)` session, eliminating concurrent CAS/version conflicts.
+ */
+export class UserCloudWriteQueue {
+  private tail: Promise<void> = Promise.resolve();
+  private inFlight = 0;
+  private queued = 0;
+  private invalidated = false;
+
+  constructor(
+    public readonly uid: string,
+    public readonly authSeq: number,
+  ) {}
+
+  isInvalidated(): boolean {
+    return this.invalidated;
+  }
+
+  isBusy(): boolean {
+    return this.inFlight > 0 || this.queued > 0;
+  }
+
+  pendingCount(): number {
+    return this.inFlight + this.queued;
+  }
+
+  invalidate(): void {
+    this.invalidated = true;
+  }
+
+  enqueue<T>(task: () => Promise<T>): Promise<T> {
+    if (this.invalidated) {
+      return Promise.reject(Object.assign(new Error('Active account changed'), { code: 'aborted' }));
+    }
+    this.queued += 1;
+    const run = this.tail.then(async () => {
+      this.queued = Math.max(0, this.queued - 1);
+      if (this.invalidated) {
+        throw Object.assign(new Error('Active account changed'), { code: 'aborted' });
+      }
+      this.inFlight += 1;
+      try {
+        return await task();
+      } finally {
+        this.inFlight = Math.max(0, this.inFlight - 1);
+      }
+    });
+    this.tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
 }
 
 /**

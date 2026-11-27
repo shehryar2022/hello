@@ -147,6 +147,7 @@ export const StickersTab: React.FC<StickersTabProps> = memo(({
   );
 }, (prev, next) => {
   if (
+    prev.serverOffsetMs !== next.serverOffsetMs ||
     prev.onFuseSticker !== next.onFuseSticker ||
     prev.onBuyCrate !== next.onBuyCrate ||
     prev.state.cash !== next.state.cash ||

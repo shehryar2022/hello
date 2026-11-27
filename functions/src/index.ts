@@ -75,10 +75,38 @@ async function verifyBearerUid(authHeader: string | undefined): Promise<string |
   }
 }
 
-function setCors(res: { setHeader: (k: string, v: string) => void }) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+const DEFAULT_ALLOWED_ORIGINS = new Set([
+  'https://pakora-tab.web.app',
+  'https://pakora-tab.firebaseapp.com',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:5173',
+]);
+
+function getAllowedOrigins(): Set<string> {
+  const extra = (process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  if (extra.length === 0) return DEFAULT_ALLOWED_ORIGINS;
+  return new Set([...DEFAULT_ALLOWED_ORIGINS, ...extra]);
+}
+
+function setCors(
+  req: { headers: { origin?: string } },
+  res: { setHeader: (k: string, v: string) => void },
+): boolean {
+  const origin = typeof req.headers.origin === 'string' ? req.headers.origin.trim() : '';
+  const allowed = getAllowedOrigins();
+  res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (!origin) return true;
+  if (allowed.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    return true;
+  }
+  return false;
 }
 
 function computeServerNationalMetrics(saveData: Record<string, unknown>, walletCash: number) {
@@ -107,13 +135,14 @@ function computeServerNationalMetrics(saveData: Record<string, unknown>, walletC
     if (Number(techMap[k] || 0) > 0) doctrines += 1;
   }
 
+  const safeFlow = Math.max(0, baseFlow);
   const pop = Math.max(1, Math.min(100_000, Number(saveData.pop) || 48));
   const hap = Math.max(0, Math.min(100, Number(saveData.hap) || 0));
   const humanCapital = pop * 220 + jobsCreated * 45 + doctrines * 150_000;
   const treasuryComponent = Math.min(1e12, Math.max(0, walletCash) * 0.35);
   const realGdp = Math.max(
     1000,
-    Math.min(1e13, Math.floor(capitalEquity + baseFlow * 180 + humanCapital + treasuryComponent)),
+    Math.min(1e13, Math.floor(capitalEquity + safeFlow * 180 + humanCapital + treasuryComponent)),
   );
 
   return { buildingsTotal, doctrines, hap, realGdp };
@@ -127,9 +156,13 @@ function computeServerNationalMetrics(saveData: Record<string, unknown>, walletC
  * - Atomically deducts Coins from private wallet + save and updates public player profile.
  */
 export const verifyNationalRankPromotion = onRequest(async (req, res) => {
-  setCors(res);
+  const corsAllowed = setCors(req, res);
   if (req.method === 'OPTIONS') {
-    res.status(204).send('');
+    res.status(corsAllowed ? 204 : 403).send('');
+    return;
+  }
+  if (!corsAllowed) {
+    res.status(403).json({ ok: false, error: 'ORIGIN_NOT_ALLOWED' });
     return;
   }
   if (req.method !== 'POST') {
@@ -205,6 +238,7 @@ export const verifyNationalRankPromotion = onRequest(async (req, res) => {
       tx.update(saveRef, {
         'save.cash': nextCash,
         'save.rank': targetRank,
+        'save.t': Date.now(),
       });
 
       return {

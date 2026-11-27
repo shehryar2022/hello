@@ -394,6 +394,7 @@ export const PlayersTab: React.FC<PlayersTabProps> = memo(({
   );
 }, (prev, next) => {
   if (
+    prev.serverOffsetMs !== next.serverOffsetMs ||
     prev.uid !== next.uid ||
     prev.ready !== next.ready ||
     prev.subTab !== next.subTab ||

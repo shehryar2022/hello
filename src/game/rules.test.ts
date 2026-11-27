@@ -350,21 +350,21 @@ test('subscriptions use Coins (100K/1M/10M for 2h/3d/7d), never touch Diamonds, 
   assert.equal(sub2h.durMs, 2 * 3_600_000);
   assert.equal(sub2h.incomeMult, 1.04);
   assert.equal(sub2h.discountRate, 0.03);
-  assert.equal(sub2h.dailyCash, 200_000);
+  assert.equal(sub2h.dailyCash, 25_000);
 
   assert.equal(sub3d.currency, 'coins');
   assert.equal(sub3d.cost, 1_000_000);
   assert.equal(sub3d.durMs, 3 * 86_400_000);
   assert.equal(sub3d.incomeMult, 1.08);
   assert.equal(sub3d.discountRate, 0.06);
-  assert.equal(sub3d.dailyCash, 900_000);
+  assert.equal(sub3d.dailyCash, 150_000);
 
   assert.equal(sub7d.currency, 'coins');
   assert.equal(sub7d.cost, 10_000_000);
   assert.equal(sub7d.durMs, 7 * 86_400_000);
   assert.equal(sub7d.incomeMult, 1.12);
   assert.equal(sub7d.discountRate, 0.1);
-  assert.equal(sub7d.dailyCash, 3_500_000);
+  assert.equal(sub7d.dailyCash, 750_000);
 
   const poorCashRichGems = freshState();
   poorCashRichGems.cash = 99_999;
@@ -421,7 +421,7 @@ test('subscriptions use Coins (100K/1M/10M for 2h/3d/7d), never touch Diamonds, 
 
   const c1 = claimSubscriptionDaily(state, '2026-11-25', now + 2000);
   assert.equal(c1.ok, true);
-  assert.equal(c1.cashAdded, 200_000);
+  assert.equal(c1.cashAdded, 25_000);
   state = c1.state;
 
   assert.equal(claimSubscriptionDaily(state, '2026-11-25', now + 3000).ok, false);
@@ -441,7 +441,7 @@ test('subscriptions use Coins (100K/1M/10M for 2h/3d/7d), never touch Diamonds, 
 
   const c2 = claimSubscriptionDaily(state, '2026-11-26', now + 86_400_000);
   assert.equal(c2.ok, true);
-  assert.equal(c2.cashAdded, 900_000);
+  assert.equal(c2.cashAdded, 150_000);
   assert.equal(c2.gemsAdded, 1);
   state = c2.state;
 
@@ -1130,4 +1130,61 @@ test('reward claim functions preserve finite cash & gems even if pre-existing wa
   const msRes = claimMilestone(msState, MILESTONES[0].id);
   assert.equal(msRes.ok, true);
   assert.equal(msRes.state.gems, MILESTONES[0].r);
+});
+
+test('subscriptions cannot generate positive coin ROI even with max 35% flash deal across midnight', async () => {
+  const { weekKeyFor } = await import('./rules');
+  const startNow = Date.UTC(2026, 10, 26, 18, 55, 0); // 23:55 Asia/Karachi
+  const wk = weekKeyFor(startNow);
+  for (const sub of SUBSCRIPTIONS) {
+    let s = freshState();
+    s.cash = 20_000_000;
+    s.subPromo = { weekKey: wk, tier: sub.id, pct: 35, exp: startNow + 60_000 };
+    const buy = applyBuySubscription(s, sub, startNow);
+    assert.equal(buy.ok, true);
+    assert.equal(buy.paidCost, Math.floor(sub.cost * 0.65));
+    s = buy.state;
+
+    // Claim day 1 before midnight, and every possible UTC+5 calendar day within subscription window
+    let totalClaimed = 0;
+    const steps = Math.ceil(sub.durMs / 86_400_000) + 1;
+    for (let i = 0; i <= steps; i += 1) {
+      const checkMs = i === 0 ? startNow + 1000 : Math.min(buy.exp! - 1000, startNow + i * 3_600_000 * 24);
+      if (checkMs >= buy.exp!) continue;
+      const dayKey = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(checkMs);
+      const claim = claimSubscriptionDaily(s, dayKey, checkMs);
+      if (claim.ok) {
+        totalClaimed += claim.cashAdded;
+        s = claim.state;
+      }
+    }
+    const maxMinPrice = Math.floor(sub.cost * 0.65);
+    assert.ok(
+      totalClaimed < maxMinPrice,
+      `Subscription ${sub.id} stipend ${totalClaimed} must remain strictly below discounted cost ${maxMinPrice}`,
+    );
+  }
+});
+
+test('policy reforms and stances strictly enforce cooldown and treasury cost without bypass', async () => {
+  const { applyCommitFiscalReform, applyChangePolicyStance } = await import('./rules');
+  const now = 1_750_000_000_000;
+  const s0 = { ...freshState(), cash: 250_000, b: { ...freshState().b, farms: 5 } };
+
+  const r1 = applyCommitFiscalReform(s0, { tax: 25, corp: 22 }, now);
+  assert.equal(r1.ok, true);
+  assert.ok(r1.cost > 0);
+  assert.equal(r1.state.cash, s0.cash - r1.cost);
+
+  const rImmediateRepeat = applyCommitFiscalReform(r1.state, { tax: 18 }, now + 5_000);
+  assert.equal(rImmediateRepeat.ok, false);
+  assert.match(rImmediateRepeat.reason || '', /cooldown/i);
+
+  const p1 = applyChangePolicyStance(r1.state, 'p_ind', 2, now);
+  assert.equal(p1.ok, true);
+  assert.ok(p1.state.cash < r1.state.cash);
+
+  const pRapidToggle = applyChangePolicyStance(p1.state, 'p_ind', 0, now + 2_000);
+  assert.equal(pRapidToggle.ok, false);
+  assert.match(pRapidToggle.reason || '', /cooldown/i);
 });

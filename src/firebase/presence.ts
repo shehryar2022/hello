@@ -28,7 +28,15 @@ export function filterAndSortLeaderboard(
   nowSrvMs: number,
   activeWindowMs = ACTIVE_WINDOW_MS,
 ): PlayerProfile[] {
-  return players
+  const byId = new Map<string, PlayerProfile>();
+  for (const p of players) {
+    if (!p?.id) continue;
+    const prev = byId.get(p.id);
+    if (!prev || (p.seen || 0) >= (prev.seen || 0)) {
+      byId.set(p.id, p);
+    }
+  }
+  return Array.from(byId.values())
     .filter((p) => p.id === myUid || isPlayerOnline(p.seen, nowSrvMs, activeWindowMs))
     .sort((a, b) => (b.gdp || 0) - (a.gdp || 0));
 }

@@ -19,7 +19,6 @@ import {
   NATIONAL_POLICIES,
   OFFLINE_CAP_SEC,
   OFFLINE_RATE,
-  POLICY_PRESETS,
   RANKS,
   REAL_GDP_SCALED,
   STICKERS,
@@ -285,7 +284,10 @@ const LEGACY_BOOSTER_MAP: Record<string, string> = {
   tax_surge: 'tax_boost',
 };
 
-export function migrateState(raw: Partial<GameState> & Record<string, unknown>): GameState {
+export function migrateState(
+  raw: Partial<GameState> & Record<string, unknown>,
+  nowMs = Date.now(),
+): GameState {
   const D = freshState();
   const s = Object.assign({}, D, raw || {}) as GameState & {
     loan?: unknown;
@@ -340,7 +342,7 @@ export function migrateState(raw: Partial<GameState> & Record<string, unknown>):
     const v = Number(s[k]);
     (s as unknown as Record<string, number>)[k] = Number.isFinite(v) ? v : Number(D[k] || 0);
   }
-  const now = Date.now();
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
   s.cash = Math.min(1e13, Math.max(0, s.cash));
   s.gems = Math.min(1e9, Math.max(0, Math.floor(s.gems)));
   s.taxPool = Math.min(1e13, Math.max(0, s.taxPool));
@@ -561,8 +563,8 @@ function toSafeInt(value: unknown, min: number, max: number): number {
 
 export const ALLOWED_SAVE_KEYS = new Set(Object.keys(freshState()).filter((k) => k !== 'country'));
 
-export function cleanSavePayload(s: GameState): Record<string, unknown> {
-  const normalized = migrateState({ ...(s as GameState & Record<string, unknown>) });
+export function cleanSavePayload(s: GameState, nowMs = Date.now()): Record<string, unknown> {
+  const normalized = migrateState({ ...(s as GameState & Record<string, unknown>) }, nowMs);
   normalized.cash = Math.min(1e13, Math.max(0, Number.isFinite(Number(normalized.cash)) ? Number(normalized.cash) : 0)) + 0;
   normalized.gems = toSafeInt(normalized.gems, 0, 1e9);
   normalized.taxPool = Math.min(1e13, Math.max(0, Number.isFinite(Number(normalized.taxPool)) ? Number(normalized.taxPool) : 0)) + 0;
@@ -1207,20 +1209,6 @@ export function buyStickerCrate(
   };
 }
 
-export function applyPolicyPreset(s: GameState, presetId: 'balanced' | 'revenue' | 'welfare'): GameState {
-  const preset = POLICY_PRESETS.find((p) => p.id === presetId);
-  if (!preset) return s;
-  const next: GameState = { ...s };
-  for (const [k, rawVal] of Object.entries(preset.values)) {
-    const bounds = POLICY_BOUNDS[k];
-    if (bounds && typeof rawVal === 'number') {
-      (next as unknown as Record<string, number>)[k] = Math.round(
-        Math.max(bounds[0], Math.min(bounds[1], rawVal)),
-      );
-    }
-  }
-  return next;
-}
 
 export const MILESTONES: QuestDef[] = [
   { id: 'm_first_bldg', t: 'First Infrastructure (Own 5 buildings)', f: (s) => totalBuildings(s), g: 5, r: 3 },
