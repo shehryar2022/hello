@@ -120,6 +120,7 @@ import {
   UserCloudWriteQueue,
 } from './firebase/syncEngine';
 import {
+  ACHIEVEMENTS,
   BOOSTERS,
   BUILDINGS,
   COUNTRIES,
@@ -132,13 +133,21 @@ import {
   GX_PROJECT_TYPES,
   GX_ROADS,
   HEARTBEAT_MS,
+  NATIONAL_DECISIONS,
   PROJECT_STAGES,
   RANKS,
   STICKERS,
   SUBSCRIPTIONS,
   TAB_META,
   TECH_TREE,
+  WEEKLY_MISSIONS,
 } from './game/constants';
+import {
+  DEFAULT_PERF_STATS,
+  normalizeGraphicsSettings,
+  readGraphicsSettings,
+  writeGraphicsSettings,
+} from './game/graphics';
 import {
   applyActivateGemBoost,
   applyBuyBooster,
@@ -147,11 +156,16 @@ import {
   applyBuySubscription,
   applyChangeGov,
   applyChangePolicyStance,
+  applyClaimAchievement,
   applyClaimQuest,
+  applyClaimWeeklyMission,
   applyCollectTax,
   applyCommitFiscalReform,
+  applyDemolishBuilding,
+  applyEnactNationalDecision,
   applyFixInfra,
   applyOfflineEarnings,
+  applySetBuildingPolicy,
   applyUnlockTech,
   applyUpgradeBuilding,
   buyStickerCrate,
@@ -183,6 +197,7 @@ import {
   targetHappiness,
   tickConstructionQueue,
   tierOfCompletedTrades,
+  weekKeyFor,
   type DailyOfflineCheckResult,
 } from './game/rules';
 import {
@@ -199,18 +214,23 @@ import {
 } from './game/versionCheck';
 import { playSfx, triggerBuzz } from './game/sound';
 import type {
+  BuildingPolicyId,
   ChatMessage,
+  CityTimeMode,
+  CityWeatherMode,
   CountryTuple,
   DmRecipient,
   GameState,
   GiftsSubTab,
   GovtSubTab,
   GovProject,
+  GraphicsSettings,
   NotificationItem,
   PlayerProfile,
   PlayersSubTab,
   PolicyCategoryId,
   ProjectType,
+  RuntimePerfStats,
   ShopSubTab,
   SubscriptionTierId,
   TabId,
@@ -293,8 +313,16 @@ export default function App() {
 
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [floats, setFloats] = useState<FloatPop[]>([]);
-  const [burstKey, setBurstKey] = useState(0);
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 1024);
+  const [graphicsSettings, setGraphicsSettings] = useState<GraphicsSettings>(() => readGraphicsSettings(null));
+  const [perfStats, setPerfStats] = useState<RuntimePerfStats>(DEFAULT_PERF_STATS);
+  const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>(null);
+  const [focusRequest, setFocusRequest] = useState<{ id: string; seq: number } | null>(null);
+  const focusSeqRef = useRef<number>(0);
+
+  useEffect(() => {
+    setGraphicsSettings(readGraphicsSettings(uid));
+  }, [uid]);
 
   // Modals
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -383,8 +411,6 @@ export default function App() {
   const projLiveRef = useRef<Record<string, number>>({});
   const projLastSyncRef = useRef<Record<string, number>>({});
   const projPrevTickMsRef = useRef<Record<string, number>>({});
-  const lastCityTapRef = useRef<number>(0);
-  const cityTapTimesRef = useRef<number[]>([]);
   const settlingTradesRef = useRef<boolean>(false);
   const markingNotifIdsRef = useRef<Set<string>>(new Set());
   const tradesRef = useRef<TradeOffer[]>([]);
@@ -2110,7 +2136,6 @@ export default function App() {
         const label = queueCompleted.map((c) => (c.qty > 1 ? `${c.name} ×${c.qty}` : c.name)).join(', ');
         addToast(`Construction complete: ${label}!`);
         playSfx('win', !!curSnap.set.sfx);
-        setBurstKey((k) => k + 1);
         scheduleCloudSync(SYNC_COALESCE_DEBOUNCE_MS);
       }
 
@@ -2515,7 +2540,6 @@ export default function App() {
       saveLocal(res.state);
       playSfx('coin', !!res.state.set.sfx);
       triggerBuzz(14, !!res.state.set.vib);
-      setBurstKey((k) => k + 1);
       const rect = e.currentTarget.getBoundingClientRect();
       spawnFloat(`+₨ ${formatNumber(res.collected)}`, rect.left + rect.width / 2, rect.top, '#3fe0b0');
 
@@ -2553,41 +2577,22 @@ export default function App() {
     addToast('×2 Boost active for 30s!');
   }, [isGameplayBlocked, addToast, saveLocal, scheduleCloudSync]);
 
-  const handleCityBuildingTap = useCallback(
-    (clientX?: number, clientY?: number) => {
-      if (isGameplayBlocked()) return;
-      const now = Date.now();
-      if (now - lastCityTapRef.current < 600) return;
-      const recent = cityTapTimesRef.current.filter((t) => now - t < 60_000);
-      if (recent.length >= 10) {
-        lastCityTapRef.current = now;
-        addToast('Tap boost cooling down — passive income continues!');
-        return;
-      }
-      cityTapTimesRef.current = [...recent, now];
-      lastCityTapRef.current = now;
-      const cur = stateRef.current;
-      const inc = calculateIncome(cur, {
-        tradeTier,
-        nowMs: now + serverOffsetMsRef.current,
-        ignoreTempBoosters: true,
-      });
-      const bonus = Math.max(5, Math.floor(Math.max(1, inc.net) * 2));
-      playSfx('tap', !!cur.set.sfx);
-      setBurstKey((k) => k + 1);
-      updateState((prev) => ({ ...prev, cash: Math.min(1e13, prev.cash + bonus) }), SYNC_COALESCE_DEBOUNCE_MS);
-      spawnFloat(
-        `+₨ ${formatNumber(bonus)}`,
-        clientX ?? window.innerWidth / 2,
-        clientY ?? 260,
-        '#ffc23d',
-      );
+  const handleSelectBuilding = useCallback((id: string | null) => {
+    setSelectedBuildingId(id);
+  }, []);
+
+  const handleFocusBuilding = useCallback(
+    (id: string) => {
+      focusSeqRef.current += 1;
+      setSelectedBuildingId(id);
+      setFocusRequest({ id, seq: focusSeqRef.current });
+      if (isMobile) setTab('build');
     },
-    [isGameplayBlocked, addToast, tradeTier, spawnFloat, updateState],
+    [isMobile],
   );
 
   const handleBuyBuilding = useCallback(
-    (id: string, qty: 1 | 5, e: React.MouseEvent<HTMLButtonElement>) => {
+    (id: string, qty: 1 | 5, e?: React.MouseEvent<HTMLButtonElement>) => {
       if (isGameplayBlocked()) return;
       const def = BUILDINGS.find((b) => b.id === id);
       if (!def) return;
@@ -2602,12 +2607,13 @@ export default function App() {
       saveLocal(res.state);
       playSfx('buy', !!res.state.set.sfx);
       triggerBuzz(15, !!res.state.set.vib);
-      const rect = e.currentTarget.getBoundingClientRect();
+      const rect = e?.currentTarget?.getBoundingClientRect();
+      const fxX = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
+      const fxY = rect ? rect.top : 220;
       if (res.instant) {
-        setBurstKey((k) => k + 1);
-        spawnFloat(`${def.n} Lv ${res.newCount}`, rect.left + rect.width / 2, rect.top, '#ffc23d');
+        spawnFloat(`${def.n} Lv ${res.newCount}`, fxX, fxY, '#ffc23d');
       } else {
-        spawnFloat(`Queued · ${res.durationSec}s`, rect.left + rect.width / 2, rect.top, '#5ccbff');
+        spawnFloat(`Queued · ${res.durationSec}s`, fxX, fxY, '#5ccbff');
         addToast(`Construction started: ${def.n}${qty > 1 ? ` ×${qty}` : ''} (${res.durationSec}s)`);
       }
 
@@ -2618,6 +2624,67 @@ export default function App() {
       scheduleCloudSync(SYNC_COALESCE_DEBOUNCE_MS);
     },
     [isGameplayBlocked, addToast, spawnFloat, saveLocal, scheduleCloudSync],
+  );
+
+  const handleDemolishBuilding = useCallback(
+    (id: string, qty: 1 | 5) => {
+      if (isGameplayBlocked()) return;
+      const def = BUILDINGS.find((b) => b.id === id);
+      if (!def) return;
+      const res = applyDemolishBuilding(stateRef.current, id, qty);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('buy', !!res.state.set.sfx);
+      triggerBuzz(14, !!res.state.set.vib);
+      setState((prev) => {
+        const recheck = applyDemolishBuilding(prev, id, qty);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_COALESCE_DEBOUNCE_MS);
+      addToast(`Demolished ${def.n} (+₨ ${formatNumber(res.refund)} refund)`);
+    },
+    [isGameplayBlocked, addToast, saveLocal, scheduleCloudSync],
+  );
+
+  const handleSetBuildingPolicy = useCallback(
+    (id: string, policyId: BuildingPolicyId) => {
+      if (isGameplayBlocked()) return;
+      const def = BUILDINGS.find((b) => b.id === id);
+      const res = applySetBuildingPolicy(stateRef.current, id, policyId);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(14, !!res.state.set.vib);
+      setState((prev) => {
+        const recheck = applySetBuildingPolicy(prev, id, policyId);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      addToast(`Updated policy for ${def?.n || id}!`);
+    },
+    [isGameplayBlocked, addToast, saveLocal, scheduleCloudSync],
+  );
+
+  const handleChangeTimeMode = useCallback(
+    (mode: CityTimeMode) => {
+      updateState((prev) => ({ ...prev, cityTimeMode: mode }), 2500);
+    },
+    [updateState],
+  );
+
+  const handleChangeWeather = useCallback(
+    (mode: CityWeatherMode) => {
+      updateState((prev) => ({ ...prev, cityWeather: mode }), 2500);
+    },
+    [updateState],
   );
 
   const handleFixInfra = useCallback(
@@ -2956,6 +3023,84 @@ export default function App() {
       });
       scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       addToast(`Milestone completed! +${res.gemsAdded} Gems`);
+    },
+    [addToast, isGameplayBlocked, spawnFloat, saveLocal, scheduleCloudSync],
+  );
+
+  const handleClaimWeeklyMission = useCallback(
+    (missionId: string, e: React.MouseEvent<HTMLButtonElement>) => {
+      if (isGameplayBlocked()) return;
+      const wk = weekKeyFor(Date.now() + serverOffsetMsRef.current);
+      const rankPos = rankPositionRef.current;
+      const res = applyClaimWeeklyMission(stateRef.current, missionId, wk, rankPos);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      const wDef = WEEKLY_MISSIONS.find((m) => m.id === missionId);
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(18, !!res.state.set.vib);
+      const rect = e.currentTarget.getBoundingClientRect();
+      spawnFloat(`+${res.gemsAdded} Gems`, rect.left + rect.width / 2, rect.top, '#5ccbff');
+      setState((prev) => {
+        const recheck = applyClaimWeeklyMission(prev, missionId, wk, rankPos);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      addToast(`${wDef?.t || 'Weekly Mission'} claimed! +${res.gemsAdded} Gems`);
+    },
+    [addToast, isGameplayBlocked, spawnFloat, saveLocal, scheduleCloudSync],
+  );
+
+  const handleClaimAchievement = useCallback(
+    (achievementId: string, e: React.MouseEvent<HTMLButtonElement>) => {
+      if (isGameplayBlocked()) return;
+      const res = applyClaimAchievement(stateRef.current, achievementId);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      const aDef = ACHIEVEMENTS.find((a) => a.id === achievementId);
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(20, !!res.state.set.vib);
+      const rect = e.currentTarget.getBoundingClientRect();
+      spawnFloat(`+${res.gemsAdded} Gems`, rect.left + rect.width / 2, rect.top, '#ffc23d');
+      setState((prev) => {
+        const recheck = applyClaimAchievement(prev, achievementId);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      addToast(`${aDef?.n || 'Achievement'} unlocked! +${res.gemsAdded} Gems, +₨ ${formatNumber(res.cashAdded)}`);
+    },
+    [addToast, isGameplayBlocked, spawnFloat, saveLocal, scheduleCloudSync],
+  );
+
+  const handleEnactDecision = useCallback(
+    (decisionId: string, e: React.MouseEvent<HTMLButtonElement>) => {
+      if (isGameplayBlocked()) return;
+      const def = NATIONAL_DECISIONS.find((d) => d.id === decisionId);
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const res = applyEnactNationalDecision(stateRef.current, decisionId, nowSrv);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(18, !!res.state.set.vib);
+      const rect = e.currentTarget.getBoundingClientRect();
+      spawnFloat(def?.name || 'Enacted', rect.left + rect.width / 2, rect.top, '#3fe0b0');
+      setState((prev) => {
+        const recheck = applyEnactNationalDecision(prev, decisionId, nowSrv);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      addToast(res.summary || `${def?.name || decisionId} enacted!`);
     },
     [addToast, isGameplayBlocked, spawnFloat, saveLocal, scheduleCloudSync],
   );
@@ -3695,6 +3840,15 @@ export default function App() {
     },
     [updateState],
   );
+  const handleApplyGraphics = useCallback(
+    (next: GraphicsSettings) => {
+      const normalized = normalizeGraphicsSettings(next);
+      writeGraphicsSettings(uidRef.current, normalized);
+      setGraphicsSettings(normalized);
+      addToast(`Graphics preset updated (${normalized.preset.toUpperCase()})`);
+    },
+    [addToast],
+  );
   const handleOpenErrorLog = useCallback(() => setErrorLogOpen(true), []);
   const handleCloseErrorLog = useCallback(() => setErrorLogOpen(false), []);
   const handleOpenAuthFromSettings = useCallback(() => {
@@ -3782,6 +3936,7 @@ export default function App() {
   const currentTabMeta = TAB_META[tab];
   const srvMinute = Math.floor((state.t + serverOffsetMs) / 60_000);
   const dayKey = useMemo(() => dayKeyFor(srvMinute * 60_000), [srvMinute]);
+  const weekKey = useMemo(() => weekKeyFor(srvMinute * 60_000), [srvMinute]);
 
   // Mandatory Website Version Detection & Cross-Tab Update Lock
   useEffect(() => {
@@ -4042,13 +4197,22 @@ export default function App() {
           {(!isMobile || tab === 'build') && (
             <HeroPanel
               state={state}
+              graphics={graphicsSettings}
               tradeTier={tradeTier}
               serverOffsetMs={serverOffsetMs}
               showCity={!isMobile || tab === 'build'}
-              burstKey={burstKey}
+              selectedBuildingId={selectedBuildingId}
+              focusRequest={focusRequest}
               onCollectTax={handleCollectTax}
               onActivateGemBoost={handleActivateGemBoost}
-              onCityBuildingTap={handleCityBuildingTap}
+              onSelectBuilding={handleSelectBuilding}
+              onBuyBuilding={handleBuyBuilding}
+              onUpgradeBuilding={handleUpgradeBuilding}
+              onDemolishBuilding={handleDemolishBuilding}
+              onSetBuildingPolicy={handleSetBuildingPolicy}
+              onChangeTimeMode={handleChangeTimeMode}
+              onChangeWeather={handleChangeWeather}
+              onPerfStats={setPerfStats}
             />
           )}
 
@@ -4068,6 +4232,8 @@ export default function App() {
                 state={state}
                 serverOffsetMs={serverOffsetMs}
                 onBuyBuilding={handleBuyBuilding}
+                onDemolishBuilding={handleDemolishBuilding}
+                onFocusBuilding={handleFocusBuilding}
               />
             )}
             {tab === 'gov' && (
@@ -4085,6 +4251,7 @@ export default function App() {
                 onStartProject={handleStartProjectCb}
                 onPayProjectStage={handlePayProjectStageCb}
                 onUnlockTech={handleUnlockTech}
+                onEnactDecision={handleEnactDecision}
               />
             )}
             {tab === 'policy' && (
@@ -4094,6 +4261,7 @@ export default function App() {
                 serverOffsetMs={serverOffsetMs}
                 onCommitFiscalReform={handleCommitFiscalReform}
                 onChangePolicyStance={handleChangePolicyStance}
+                onSetBuildingPolicy={handleSetBuildingPolicy}
                 onChangeGov={handleChangeGov}
                 onResetGame={handleResetGame}
                 onSaveCloudNow={handleSaveCloudNow}
@@ -4153,8 +4321,11 @@ export default function App() {
               <QuestsTab
                 state={state}
                 dayKey={dayKey}
+                weekKey={weekKey}
                 rankPosition={rankPosition}
                 onClaimQuest={handleClaimQuest}
+                onClaimWeekly={handleClaimWeeklyMission}
+                onClaimAchievement={handleClaimAchievement}
                 onClaimMilestone={handleClaimMilestone}
               />
             )}
@@ -4233,10 +4404,13 @@ export default function App() {
       <SettingsModal
         open={settingsOpen}
         state={state}
+        graphics={graphicsSettings}
+        perfStats={perfStats}
         uid={uid}
         email={user?.email || null}
         errorCount={appErrors.length}
         onToggleSetting={handleToggleSetting}
+        onApplyGraphics={handleApplyGraphics}
         onOpenAuth={handleOpenAuthFromSettings}
         onOpenErrorLog={handleOpenErrorLogFromSettings}
         onRequestReset={handleResetGame}

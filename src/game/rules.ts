@@ -1,6 +1,9 @@
 import {
+  ACHIEVEMENTS,
   BOOSTERS,
+  BUILDING_POLICIES,
   BUILDINGS,
+  CLOUD_MAX_RANK,
   COUNTRIES,
   CRATE_CD_MS,
   CRATE_COST_CASH,
@@ -13,9 +16,11 @@ import {
   GX_GOV_BUILDINGS,
   GX_ROADS,
   GX_UPGRADE_MULTS,
+  LEGACY_22_BUILDING_IDS,
   MAX_CONSTRUCTION_QUEUE,
   MAX_RANK,
   MIN_RANK,
+  NATIONAL_DECISIONS,
   NATIONAL_POLICIES,
   OFFLINE_CAP_SEC,
   OFFLINE_RATE,
@@ -25,10 +30,15 @@ import {
   SUBSCRIPTIONS,
   TECH_TREE,
   TZ,
+  WEEKLY_MISSIONS,
 } from './constants';
 import type {
   BoosterDef,
+  BuildingPolicyId,
+  CityTimeMode,
+  CityWeatherMode,
   GameState,
+  LeaderboardMode,
   PlayerProfile,
   PlayerStats,
   PolicyCategoryId,
@@ -42,6 +52,9 @@ import {
   applyBuyBoosterV2,
   applyChangePolicyStance,
   applyCommitFiscalReform,
+  applyDemolishBuilding,
+  applyEnactNationalDecision,
+  applySetBuildingPolicy,
   applyStartBuildingConstruction,
   BOOSTER_ACTIVE_PREFIX,
   BOOSTER_DAILY_PREFIX,
@@ -50,20 +63,27 @@ import {
   canBuyBoosterV2,
   canChangePolicyStance,
   canCommitFiscalReform,
+  canDemolishBuilding,
+  canEnactNationalDecision,
+  canSetBuildingPolicy,
   canStartBuildingConstruction,
   computeEconomySnapshot,
   currentWorldEvent,
   extractFiscalDraft,
   FISCAL_COOLDOWN_KEY,
+  getActiveBuildingPolicyId,
   getActiveShopIncomeBooster,
   getActiveSubscription,
   getBoosterActivationInfo,
+  getBuildingPolicyDef,
   getBuildSpeedMultiplier,
   getConstructionQueue,
+  getDemolishRefund,
   getDevelopmentDiscount,
   getFiscalCommitCost,
   getFiscalCooldownLeftMs,
   getGovDefinition,
+  getNationalDecisionCooldownLeftSec,
   getPolicyCooldownLeftMs,
   getPolicyStance,
   getRankEligibility,
@@ -77,6 +97,7 @@ import {
   hasFiscalDraftChanges,
   hasTech,
   isBoosterActive,
+  isBuildingPolicyAllowedFor,
   LEGACY_PROVINCE_MIGRATED_KEY,
   migrateLegacySaveToNational,
   POLICY_BOUNDS,
@@ -91,6 +112,7 @@ import {
   techCount,
   tickConstructionQueue,
   totalBuildings,
+  unlockedAchievementCount,
 } from './economy';
 
 export * from './economy';
@@ -192,6 +214,13 @@ export function freshState(): GameState {
     sub: {},
     subPromo: {},
     tech: {},
+    bPolicies: {},
+    achievements: {},
+    weeklyDay: '',
+    weeklyClaimed: {},
+    decisionsCd: {},
+    cityTimeMode: 'auto',
+    cityWeather: 'clear',
   };
 }
 
@@ -284,6 +313,33 @@ const LEGACY_BOOSTER_MAP: Record<string, string> = {
   tax_surge: 'tax_boost',
 };
 
+interface PackedV2Extension {
+  ob?: Record<string, number>;
+  ol?: Record<string, number>;
+  r?: number;
+  bp?: Record<string, string>;
+  ach?: Record<string, number>;
+  wk?: string;
+  wc?: Record<string, number>;
+  dc?: Record<string, number>;
+  ct?: CityTimeMode;
+  cw?: CityWeatherMode;
+}
+
+function unpackV2FromProvBudgetLog(rawLog: unknown): PackedV2Extension | null {
+  if (!Array.isArray(rawLog)) return null;
+  const v2Chunks = rawLog.filter((item): item is string => typeof item === 'string' && item.startsWith('v2:'));
+  if (v2Chunks.length === 0) return null;
+  try {
+    const joined = v2Chunks.map((c) => c.slice(3)).join('');
+    const parsed = JSON.parse(joined);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed as PackedV2Extension;
+  } catch {
+    return null;
+  }
+}
+
 export function migrateState(
   raw: Partial<GameState> & Record<string, unknown>,
   nowMs = Date.now(),
@@ -299,19 +355,33 @@ export function migrateState(
     provTxs?: unknown;
   };
 
-  // Remove deprecated Bank, avatar & province fields cleanly after migration extracts assets
+  // Unpack v2 extension envelope from provBudgetLog BEFORE stripping legacy province fields
+  const v2Pack = unpackV2FromProvBudgetLog(raw?.provBudgetLog);
+
+  // Remove deprecated Bank & avatar fields cleanly
   delete s.loan;
   delete s.deals;
   delete s.avHist;
   delete s.avs;
 
-  const rawB = s.b && typeof s.b === 'object' ? (s.b as Record<string, unknown>) : {};
+  const rawB = s.b && typeof s.b === 'object' ? { ...(s.b as Record<string, unknown>) } : {};
+  if (v2Pack?.ob && typeof v2Pack.ob === 'object') {
+    for (const [k, val] of Object.entries(v2Pack.ob)) {
+      if (!(k in rawB) || Number(rawB[k] || 0) === 0) {
+        rawB[k] = val;
+      }
+    }
+  }
   const cleanB: Record<string, number> = {};
   for (const d of BUILDINGS) {
     const v = Math.floor(Number(rawB[d.id]));
     cleanB[d.id] = Number.isFinite(v) && v >= 0 ? Math.min(10_000, v) : 0;
   }
   s.b = cleanB;
+
+  if (v2Pack?.r && Number.isFinite(v2Pack.r)) {
+    s.rank = Math.max(Number(s.rank || MIN_RANK), Number(v2Pack.r));
+  }
 
   if (!s.set || typeof s.set !== 'object') {
     s.set = { sfx: 1, vib: 1, anim: 1 };
@@ -452,9 +522,17 @@ export function migrateState(
     const v = Number(gx.cond?.[a[0]]);
     cond[a[0]] = (Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 100) + 0;
   }
+  const rawLvlSource = gx.lvl && typeof gx.lvl === 'object' ? { ...(gx.lvl as Record<string, unknown>) } : {};
+  if (v2Pack?.ol && typeof v2Pack.ol === 'object') {
+    for (const [k, val] of Object.entries(v2Pack.ol)) {
+      if (!(k in rawLvlSource) || Number(rawLvlSource[k] || 1) <= 1) {
+        rawLvlSource[k] = val;
+      }
+    }
+  }
   const lvl: Record<string, number> = {};
   for (const d of BUILDINGS) {
-    const v = Math.floor(Number(gx.lvl?.[d.id]));
+    const v = Math.floor(Number(rawLvlSource[d.id]));
     lvl[d.id] = v >= 1 && v <= 5 ? v : 1;
   }
   const rawExp = gx.exp && typeof gx.exp === 'object' ? (gx.exp as unknown as Record<string, unknown>) : null;
@@ -524,6 +602,56 @@ export function migrateState(
     s.subPromo = {};
   }
 
+  // Sanitize v2 extended national fields cleanly
+  const validBuildingSet = new Set(BUILDINGS.map((b) => b.id));
+  const validPolicySet = new Set(BUILDING_POLICIES.map((p) => p.id));
+  const rawBp = (raw?.bPolicies && typeof raw.bPolicies === 'object' ? raw.bPolicies : v2Pack?.bp) as Record<string, unknown> | undefined;
+  const cleanBp: Record<string, BuildingPolicyId> = {};
+  if (rawBp && typeof rawBp === 'object') {
+    for (const [k, v] of Object.entries(rawBp)) {
+      if (validBuildingSet.has(k) && typeof v === 'string' && validPolicySet.has(v as BuildingPolicyId) && v !== 'standard') {
+        cleanBp[k] = v as BuildingPolicyId;
+      }
+    }
+  }
+  s.bPolicies = cleanBp;
+
+  const rawAch = (raw?.achievements && typeof raw.achievements === 'object' ? raw.achievements : v2Pack?.ach) as Record<string, unknown> | undefined;
+  const cleanAch: Record<string, number> = {};
+  if (rawAch && typeof rawAch === 'object') {
+    for (const a of ACHIEVEMENTS) {
+      if (Number(rawAch[a.id]) > 0) cleanAch[a.id] = 1;
+    }
+  }
+  s.achievements = cleanAch;
+
+  const rawWk = typeof raw?.weeklyDay === 'string' ? raw.weeklyDay : (typeof v2Pack?.wk === 'string' ? v2Pack.wk : '');
+  s.weeklyDay = rawWk.slice(0, 16);
+
+  const rawWc = (raw?.weeklyClaimed && typeof raw.weeklyClaimed === 'object' ? raw.weeklyClaimed : v2Pack?.wc) as Record<string, unknown> | undefined;
+  const cleanWc: Record<string, number> = {};
+  if (rawWc && typeof rawWc === 'object') {
+    for (const m of WEEKLY_MISSIONS) {
+      if (Number(rawWc[m.id]) > 0) cleanWc[m.id] = 1;
+    }
+  }
+  s.weeklyClaimed = cleanWc;
+
+  const rawDc = (raw?.decisionsCd && typeof raw.decisionsCd === 'object' ? raw.decisionsCd : v2Pack?.dc) as Record<string, unknown> | undefined;
+  const cleanDc: Record<string, number> = {};
+  if (rawDc && typeof rawDc === 'object') {
+    for (const d of NATIONAL_DECISIONS) {
+      const val = Math.floor(Number(rawDc[d.id]));
+      if (Number.isFinite(val) && val > 0) cleanDc[d.id] = Math.min(1e13, val) + 0;
+    }
+  }
+  s.decisionsCd = cleanDc;
+
+  const rawCt = raw?.cityTimeMode ?? v2Pack?.ct;
+  s.cityTimeMode = rawCt === 'day' || rawCt === 'sunset' || rawCt === 'night' ? rawCt : 'auto';
+  const rawCw = raw?.cityWeather ?? v2Pack?.cw;
+  s.cityWeather = rawCw === 'overcast' || rawCw === 'rain' ? rawCw : 'clear';
+
   // Strip province arrays cleanly AFTER idempotent migration
   const migrated = migrateLegacySaveToNational(raw || {}, s);
   delete (migrated as unknown as Record<string, unknown>).provinces;
@@ -561,14 +689,26 @@ function toSafeInt(value: unknown, min: number, max: number): number {
   return Math.min(max, Math.max(min, n)) + 0;
 }
 
-export const ALLOWED_SAVE_KEYS = new Set(Object.keys(freshState()).filter((k) => k !== 'country'));
+const CLOUD_TOP_LEVEL_KEYS = [
+  'cash', 'gems', 'taxPool', 'day', 'b', 'tax', 'wel', 'hap', 'appr', 'pop',
+  'boost', 'claimed', 'milestones', 'crateCd', 't', 'ev', 'edu', 'hist', 'stk',
+  'streak', 'lastDaily', 'set', 'fuel', 'carbon', 'luxury', 'corp', 'gst', 'prop',
+  'duty', 'tourism', 'digital', 'wealth', 'rd', 'green', 'transitSub', 'questDay',
+  'questIds', 'rank', 'activeFx', 'boosterCd', 'fused', 'gov', 'govT', 'gx',
+  'sub', 'subPromo', 'tech',
+] as const;
+
+export const ALLOWED_SAVE_KEYS = new Set<string>(CLOUD_TOP_LEVEL_KEYS);
+
+const LEGACY_22_SET = new Set<string>(LEGACY_22_BUILDING_IDS);
 
 export function cleanSavePayload(s: GameState, nowMs = Date.now()): Record<string, unknown> {
   const normalized = migrateState({ ...(s as GameState & Record<string, unknown>) }, nowMs);
   normalized.cash = Math.min(1e13, Math.max(0, Number.isFinite(Number(normalized.cash)) ? Number(normalized.cash) : 0)) + 0;
   normalized.gems = toSafeInt(normalized.gems, 0, 1e9);
   normalized.taxPool = Math.min(1e13, Math.max(0, Number.isFinite(Number(normalized.taxPool)) ? Number(normalized.taxPool) : 0)) + 0;
-  normalized.rank = toSafeInt(normalized.rank, MIN_RANK, MAX_RANK);
+  const fullRank = toSafeInt(normalized.rank, MIN_RANK, MAX_RANK);
+  normalized.rank = Math.min(CLOUD_MAX_RANK, fullRank) + 0;
   normalized.fused = toSafeInt(normalized.fused, 0, 1_000_000);
   normalized.streak = toSafeInt(normalized.streak, 0, 10_000);
   normalized.day = Math.max(0, Math.min(100_000_000, Number.isFinite(Number(normalized.day)) ? Number(normalized.day) : 0)) + 0;
@@ -585,13 +725,70 @@ export function cleanSavePayload(s: GameState, nowMs = Date.now()): Record<strin
     : [];
   normalized.questDay = typeof normalized.questDay === 'string' ? normalized.questDay.slice(0, 32) : '';
 
+  // Enforce firestore.rules s.b.size() <= 35 and s.gx.lvl.size() <= 35
+  const fullB = normalized.b || {};
+  const fullLvl = normalized.gx?.lvl || {};
+  const extraIds = BUILDINGS.map((d) => d.id)
+    .filter((id) => !LEGACY_22_SET.has(id))
+    .sort((a, b) => {
+      const activeDiff = (fullB[b] || 0) - (fullB[a] || 0);
+      if (activeDiff !== 0) return activeDiff;
+      const lvlDiff = (fullLvl[b] || 1) - (fullLvl[a] || 1);
+      if (lvlDiff !== 0) return lvlDiff;
+      return a.localeCompare(b);
+    });
+  const primaryIds = [...LEGACY_22_BUILDING_IDS, ...extraIds].slice(0, 35);
+  const primarySet = new Set(primaryIds);
+
+  const primaryB: Record<string, number> = {};
+  const primaryLvl: Record<string, number> = {};
+  for (const id of primaryIds) {
+    primaryB[id] = fullB[id] || 0;
+    primaryLvl[id] = fullLvl[id] || 1;
+  }
+
+  const overflowB: Record<string, number> = {};
+  const overflowLvl: Record<string, number> = {};
+  for (const d of BUILDINGS) {
+    if (primarySet.has(d.id)) continue;
+    const cnt = fullB[d.id] || 0;
+    const lv = fullLvl[d.id] || 1;
+    if (cnt > 0) overflowB[d.id] = cnt;
+    if (lv > 1) overflowLvl[d.id] = lv;
+  }
+
+  const pack: PackedV2Extension = {};
+  if (Object.keys(overflowB).length > 0) pack.ob = overflowB;
+  if (Object.keys(overflowLvl).length > 0) pack.ol = overflowLvl;
+  if (fullRank > CLOUD_MAX_RANK) pack.r = fullRank;
+  if (normalized.bPolicies && Object.keys(normalized.bPolicies).length > 0) pack.bp = normalized.bPolicies;
+  if (normalized.achievements && Object.keys(normalized.achievements).length > 0) pack.ach = normalized.achievements;
+  if (normalized.weeklyDay) pack.wk = normalized.weeklyDay;
+  if (normalized.weeklyClaimed && Object.keys(normalized.weeklyClaimed).length > 0) pack.wc = normalized.weeklyClaimed;
+  if (normalized.decisionsCd && Object.keys(normalized.decisionsCd).length > 0) pack.dc = normalized.decisionsCd;
+  if (normalized.cityTimeMode && normalized.cityTimeMode !== 'auto') pack.ct = normalized.cityTimeMode;
+  if (normalized.cityWeather && normalized.cityWeather !== 'clear') pack.cw = normalized.cityWeather;
+
+  normalized.b = primaryB;
+  normalized.gx = { ...normalized.gx, lvl: primaryLvl };
+
   const raw = stripUndefinedDeep(normalized) as Record<string, unknown>;
   const out: Record<string, unknown> = {};
-  for (const key of ALLOWED_SAVE_KEYS) {
+  for (const key of CLOUD_TOP_LEVEL_KEYS) {
     if (key in raw) {
       out[key] = raw[key];
     }
   }
+
+  if (Object.keys(pack).length > 0) {
+    const json = JSON.stringify(pack);
+    const chunks: string[] = [];
+    for (let i = 0; i < json.length && chunks.length < 20; i += 450) {
+      chunks.push(`v2:${json.slice(i, i + 450)}`);
+    }
+    out.provBudgetLog = chunks;
+  }
+
   return out;
 }
 
@@ -701,7 +898,16 @@ export function playerLevel(s: GameState): number {
   return 1 + Math.floor(Math.sqrt(calculateGdp(s) / 1000));
 }
 
-const POLLUTING_INDUSTRY_IDS = new Set(['textile_mills', 'factories', 'steel_plants']);
+const POLLUTING_INDUSTRY_IDS = new Set([
+  'textile_mills',
+  'factories',
+  'steel_plants',
+  'small_factory',
+  'mfg_plant',
+  'auto_factory',
+  'electronics_factory',
+  'heavy_industry',
+]);
 
 export function targetHappiness(s: GameState, nowMs = Date.now()): number {
   const cleanEnergy = (s.b?.solar_plants || 0) + (s.b?.wind_farms || 0);
@@ -712,6 +918,7 @@ export function targetHappiness(s: GameState, nowMs = Date.now()): number {
   const techFlatHap = (ecoTech ? 2 : 0) + (careTech ? 5 : 0);
 
   let buildingHap = 0;
+  let bPolicyHap = 0;
   for (const d of BUILDINGS) {
     const count = s.b?.[d.id] || 0;
     if (count <= 0) continue;
@@ -719,10 +926,12 @@ export function targetHappiness(s: GameState, nowMs = Date.now()): number {
     if (ecoTech && POLLUTING_INDUSTRY_IDS.has(d.id) && delta < 0) {
       delta *= 0.7;
     }
-    if (careTech && d.id === 'hospitals') {
+    if (careTech && (d.id === 'hospitals' || d.id === 'adv_medical')) {
       delta *= 1.25;
     }
     buildingHap += delta * count;
+    const pol = getBuildingPolicyDef(getActiveBuildingPolicyId(s, d.id));
+    bPolicyHap += pol.hapDelta * Math.min(3, count);
   }
 
   // National policy happiness effects
@@ -771,7 +980,8 @@ export function targetHappiness(s: GameState, nowMs = Date.now()): number {
         (s.tourism || 0) * 0.15 -
         (s.digital || 0) * 0.2 -
         (s.wealth || 0) * 0.15 +
-        buildingHap,
+        buildingHap +
+        bPolicyHap,
     ),
   );
 }
@@ -1219,7 +1429,8 @@ export const MILESTONES: QuestDef[] = [
   { id: 'm_rank_4', t: 'Business Owner Charter (Reach Rank 4)', f: (s) => s.rank || MIN_RANK, g: 4, r: 15 },
   { id: 'm_tech_3', t: 'Chief Scientist (Unlock 3 Research doctrines)', f: (s) => techCount(s), g: 3, r: 12 },
   { id: 'm_gdp_100m', t: 'Economic Powerhouse (Real GDP ₨ 100M)', f: (s) => calculateGdp(s), g: 100_000_000, r: 25 },
-  { id: 'm_rank_10', t: 'National Legend (Reach Rank 10)', f: (s) => s.rank || MIN_RANK, g: MAX_RANK, r: 45 },
+  { id: 'm_rank_10', t: 'National Legend (Reach Rank 10)', f: (s) => s.rank || MIN_RANK, g: 10, r: 45 },
+  { id: 'm_rank_15', t: 'Eternal Chancellor (Reach Rank 15)', f: (s) => s.rank || MIN_RANK, g: MAX_RANK, r: 75 },
 ];
 
 export function claimMilestone(
@@ -1815,6 +2026,129 @@ export function rotateDailyQuestsIfNeeded(s: GameState, nowMs = Date.now()): Gam
   };
 }
 
+export function selectWeeklyMissionIds(weekStr: string): number[] {
+  let seed = 0;
+  for (let i = 0; i < weekStr.length; i++) {
+    seed = (seed * 37 + weekStr.charCodeAt(i)) >>> 0;
+  }
+  const idx = [...Array(WEEKLY_MISSIONS.length).keys()];
+  for (let i = idx.length - 1; i > 0; i--) {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    const j = Math.floor((seed / 4294967296) * (i + 1));
+    const tmp = idx[i];
+    idx[i] = idx[j];
+    idx[j] = tmp;
+  }
+  return idx.slice(0, 3);
+}
+
+export function rotateWeeklyMissionsIfNeeded(s: GameState, nowMs = Date.now()): GameState {
+  const wk = weekKeyFor(nowMs);
+  if (s.weeklyDay === wk) return s;
+  return {
+    ...s,
+    weeklyDay: wk,
+    weeklyClaimed: {},
+  };
+}
+
+export function applyClaimWeeklyMission(
+  s: GameState,
+  missionId: string,
+  weekKey: string,
+  rankPos: number,
+): { ok: boolean; state: GameState; gemsAdded: number; reason?: string } {
+  const rotated = s.weeklyDay === weekKey ? s : { ...s, weeklyDay: weekKey, weeklyClaimed: {} };
+  if (rotated.weeklyClaimed?.[missionId]) {
+    return { ok: false, state: s, gemsAdded: 0, reason: 'Already claimed this week' };
+  }
+  const activeIndices = selectWeeklyMissionIds(weekKey);
+  const mIdx = WEEKLY_MISSIONS.findIndex((m) => m.id === missionId);
+  if (mIdx < 0 || !activeIndices.includes(mIdx)) {
+    return { ok: false, state: s, gemsAdded: 0, reason: 'Weekly mission not active' };
+  }
+  const m = WEEKLY_MISSIONS[mIdx];
+  if (m.f(rotated, { rank: rankPos }) < m.g) {
+    return { ok: false, state: s, gemsAdded: 0, reason: 'Weekly goal not yet completed' };
+  }
+  const safeGems = Number.isFinite(rotated.gems) ? Math.max(0, Math.floor(rotated.gems)) : 0;
+  return {
+    ok: true,
+    gemsAdded: m.r,
+    state: {
+      ...rotated,
+      gems: Math.min(1e9, safeGems + m.r),
+      weeklyDay: weekKey,
+      weeklyClaimed: { ...(rotated.weeklyClaimed || {}), [missionId]: 1 },
+    },
+  };
+}
+
+export function applyClaimAchievement(
+  s: GameState,
+  achievementId: string,
+): { ok: boolean; state: GameState; gemsAdded: number; cashAdded: number; reason?: string } {
+  const def = ACHIEVEMENTS.find((a) => a.id === achievementId);
+  if (!def) return { ok: false, state: s, gemsAdded: 0, cashAdded: 0, reason: 'Unknown achievement' };
+  if (s.achievements?.[achievementId]) {
+    return { ok: false, state: s, gemsAdded: 0, cashAdded: 0, reason: 'Already unlocked & claimed' };
+  }
+  if (def.f(s) < def.goal) {
+    return { ok: false, state: s, gemsAdded: 0, cashAdded: 0, reason: 'Achievement criteria not met' };
+  }
+  const safeCash = Number.isFinite(s.cash) ? Math.max(0, s.cash) : 0;
+  const safeGems = Number.isFinite(s.gems) ? Math.max(0, Math.floor(s.gems)) : 0;
+  return {
+    ok: true,
+    gemsAdded: def.rewardGems,
+    cashAdded: def.rewardCash,
+    state: {
+      ...s,
+      cash: Math.min(1e13, safeCash + def.rewardCash),
+      gems: Math.min(1e9, safeGems + def.rewardGems),
+      achievements: { ...(s.achievements || {}), [achievementId]: 1 },
+    },
+  };
+}
+
+export function computeLeaderboardMetrics(p: PlayerProfile) {
+  const gdp = Math.max(0, Number(p.gdp) || 0);
+  const cash = Math.max(0, Number(p.cash) || 0);
+  const gems = Math.max(0, Number(p.gems) || 0);
+  const bldgs = Math.max(0, Number(p.stats?.buildings) || 0);
+  const trades = Math.max(0, Number(p.stats?.completedTrades) || 0);
+  const cashTraded = Math.max(0, Number(p.stats?.cashTraded) || 0);
+  const rankNum = Math.max(1, Number(p.rank) || 1);
+  const levelNum = Math.max(1, Number(p.level) || 1);
+
+  const overall = gdp;
+  const netWorth = Math.floor(gdp * 0.72 + cash + gems * 12_500);
+  const buildingDev = Math.floor(bldgs * 1_000 + levelNum * 120 + rankNum * 500);
+  const production = Math.floor(gdp / 180 + bldgs * 15);
+  const contribution = Math.floor(trades * 25_000 + cashTraded * 0.05 + bldgs * 800 + rankNum * 10_000);
+  const weekly = Math.floor(gdp * 0.35 + bldgs * 18_000 + trades * 30_000);
+  const monthly = Math.floor(gdp * 0.55 + cash * 0.25 + trades * 45_000);
+
+  return { overall, netWorth, buildingDev, production, contribution, weekly, monthly };
+}
+
+export function sortLeaderboardProfiles(players: PlayerProfile[], mode: LeaderboardMode): PlayerProfile[] {
+  const seen = new Set<string>();
+  const deduped: PlayerProfile[] = [];
+  for (const p of players) {
+    if (!p?.id || seen.has(p.id)) continue;
+    seen.add(p.id);
+    deduped.push(p);
+  }
+  return deduped.sort((a, b) => {
+    const scoreA = computeLeaderboardMetrics(a)[mode];
+    const scoreB = computeLeaderboardMetrics(b)[mode];
+    if (scoreB !== scoreA) return scoreB - scoreA;
+    if ((b.gdp || 0) !== (a.gdp || 0)) return (b.gdp || 0) - (a.gdp || 0);
+    return a.id.localeCompare(b.id);
+  });
+}
+
 export interface EntryCheckGateInput {
   isFirebaseConfigured: boolean;
   authResolved: boolean;
@@ -1853,6 +2187,7 @@ export function computeDailyAndOfflineChecks(
 ): DailyOfflineCheckResult {
   let working = { ...baseState };
   const todayKey = dayKeyFor(nowMs);
+  const currentWeek = weekKeyFor(nowMs);
   let changed = false;
 
   if (working.questDay !== todayKey) {
@@ -1861,6 +2196,15 @@ export function computeDailyAndOfflineChecks(
       questDay: todayKey,
       questIds: selectDailyQuestIds(todayKey),
       claimed: {},
+    };
+    changed = true;
+  }
+
+  if (working.weeklyDay !== currentWeek) {
+    working = {
+      ...working,
+      weeklyDay: currentWeek,
+      weeklyClaimed: {},
     };
     changed = true;
   }
@@ -1931,24 +2275,34 @@ export function computeDailyAndOfflineChecks(
 export {
   applyChangePolicyStance,
   applyCommitFiscalReform,
+  applyDemolishBuilding,
+  applyEnactNationalDecision,
+  applySetBuildingPolicy,
   applyStartBuildingConstruction,
   buildingCost,
   bulkBuildingCost,
   canChangePolicyStance,
   canCommitFiscalReform,
+  canDemolishBuilding,
+  canEnactNationalDecision,
+  canSetBuildingPolicy,
   canStartBuildingConstruction,
   computeEconomySnapshot,
   currentWorldEvent,
   extractFiscalDraft,
+  getActiveBuildingPolicyId,
   getActiveShopIncomeBooster,
   getActiveSubscription,
   getBoosterActivationInfo,
+  getBuildingPolicyDef,
   getBuildSpeedMultiplier,
   getConstructionQueue,
+  getDemolishRefund,
   getDevelopmentDiscount,
   getFiscalCommitCost,
   getFiscalCooldownLeftMs,
   getGovDefinition,
+  getNationalDecisionCooldownLeftSec,
   getPolicyCooldownLeftMs,
   getPolicyStance,
   getRankEligibility,
@@ -1962,6 +2316,7 @@ export {
   hasFiscalDraftChanges,
   hasTech,
   isBoosterActive,
+  isBuildingPolicyAllowedFor,
   presetToFiscalDraft,
   stickerBonus,
   stickerUniqueCount,
@@ -1969,6 +2324,7 @@ export {
   techCount,
   tickConstructionQueue,
   totalBuildings,
+  unlockedAchievementCount,
   POLICY_BOUNDS,
 };
 

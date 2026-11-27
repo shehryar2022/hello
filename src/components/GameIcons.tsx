@@ -13,6 +13,8 @@ import {
   Calendar,
   CalendarDays,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Cloud,
   Coins,
@@ -32,6 +34,7 @@ import {
   Hammer,
   HeartHandshake,
   HeartPulse,
+  Home,
   Hospital,
   IdCard,
   Landmark,
@@ -43,6 +46,7 @@ import {
   Package,
   Plane,
   Rabbit,
+  Radio,
   RefreshCw,
   Rocket,
   Scale,
@@ -62,8 +66,10 @@ import {
   Sun,
   Target,
   TrainFront,
+  Trash2,
   TrendingUp,
   Trophy,
+  Truck,
   Turtle,
   Users,
   Volume2,
@@ -74,7 +80,7 @@ import {
   Wrench,
   Zap,
 } from 'lucide-react';
-import { RANKS, RARITY_META, STICKERS } from '../game/constants';
+import { MAX_RANK, RANKS, RARITY_META, STICKERS } from '../game/constants';
 import { flagLargeUrl, flagUrl, sanitizeCountryCode } from '../game/rules';
 import type {
   BoosterId,
@@ -180,12 +186,19 @@ export const BuildingIcon: React.FC<{ id: string; size?: number; color?: string 
     case 'food_plant':
       return <Package {...props} />;
     // Industry
-    case 'textile_mills':
-      return <ShoppingBag {...props} />;
+    case 'small_factory':
+    case 'mfg_plant':
     case 'factories':
       return <Factory {...props} />;
+    case 'textile_mills':
+      return <ShoppingBag {...props} />;
     case 'steel_plants':
+    case 'heavy_industry':
       return <Hammer {...props} />;
+    case 'auto_factory':
+      return <Truck {...props} />;
+    case 'electronics_factory':
+      return <Cpu {...props} />;
     // Energy
     case 'solar_plants':
       return <Sun {...props} />;
@@ -195,6 +208,7 @@ export const BuildingIcon: React.FC<{ id: string; size?: number; color?: string 
       return <Zap {...props} />;
     // Infrastructure
     case 'roads':
+    case 'highway_network':
       return <Compass {...props} />;
     case 'railways':
       return <TrainFront {...props} />;
@@ -202,27 +216,66 @@ export const BuildingIcon: React.FC<{ id: string; size?: number; color?: string 
       return <Anchor {...props} />;
     case 'airports':
       return <Plane {...props} />;
+    case 'water_plant':
+      return <Waves {...props} />;
+    case 'logistics_center':
+      return <Truck {...props} />;
+    case 'telecom_center':
+      return <Radio {...props} />;
+    // Residential
+    case 'small_housing':
+    case 'luxury_residences':
+      return <Home {...props} />;
+    case 'apartments':
+    case 'residential_towers':
+    case 'smart_housing':
+      return <Building2 {...props} />;
     // Commercial
     case 'markets':
       return <Store {...props} />;
     case 'shopping_centers':
       return <ShoppingCart {...props} />;
     case 'business_districts':
+    case 'corporate_tower':
+    case 'trade_center':
+    case 'financial_center':
+    case 'intl_hotel':
       return <Building2 {...props} />;
     // Technology
     case 'research_centers':
+    case 'central_lab':
       return <FlaskConical {...props} />;
     case 'tech_parks':
       return <Cpu {...props} />;
     case 'data_centers':
       return <Server {...props} />;
     // Healthcare & Education
+    case 'schools':
     case 'training_centers':
       return <BookIconFallback {...props} />;
     case 'hospitals':
+    case 'adv_medical':
       return <HeartPulse {...props} />;
     case 'universities':
       return <GraduationCap {...props} />;
+    // Public Services
+    case 'police_hq':
+      return <Shield {...props} />;
+    case 'fire_dept':
+      return <Flame {...props} />;
+    case 'govt_admin':
+      return <Landmark {...props} />;
+    case 'transit_hub':
+      return <Bus {...props} />;
+    // Special
+    case 'national_stadium':
+      return <Trophy {...props} />;
+    case 'national_bank':
+      return <Banknote {...props} />;
+    case 'convention_center':
+      return <Globe {...props} />;
+    case 'space_center':
+      return <Rocket {...props} />;
     default:
       return <Building2 {...props} />;
   }
@@ -370,7 +423,7 @@ export const RankEmblem: React.FC<{ rank: number; size?: number; className?: str
   size = 24,
   className,
 }) => {
-  const safeRank = Math.max(1, Math.min(10, Math.floor(rank || 1)));
+  const safeRank = Math.max(1, Math.min(MAX_RANK, Math.floor(rank || 1)));
   const def = RANKS[safeRank] || RANKS[1];
   const color = def.c || '#94a3b8';
 
@@ -595,9 +648,12 @@ export {
   Briefcase,
   Calendar,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Cloud,
   Coins,
+  Compass,
   Cpu,
   Crown,
   Factory,
@@ -608,6 +664,7 @@ export {
   Globe,
   Hammer,
   HeartPulse,
+  Home,
   IdCard,
   Landmark,
   Lock,
@@ -617,16 +674,19 @@ export {
   RefreshCw,
   Rocket,
   Search,
+  Shield,
   SlidersHorizontal,
   Smartphone,
   Smile,
   Sparkles,
   Target,
+  Trash2,
   TrendingUp,
   Trophy,
   Users,
   Volume2,
   Vote,
+  Waves,
   Wheat,
   Wrench,
   Zap,

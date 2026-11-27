@@ -161,6 +161,15 @@ export function buildMeaningfulSaveFingerprint(state: GameState, nowSrvMs?: numb
     boosterCd: cleaned.boosterCd,
     questDay: cleaned.questDay,
     questIds: cleaned.questIds,
+    provBudgetLog: (cleaned as { provBudgetLog?: unknown }).provBudgetLog,
+    trueRank: state.rank,
+    bPolicies: state.bPolicies,
+    decisionsCd: state.decisionsCd,
+    achievements: state.achievements,
+    weeklyDay: state.weeklyDay,
+    weeklyClaimed: state.weeklyClaimed,
+    cityTimeMode: state.cityTimeMode,
+    cityWeather: state.cityWeather,
   });
 }
 

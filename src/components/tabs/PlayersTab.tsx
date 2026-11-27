@@ -1,9 +1,24 @@
 import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { RANKS, SUBSCRIPTIONS } from '../../game/constants';
+import { MAX_RANK, RANKS, SUBSCRIPTIONS } from '../../game/constants';
 import { isPlayerOnline } from '../../firebase/presence';
-import { calculateGdp, formatNumber, isProfileSubActive } from '../../game/rules';
-import type { ChatMessage, DmRecipient, GameState, PlayerProfile, PlayersSubTab } from '../../game/types';
 import {
+  calculateGdp,
+  computeLeaderboardMetrics,
+  formatNumber,
+  isProfileSubActive,
+  sortLeaderboardProfiles,
+} from '../../game/rules';
+import type {
+  ChatMessage,
+  DmRecipient,
+  GameState,
+  LeaderboardMode,
+  PlayerProfile,
+  PlayersSubTab,
+} from '../../game/types';
+import {
+  ChevronLeft,
+  ChevronRight,
   CountryFlag,
   Gift,
   Globe,
@@ -12,6 +27,7 @@ import {
   Mail,
   MessageSquare,
   RankEmblem,
+  Search,
   SubIcon,
   TrendingUp,
 } from '../GameIcons';
@@ -38,6 +54,17 @@ interface PlayersTabProps {
   onSendGlobalChat: (text: string) => Promise<boolean>;
   onSendDm: (text: string) => Promise<boolean>;
 }
+
+const LB_MODES: Array<{ id: LeaderboardMode; label: string; unit: string }> = [
+  { id: 'overall', label: 'Overall GDP', unit: 'GDP' },
+  { id: 'netWorth', label: 'Net Worth', unit: 'Wealth' },
+  { id: 'buildingDev', label: 'City Dev', unit: 'Dev Pts' },
+  { id: 'production', label: 'Production', unit: 'Output/s' },
+  { id: 'contribution', label: 'Contribution', unit: 'Contrib' },
+  { id: 'weekly', label: 'Weekly', unit: 'Wk Score' },
+  { id: 'monthly', label: 'Monthly', unit: 'Mo Score' },
+];
+const PAGE_SIZE = 10;
 
 const WHEN_FORMATTER = new Intl.DateTimeFormat(undefined, {
   month: 'short',
@@ -74,9 +101,34 @@ export const PlayersTab: React.FC<PlayersTabProps> = memo(({
 }) => {
   const [chatInput, setChatInput] = useState('');
   const [dmInput, setDmInput] = useState('');
+  const [lbMode, setLbMode] = useState<LeaderboardMode>('overall');
+  const [lbSearch, setLbSearch] = useState('');
+  const [lbPage, setLbPage] = useState(1);
   const listRef = useRef<HTMLDivElement>(null);
 
   const currentGdp = useMemo(() => calculateGdp(state), [state]);
+  const sortedLb = useMemo(() => sortLeaderboardProfiles(leaderboard, lbMode), [leaderboard, lbMode]);
+  const filteredLb = useMemo(() => {
+    const q = lbSearch.trim().toLowerCase();
+    if (!q) return sortedLb;
+    return sortedLb.filter(
+      (p) =>
+        p.username.toLowerCase().includes(q) ||
+        p.countryName.toLowerCase().includes(q) ||
+        p.countryCode.toLowerCase().includes(q),
+    );
+  }, [sortedLb, lbSearch]);
+  const totalPages = Math.max(1, Math.ceil(filteredLb.length / PAGE_SIZE));
+  const safePage = Math.min(lbPage, totalPages);
+  const pagedLb = useMemo(
+    () => filteredLb.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE),
+    [filteredLb, safePage],
+  );
+  const activeModeMeta = LB_MODES.find((m) => m.id === lbMode) || LB_MODES[0];
+
+  useEffect(() => {
+    setLbPage(1);
+  }, [lbMode, lbSearch]);
 
   useEffect(() => {
     if (listRef.current) {
@@ -127,7 +179,7 @@ export const PlayersTab: React.FC<PlayersTabProps> = memo(({
       <div className="subtabs">
         <button type="button" className={subTab === 'lb' ? 'on' : ''} onClick={() => onChangeSubTab('lb')}>
           <TrendingUp size={14} />
-          <span>Active</span>
+          <span>Rankings</span>
         </button>
         <button type="button" className={subTab === 'chat' ? 'on' : ''} onClick={() => onChangeSubTab('chat')}>
           <MessageSquare size={14} />
@@ -145,28 +197,56 @@ export const PlayersTab: React.FC<PlayersTabProps> = memo(({
         <>
           <h2 className="f sec">
             <Globe size={18} color="#3fe0b0" />
-            <span>Active players</span>
-            <span className="lv" style={{ background: 'var(--mint)', color: '#04332a' }}>ONLINE</span>
+            <span>Global Rankings</span>
+            <span className="lv" style={{ background: 'var(--mint)', color: '#04332a' }}>LIVE</span>
           </h2>
+
+          <div className="lb-modes" role="group" aria-label="Leaderboard ranking mode">
+            {LB_MODES.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                className={`fchip ${lbMode === m.id ? 'on' : ''}`}
+                onClick={() => setLbMode(m.id)}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="build-search-wrap" style={{ marginBottom: 10 }}>
+            <Search size={14} color="#a79fd0" />
+            <input
+              type="search"
+              className="inp build-search-inp"
+              placeholder="Search leaders or nations…"
+              aria-label="Search leaderboard"
+              value={lbSearch}
+              onChange={(e) => setLbSearch(e.target.value)}
+            />
+          </div>
+
           {!lbLoaded ? (
             <p className="dim">Loading players…</p>
           ) : (
             <>
               <div className="list">
-                {leaderboard.map((p, idx) => {
+                {pagedLb.map((p, idx) => {
+                  const globalIdx = (safePage - 1) * PAGE_SIZE + idx;
                   const me = p.id === uid;
-                  const rk = RANKS[Math.max(1, Math.min(10, p.rank || 1))] || RANKS[1];
+                  const rk = RANKS[Math.max(1, Math.min(MAX_RANK, p.rank || 1))] || RANKS[1];
                   const isOnline = !me && isPlayerOnline(p.seen, nowSrv);
                   const subTier = isProfileSubActive(p, nowSrv);
                   const subLabel = subTier
                     ? SUBSCRIPTIONS.find((x) => x.id === subTier)?.periodLabel || subTier
                     : '';
+                  const metricVal = computeLeaderboardMetrics(p)[lbMode];
                   return (
                     <div
                       key={p.id}
                       className={`row pcard ${me ? 'me' : ''} ${subTier ? `sub-card sub-card--${subTier}` : ''}`}
                     >
-                      <div className={`medal m${idx + 1}`}>{idx + 1}</div>
+                      <div className={`medal m${globalIdx + 1}`}>{globalIdx + 1}</div>
                       <div style={{ minWidth: 0 }}>
                         <h2 style={{ display: 'flex', gap: 7, alignItems: 'center' }}>
                           <span style={{ width: 24, height: 17, flex: 'none', display: 'inline-block' }}>
@@ -189,7 +269,10 @@ export const PlayersTab: React.FC<PlayersTabProps> = memo(({
                           )}
                         </h2>
                         <p>
-                          {p.countryName} · GDP ₨ {formatNumber(p.gdp || 0)}
+                          {p.countryName} · {activeModeMeta.unit}{' '}
+                          {lbMode === 'buildingDev' || lbMode === 'production' || lbMode === 'contribution'
+                            ? formatNumber(metricVal)
+                            : `₨ ${formatNumber(metricVal)}`}
                           {me ? ' · you' : ''}
                         </p>
                       </div>
@@ -233,6 +316,29 @@ export const PlayersTab: React.FC<PlayersTabProps> = memo(({
                   );
                 })}
               </div>
+              {totalPages > 1 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
+                  <button
+                    type="button"
+                    className="btn sm"
+                    disabled={safePage <= 1}
+                    onClick={() => setLbPage((pg) => Math.max(1, pg - 1))}
+                  >
+                    <ChevronLeft size={14} /> Prev
+                  </button>
+                  <span className="dim" style={{ fontSize: 12 }}>
+                    Page {safePage} / {totalPages} ({filteredLb.length} nations)
+                  </span>
+                  <button
+                    type="button"
+                    className="btn sm"
+                    disabled={safePage >= totalPages}
+                    onClick={() => setLbPage((pg) => Math.min(totalPages, pg + 1))}
+                  >
+                    Next <ChevronRight size={14} />
+                  </button>
+                </div>
+              )}
               <p className="cnote" style={{ marginTop: 8 }}>
                 {leaderboard.length < 2 ? 'Nobody else is online right now. ' : ''}
                 Only players active in the last 5 minutes are listed. Ranks update live.
@@ -251,7 +357,7 @@ export const PlayersTab: React.FC<PlayersTabProps> = memo(({
           <div className="chlist" ref={listRef}>
             {globalChat.length ? (
               globalChat.map((m) => {
-                const rk = RANKS[Math.max(1, Math.min(10, m.rank || 1))] || RANKS[1];
+                const rk = RANKS[Math.max(1, Math.min(MAX_RANK, m.rank || 1))] || RANKS[1];
                 const senderProfile = leaderboard.find((p) => p.id === m.uid);
                 const subTier = isProfileSubActive(senderProfile, nowSrv);
                 return (

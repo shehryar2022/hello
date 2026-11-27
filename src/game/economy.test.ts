@@ -2,11 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   BOOSTERS,
+  BUILDING_POLICIES,
   BUILDINGS,
+  CLOUD_MAX_RANK,
   FISCAL_COMMIT_CD_MS,
   MAX_CONSTRUCTION_QUEUE,
   MAX_RANK,
   MIN_RANK,
+  NATIONAL_DECISIONS,
   NATIONAL_POLICIES,
   POLICY_CATEGORY_CD_MS,
   RANKS,
@@ -21,6 +24,9 @@ import {
   applyChangePolicyStance,
   applyCollectTax,
   applyCommitFiscalReform,
+  applyDemolishBuilding,
+  applyEnactNationalDecision,
+  applySetBuildingPolicy,
   applyUnlockTech,
   calculateGdp,
   calculateIncome,
@@ -31,6 +37,7 @@ import {
   getBoosterActivationInfo,
   getBuildSpeedMultiplier,
   getConstructionQueue,
+  getDemolishRefund,
   getRankEligibility,
   karachiDateInt,
   migrateState,
@@ -95,19 +102,30 @@ test('1. Idempotent legacy migration consolidates provinces & 24 old buildings w
   assert.equal(migrated2.b.farms, 4);
   assert.equal(migrated2.milestones?.__prov_migrated_v1, 1);
 
-  // Clean save payload never exceeds Firestore caps and omits provinces
+  // Clean save payload never exceeds Firestore caps (<=35 building keys) and omits provinces
   const cleaned = cleanSavePayload(migrated2);
   assert.equal('provinces' in cleaned, false);
-  assert.equal(Object.keys(cleaned.b as Record<string, unknown>).length, 22);
   assert.ok(Object.keys(cleaned.b as Record<string, unknown>).length <= 35);
+  assert.equal(Object.keys(cleaned.b as Record<string, unknown>).length, 35);
 });
 
-test('2. 22 buildings across 7 categories, unlock gates, timed construction queue (max 5), and completion', () => {
-  assert.equal(BUILDINGS.length, 22);
+test('2. 51 buildings across 10 categories, unlock gates, timed construction queue (max 5), and completion', () => {
+  assert.equal(BUILDINGS.length, 51);
   const cats = new Set(BUILDINGS.map((b) => b.cat));
   assert.deepEqual(
     [...cats].sort(),
-    ['agriculture', 'commercial', 'energy', 'healthcare_edu', 'industry', 'infrastructure', 'technology'],
+    [
+      'agriculture',
+      'commercial',
+      'energy',
+      'healthcare_edu',
+      'industry',
+      'infrastructure',
+      'public_services',
+      'residential',
+      'special',
+      'technology',
+    ],
   );
 
   const now = 1_750_000_000_000;
@@ -276,10 +294,11 @@ test('5. 7 Boosters enforce daily Karachi limits, cooldowns, mutual exclusion, c
   assert.equal(applyBuyBooster(capState, taxDef, nextDayMs).ok, true);
 });
 
-test('6. Multi-factor Rank 1..10 progression gates & Real GDP stability on cash spend', () => {
+test('6. Multi-factor Rank 1..15 progression gates & Real GDP stability on cash spend', () => {
   assert.equal(MIN_RANK, 1);
-  assert.equal(MAX_RANK, 10);
-  assert.equal(RANKS.length, 11);
+  assert.equal(CLOUD_MAX_RANK, 10);
+  assert.equal(MAX_RANK, 15);
+  assert.equal(RANKS.length, 16);
 
   let state = freshState();
   state.cash = 100_000;
@@ -334,3 +353,126 @@ test('7. Coin subscriptions (2h=100K, 3d=1M, 7d=10M) preserve exact expiry and b
   assert.equal(r1.exp, now + 2 * 3_600_000);
   assert.equal(applyBuySubscription(r1.state, SUBSCRIPTIONS[0], now + 1000).ok, false);
 });
+
+import {
+  applyClaimAchievement,
+  applyClaimWeeklyMission,
+  rotateWeeklyMissionsIfNeeded,
+  selectWeeklyMissionIds,
+  sortLeaderboardProfiles,
+  weekKeyFor,
+} from './rules';
+import { ACHIEVEMENTS, WEEKLY_MISSIONS } from './constants';
+
+test('8. Building demolition refunds 45%, per-building policies enforce exclusions, and Cabinet Decisions enforce cooldowns', () => {
+  const now = 1_750_000_000_000;
+  let state = freshState();
+  state.cash = 5_000_000;
+  state.b.factories = 4;
+  state.b.textile_mills = 2;
+  state.b.solar_plants = 2;
+
+  assert.ok(BUILDING_POLICIES.length >= 6);
+  const baseSnap = computeEconomySnapshot(state, { nowMs: now });
+  const pol1 = applySetBuildingPolicy(state, 'factories', 'overtime_shift');
+  assert.equal(pol1.ok, true);
+  state = pol1.state;
+  assert.equal(state.bPolicies?.factories, 'overtime_shift');
+  const overtimeSnap = computeEconomySnapshot(state, { nowMs: now });
+  assert.ok(overtimeSnap.sectorIncome.industry > baseSnap.sectorIncome.industry);
+
+  const conflict = applySetBuildingPolicy(state, 'textile_mills', 'eco_operation');
+  assert.equal(conflict.ok, false);
+  assert.match(conflict.reason || '', /Conflicts/i);
+
+  const cashBeforeDemolish = state.cash;
+  const factoryDef = BUILDINGS.find((b) => b.id === 'factories')!;
+  const dem = applyDemolishBuilding(state, 'factories', 1);
+  assert.equal(dem.ok, true);
+  assert.equal(dem.newCount, 3);
+  assert.equal(dem.refund, getDemolishRefund(factoryDef, 1));
+  assert.equal(dem.state.cash, cashBeforeDemolish + dem.refund);
+  state = dem.state;
+
+  const demAll = applyDemolishBuilding(state, 'factories', 3);
+  assert.equal(demAll.ok, true);
+  assert.equal(demAll.newCount, 0);
+  assert.equal(demAll.state.bPolicies?.factories, undefined);
+  assert.equal(applyDemolishBuilding(demAll.state, 'factories', 1).ok, false);
+
+  state.rank = 5;
+  state.b.farms = 25;
+  state.gx.cond.parl = 70;
+  const dec = NATIONAL_DECISIONS.find((d) => d.id === 'grid_modernization')!;
+  const decRes = applyEnactNationalDecision(state, dec.id, now);
+  assert.equal(decRes.ok, true);
+  assert.equal(decRes.state.gx.cond.parl, 85);
+  assert.equal(applyEnactNationalDecision(decRes.state, dec.id, now + 5000).ok, false);
+});
+
+test('9. Lossless v2 packing preserves Rank 15, all 51 active buildings, policies & achievements through Firestore rule cap', () => {
+  const rich = freshState();
+  rich.rank = 15;
+  for (const d of BUILDINGS) {
+    rich.b[d.id] = 5;
+    rich.gx.lvl[d.id] = 3;
+  }
+  rich.bPolicies = { farms: 'eco_operation', space_center: 'premium_service' };
+  rich.achievements = { ach_city_15: 1, ach_rank_15: 1 };
+  rich.weeklyDay = '2026-W48';
+  rich.weeklyClaimed = { wk_build_60: 1 };
+  rich.cityTimeMode = 'night';
+  rich.cityWeather = 'rain';
+
+  const packed = cleanSavePayload(rich);
+  assert.ok(Object.keys(packed.b as Record<string, unknown>).length <= 35);
+  assert.ok(Object.keys((packed.gx as Record<string, unknown>).lvl as Record<string, unknown>).length <= 35);
+  assert.equal(packed.rank, 10);
+  assert.ok(Array.isArray(packed.provBudgetLog));
+  assert.ok((packed.provBudgetLog as string[]).length <= 20);
+
+  const restored = migrateState(packed as never);
+  assert.equal(restored.rank, 15);
+  assert.equal(totalBuildings(restored), BUILDINGS.length * 5);
+  assert.equal(restored.b.space_center, 5);
+  assert.equal(restored.gx.lvl.space_center, 3);
+  assert.equal(restored.bPolicies?.space_center, 'premium_service');
+  assert.equal(restored.achievements?.ach_rank_15, 1);
+  assert.equal(restored.weeklyDay, '2026-W48');
+  assert.equal(restored.weeklyClaimed?.wk_build_60, 1);
+  assert.equal(restored.cityTimeMode, 'night');
+  assert.equal(restored.cityWeather, 'rain');
+});
+
+test('10. Weekly missions rotate per ISO week, achievements grant idempotent rewards, and leaderboard sorting is deterministic', () => {
+  const now = 1_750_000_000_000;
+  const wk = weekKeyFor(now);
+  let state = rotateWeeklyMissionsIfNeeded(freshState(), now);
+  state.b.farms = 65;
+  state.pop = 90;
+  state.hap = 90;
+  state.fused = 5;
+  state.tech = { smart_grid: 1, eco_catalysis: 1, healthcare_act: 1, auto_customs: 1 };
+
+  const activeIdx = selectWeeklyMissionIds(wk);
+  assert.equal(activeIdx.length, 3);
+  const firstWeekly = WEEKLY_MISSIONS[activeIdx[0]];
+  const wClaim = applyClaimWeeklyMission(state, firstWeekly.id, wk, 1);
+  if (firstWeekly.f(state) >= firstWeekly.g) {
+    assert.equal(wClaim.ok, true);
+    assert.equal(applyClaimWeeklyMission(wClaim.state, firstWeekly.id, wk, 1).ok, false);
+  }
+
+  const ach = ACHIEVEMENTS.find((a) => a.id === 'ach_city_15')!;
+  const aClaim = applyClaimAchievement(state, ach.id);
+  assert.equal(aClaim.ok, true);
+  assert.equal(aClaim.gemsAdded, ach.rewardGems);
+  assert.equal(aClaim.cashAdded, ach.rewardCash);
+  assert.equal(applyClaimAchievement(aClaim.state, ach.id).ok, false);
+
+  const pA = { id: 'a', username: 'Alpha', usernameLower: 'alpha', countryCode: 'PK', countryName: 'Pakistan', gdp: 1_000_000, cash: 50_000, gems: 5, level: 2, rank: 2, stats: { buildings: 100, completedTrades: 1, tradesSent: 0, tradesReceived: 0, cashTraded: 0, gemsTraded: 0 } };
+  const pB = { id: 'b', username: 'Beta', usernameLower: 'beta', countryCode: 'US', countryName: 'United States', gdp: 2_000_000, cash: 100_000, gems: 10, level: 3, rank: 3, stats: { buildings: 10, completedTrades: 0, tradesSent: 0, tradesReceived: 0, cashTraded: 0, gemsTraded: 0 } };
+  assert.equal(sortLeaderboardProfiles([pA, pB], 'overall')[0].id, 'b');
+  assert.equal(sortLeaderboardProfiles([pA, pB], 'buildingDev')[0].id, 'a');
+});
+

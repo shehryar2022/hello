@@ -18,10 +18,10 @@ import {
 } from 'firebase/firestore';
 import {
   ACTIVE_WINDOW_MS,
+  CLOUD_MAX_RANK,
   COUNTRIES,
   DAILY_GIFT_MAX,
   GX_PROJECT_TYPES,
-  MAX_RANK,
   PROJECT_STAGES,
 } from '../game/constants';
 import { PRESENCE_QUERY_BUFFER_MS } from './presence';
@@ -240,7 +240,7 @@ export async function createPlayerProfile(
       const stk = cleanStickersMap(cleanedSave.stk);
       const gdpVal = Math.max(1, capValue(calculateGdp(baseState), 1e13));
       const levelVal = Math.max(1, Math.min(10_000_000, Math.floor(playerLevel(baseState))));
-      const rankVal = Math.max(1, Math.min(MAX_RANK, Math.floor(Number(baseState.rank) || 1)));
+      const rankVal = Math.max(1, Math.min(CLOUD_MAX_RANK, Math.floor(Number(baseState.rank) || 1)));
 
       if (pSnap.exists()) {
         const wData = wSnap.exists() ? wSnap.data() : null;
@@ -394,7 +394,7 @@ export async function syncSaveToCloud(params: {
             cash,
             gems,
             level: capValue(playerLevel(state), 10_000_000) || 1,
-            rank: capValue(state.rank, MAX_RANK),
+            rank: capValue(state.rank, CLOUD_MAX_RANK),
             subTier: activeSub ? activeSub.def.id : '',
             subExp: activeSub ? capValue(activeSub.exp, 1e13) : 0,
             lastSeen: serverTimestamp(),
@@ -527,7 +527,7 @@ export async function syncSaveToCloud(params: {
       cash,
       gems,
       level: capValue(playerLevel(state), 10_000_000) || 1,
-      rank: capValue(state.rank, MAX_RANK),
+      rank: capValue(state.rank, CLOUD_MAX_RANK),
       subTier: activeSub ? activeSub.def.id : '',
       subExp: activeSub ? capValue(activeSub.exp, 1e13) : 0,
       lastSeen: serverTimestamp(),
@@ -668,7 +668,7 @@ export async function createGiftOffer(params: {
       cash: newCash,
       gems: newGems,
       level: Math.max(1, Math.min(10_000_000, Math.floor(Number(meData.level) || 1))),
-      rank: Math.max(1, Math.min(MAX_RANK, Math.floor(Number(meData.rank) || 1))),
+      rank: Math.max(1, Math.min(CLOUD_MAX_RANK, Math.floor(Number(meData.rank) || 1))),
       lastSeen: serverTimestamp(),
       stats: sanitizeStats(prevStats, {
         tradesSent: prevStats.tradesSent + 1,
@@ -761,7 +761,7 @@ export async function acceptGiftOffer(
         cash: newCash,
         gems: newGems,
         level: Math.max(1, Math.min(10_000_000, Math.floor(Number(md.level) || 1))),
-        rank: Math.max(1, Math.min(MAX_RANK, Math.floor(Number(md.rank) || 1))),
+        rank: Math.max(1, Math.min(CLOUD_MAX_RANK, Math.floor(Number(md.rank) || 1))),
         lastSeen: serverTimestamp(),
         stats: sanitizeStats(prevStats, {
           completedTrades: prevStats.completedTrades + 1,
@@ -992,7 +992,7 @@ export async function sendGlobalChatMessage(params: {
     uid: activeUid,
     name: cleanName,
     cc: sanitizeCountryCode(params.countryCode),
-    rank: Math.max(0, Math.min(MAX_RANK, Math.floor(params.rank || 0))),
+    rank: Math.max(0, Math.min(CLOUD_MAX_RANK, Math.floor(params.rank || 0))),
     text: cleanText,
     createdAt: serverTimestamp(),
   });
@@ -1094,7 +1094,7 @@ export async function syncPublicProfileMetrics(params: {
     cash,
     gems,
     level: capValue(playerLevel(state), 10_000_000) || 1,
-    rank: capValue(state.rank, MAX_RANK),
+    rank: capValue(state.rank, CLOUD_MAX_RANK),
     subTier: activeSub ? activeSub.def.id : '',
     subExp: activeSub ? capValue(activeSub.exp, 1e13) : 0,
     lastSeen: serverTimestamp(),
@@ -1282,7 +1282,7 @@ export async function promoteRankOnline(params: {
     typeof import.meta !== 'undefined' && import.meta.env
       ? (import.meta.env.VITE_FUNCTIONS_BASE_URL as string | undefined)
       : undefined;
-  if (!fnBase || !auth?.currentUser) {
+  if (!fnBase || !auth?.currentUser || params.targetRank > CLOUD_MAX_RANK) {
     return { usedServer: false };
   }
   try {

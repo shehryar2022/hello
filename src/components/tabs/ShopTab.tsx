@@ -1,5 +1,5 @@
 import React, { memo, useMemo } from 'react';
-import { BOOSTERS, RANKS, SUBSCRIPTIONS } from '../../game/constants';
+import { BOOSTERS, MAX_RANK, RANKS, SUBSCRIPTIONS } from '../../game/constants';
 import {
   canBuyBooster,
   canBuySubscription,
@@ -74,7 +74,7 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
   onBuyBooster,
 }) => {
   const nowMs = (state.t || Date.now()) + serverOffsetMs;
-  const currentRankNum = Math.max(1, Math.min(10, Math.floor(state.rank || 1)));
+  const currentRankNum = Math.max(1, Math.min(MAX_RANK, Math.floor(state.rank || 1)));
   const currentRank = RANKS[currentRankNum] || RANKS[1];
   const activeIncomeBoost = useMemo(() => getActiveShopIncomeBooster(state, nowMs), [state, nowMs]);
   const activeSub = useMemo(() => getActiveSubscription(state, nowMs), [state, nowMs]);
@@ -117,7 +117,7 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
               <RankEmblem rank={currentRank.id} size={30} />
               <span>
                 <small className="dim" style={{ display: 'block', fontSize: 11 }}>
-                  Current Sovereign Rank ({currentRank.id}/10)
+                  Current Sovereign Rank ({currentRank.id}/{MAX_RANK})
                 </small>
                 <b style={{ fontSize: 15 }}>{currentRank.n}</b>
               </span>

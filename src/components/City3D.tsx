@@ -1,401 +1,526 @@
-import React, { memo, useEffect, useRef, useState } from 'react';
-import { BUILDINGS } from '../game/constants';
-import { formatNumber, gxLevelMult, totalBuildings } from '../game/rules';
-import type { GameState } from '../game/types';
-import { BuildingIcon, Hammer, RefreshCw } from './GameIcons';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Camera,
+  CloudRain,
+  Compass,
+  Expand,
+  Hammer,
+  Minimize2,
+  Moon,
+  RefreshCw,
+  Shield,
+  SlidersHorizontal,
+  Sun,
+  Sunset,
+  Trash2,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react';
+import { CityEngine, type CameraPresetMode } from '../city3d/CityEngine';
+import { BUILDING_CATEGORIES, BUILDING_POLICIES, BUILDINGS } from '../game/constants';
+import {
+  buildingCost,
+  bulkBuildingCost,
+  canDemolishBuilding,
+  canSetBuildingPolicy,
+  canStartBuildingConstruction,
+  computeEconomySnapshot,
+  formatNumber,
+  getActiveBuildingPolicyId,
+  getBuildingPolicyDef,
+  getConstructionQueue,
+  getDemolishRefund,
+  getDevelopmentDiscount,
+  gxLevelMult,
+  gxUpgradeCost,
+  isBuildingPolicyAllowedFor,
+  totalBuildings,
+} from '../game/rules';
+import type {
+  BuildingPolicyId,
+  CityTimeMode,
+  CityWeatherMode,
+  GameState,
+  GraphicsSettings,
+  RuntimePerfStats,
+} from '../game/types';
+import { BuildingIcon, CashCoinIcon } from './GameIcons';
 
-const CSZ: Record<string, number> = {
-  farms: 32,
-  greenhouses: 28,
-  food_plant: 28,
-  textile_mills: 26,
-  factories: 28,
-  steel_plants: 30,
-  solar_plants: 30,
-  wind_farms: 28,
-  power_stations: 28,
-  roads: 28,
-  railways: 30,
-  ports: 30,
-  airports: 34,
-  markets: 26,
-  shopping_centers: 28,
-  business_districts: 24,
-  research_centers: 24,
-  tech_parks: 24,
-  data_centers: 24,
-  training_centers: 26,
-  hospitals: 26,
-  universities: 26,
-};
-
-const CHM: Record<string, number> = {
-  farms: 0.45,
-  greenhouses: 0.52,
-  food_plant: 0.72,
-  textile_mills: 0.78,
-  factories: 0.94,
-  steel_plants: 1.05,
-  solar_plants: 0.36,
-  wind_farms: 0.74,
-  power_stations: 0.92,
-  roads: 0.34,
-  railways: 0.55,
-  ports: 0.58,
-  airports: 0.38,
-  markets: 0.58,
-  shopping_centers: 0.85,
-  business_districts: 1.38,
-  research_centers: 1.05,
-  tech_parks: 1.18,
-  data_centers: 1.28,
-  training_centers: 0.72,
-  hospitals: 0.9,
-  universities: 0.95,
-};
-
-interface City3DProps {
+export interface City3DProps {
   state: GameState;
+  graphics: GraphicsSettings;
   visible: boolean;
-  burstKey: number;
-  onBuildingTap: (clientX?: number, clientY?: number) => void;
+  tradeTier?: number;
+  serverOffsetMs?: number;
+  selectedBuildingId: string | null;
+  focusRequest?: { id: string; seq: number } | null;
+  onSelectBuilding: (id: string | null) => void;
+  onBuyBuilding: (id: string, qty: 1 | 5) => void;
+  onUpgradeBuilding: (id: string) => void;
+  onDemolishBuilding: (id: string, qty: 1 | 5) => void;
+  onSetBuildingPolicy: (id: string, policyId: BuildingPolicyId) => void;
+  onChangeTimeMode: (mode: CityTimeMode) => void;
+  onChangeWeather: (mode: CityWeatherMode) => void;
+  onPerfStats: (stats: RuntimePerfStats) => void;
 }
 
-const MAX_ACTIVE_PARTICLES = 8;
+const BUILDING_BY_ID = Object.fromEntries(BUILDINGS.map((b) => [b.id, b]));
+const CAT_LABEL_BY_ID = Object.fromEntries(BUILDING_CATEGORIES.map((c) => [c.id, c.label]));
+const formatRate = (n: number): string =>
+  Math.abs(n) > 0 && Math.abs(n) < 10 ? n.toFixed(2) : formatNumber(n);
 
-function formatRate(val: number): string {
-  if (val >= 1000) return formatNumber(val);
-  if (val >= 100) return String(Math.round(val));
-  return val.toFixed(1);
-}
+const City3DInner: React.FC<City3DProps> = ({
+  state,
+  graphics,
+  visible,
+  tradeTier = 0,
+  serverOffsetMs = 0,
+  selectedBuildingId,
+  focusRequest,
+  onSelectBuilding,
+  onBuyBuilding,
+  onUpgradeBuilding,
+  onDemolishBuilding,
+  onSetBuildingPolicy,
+  onChangeTimeMode,
+  onChangeWeather,
+  onPerfStats,
+}) => {
+  const mountRef = useRef<HTMLDivElement | null>(null);
+  const engineRef = useRef<CityEngine | null>(null);
+  const [webglError, setWebglError] = useState(false);
+  const [webglLost, setWebglLost] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [camPreset, setCamPreset] = useState<CameraPresetMode>('overview');
+  const [demolishConfirm, setDemolishConfirm] = useState(false);
+  const [hoverTip, setHoverTip] = useState<{ id: string; x: number; y: number } | null>(null);
 
-function mapsEqual(a: Record<string, number> | undefined, b: Record<string, number> | undefined): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  for (const d of BUILDINGS) {
-    if ((a[d.id] || 0) !== (b[d.id] || 0)) return false;
-  }
-  return true;
-}
-
-const City3DInner: React.FC<City3DProps> = ({ state, visible, burstKey, onBuildingTap }) => {
-  const skyRef = useRef<HTMLDivElement>(null);
-  const cityRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef({ active: false, sx: 0, o0: 0, t0: 0, off: 0 });
-  const prevLevelsRef = useRef<Record<string, number>>({});
-  const [popId, setPopId] = useState<string | null>(null);
-  const [risingIds, setRisingIds] = useState<Record<string, boolean>>({});
-  const [rotated, setRotated] = useState(false);
-  const [dragging, setDragging] = useState(false);
-  const [tip, setTip] = useState<{ id: string; text: string; x: number; y: number; open: boolean }>({
-    id: '',
-    text: '',
-    x: 0,
-    y: 0,
-    open: false,
+  // Latest callbacks in refs so Three.js instance never tears down on state updates
+  const callbacksRef = useRef({
+    onSelectBuilding,
+    onPerfStats,
   });
-  const tipTimerRef = useRef<number | null>(null);
-  const activeParticlesRef = useRef(0);
-  const particleTimersRef = useRef<Set<number>>(new Set());
-  const buildingRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const rotRafRef = useRef<number | null>(null);
+  callbacksRef.current = { onSelectBuilding, onPerfStats };
 
-  const animEnabled = !!state.set.anim;
+  const initialGraphicsRef = useRef(graphics);
 
-  const applyRotation = (rz: number) => {
-    if (cityRef.current) {
-      cityRef.current.style.setProperty('--rz', `${rz}deg`);
+  useEffect(() => {
+    const host = mountRef.current;
+    if (!host) return;
+
+    let engine: CityEngine | null = null;
+    try {
+      engine = new CityEngine(host, initialGraphicsRef.current, {
+        onSelectBuilding: (id) => {
+          setDemolishConfirm(false);
+          callbacksRef.current.onSelectBuilding(id);
+        },
+        onHoverBuilding: (id, clientX, clientY) => {
+          if (!id || !host) {
+            setHoverTip(null);
+            return;
+          }
+          const rect = host.getBoundingClientRect();
+          setHoverTip({
+            id,
+            x: Math.max(80, Math.min(rect.width - 80, clientX - rect.left)),
+            y: Math.max(48, clientY - rect.top - 12),
+          });
+        },
+        onPerfStats: (stats) => callbacksRef.current.onPerfStats(stats),
+        onWebglLostChange: (lost) => setWebglLost(lost),
+      });
+      engineRef.current = engine;
+      setWebglError(false);
+    } catch {
+      setWebglError(true);
     }
-  };
 
-  useEffect(() => {
-    applyRotation(-35 + dragRef.current.off);
-  }, [visible, animEnabled]);
-
-  useEffect(() => {
-    const timers = particleTimersRef.current;
     return () => {
-      if (rotRafRef.current !== null) cancelAnimationFrame(rotRafRef.current);
-      if (tipTimerRef.current) window.clearTimeout(tipTimerRef.current);
-      for (const id of timers) window.clearTimeout(id);
-      timers.clear();
-      activeParticlesRef.current = 0;
+      engine?.dispose();
+      engineRef.current = null;
     };
   }, []);
 
-  const spawnParticle = (cls: 'coin' | 'puff', buildingEl: Element | null, text?: string) => {
-    const city = cityRef.current;
-    if (!city || !buildingEl) return;
-    if (activeParticlesRef.current >= MAX_ACTIVE_PARTICLES) return;
-    const style = (buildingEl as HTMLElement).style;
-    const k = document.createElement('b');
-    k.className = cls;
-    if (text) k.textContent = text;
-    k.style.setProperty('--x', style.getPropertyValue('--x'));
-    k.style.setProperty('--y', style.getPropertyValue('--y'));
-    k.style.setProperty('--s', style.getPropertyValue('--s'));
-    const h = parseInt(style.getPropertyValue('--h') || '10', 10);
-    k.style.setProperty('--z0', `${h + 14}px`);
-    city.appendChild(k);
-    activeParticlesRef.current += 1;
-    const tid = window.setTimeout(() => {
-      particleTimersRef.current.delete(tid);
-      k.remove();
-      activeParticlesRef.current = Math.max(0, activeParticlesRef.current - 1);
-    }, 2000);
-    particleTimersRef.current.add(tid);
+  // Push game state changes imperatively into 3D scene
+  useEffect(() => {
+    engineRef.current?.syncState(state);
+  }, [state]);
+
+  useEffect(() => {
+    engineRef.current?.applyGraphicsSettings(graphics);
+  }, [graphics]);
+
+  useEffect(() => {
+    engineRef.current?.setVisible(visible);
+  }, [visible]);
+
+  useEffect(() => {
+    engineRef.current?.setSelectedBuilding(selectedBuildingId);
+    setDemolishConfirm(false);
+  }, [selectedBuildingId]);
+
+  useEffect(() => {
+    if (focusRequest?.id) {
+      engineRef.current?.focusBuilding(focusRequest.id);
+    }
+  }, [focusRequest]);
+
+  const nowMs = (state.t || Date.now()) + serverOffsetMs;
+  const builtTotal = totalBuildings(state);
+
+  const selectedData = useMemo(() => {
+    if (!selectedBuildingId) return null;
+    const def = BUILDING_BY_ID[selectedBuildingId];
+    if (!def) return null;
+    const count = state.b?.[def.id] || 0;
+    const lv = Math.max(1, Math.min(5, state.gx?.lvl?.[def.id] || 1));
+    const activePolicyId = getActiveBuildingPolicyId(state, def.id);
+    const activePolicy = getBuildingPolicyDef(activePolicyId);
+    const lvMult = gxLevelMult(state, def.id);
+    const disc = getDevelopmentDiscount(state, nowMs);
+    const snap = computeEconomySnapshot(state, { tradeTier, nowMs });
+
+    const incPerUnit = def.inc * lvMult * activePolicy.incomeMult;
+    const maintPerUnit = def.maint * activePolicy.maintMult;
+    const jobsPerUnit = Math.round(def.jobs * activePolicy.jobsMult);
+    const sharePct =
+      snap.buildingGross > 0 && count > 0 ? ((incPerUnit * count) / snap.buildingGross) * 100 : 0;
+
+    const buy1Check = canStartBuildingConstruction(state, def.id, 1, nowMs);
+    const buy5Check = canStartBuildingConstruction(state, def.id, 5, nowMs);
+    const nextCost1 = buy1Check.cost || buildingCost(def, count, disc);
+    const nextCost5 = buy5Check.cost || bulkBuildingCost(def, count, 5, disc);
+    const upCost = gxUpgradeCost(state, def.id, nowMs);
+    const refund1 = getDemolishRefund(def, 1);
+    const queueSlot = getConstructionQueue(state, nowMs).find((q) => q.buildingId === def.id);
+    const queueLeftSec = queueSlot ? Math.max(0, Math.ceil((queueSlot.finishAt - nowMs) / 1000)) : 0;
+
+    const canUpgrade = count > 0 && lv < 5 && upCost > 0 && state.cash >= upCost;
+    const rankBlocked = (state.rank || 1) < (def.reqRank || 1);
+    const buildingsBlocked = builtTotal < (def.reqBuildings || 0);
+    const techBlocked = def.reqTech ? !state.tech?.[def.reqTech] : false;
+    const demoCheck = canDemolishBuilding(state, def.id, 1);
+
+    return {
+      def,
+      count,
+      lv,
+      incPerUnit,
+      maintPerUnit,
+      jobsPerUnit,
+      sharePct,
+      buy1Ok: buy1Check.ok,
+      buy5Ok: buy5Check.ok,
+      nextCost1,
+      nextCost5,
+      upCost,
+      refund1,
+      activePolicyId,
+      activePolicy,
+      isQueued: Boolean(queueSlot),
+      queueLeftSec,
+      canUpgrade,
+      rankBlocked,
+      buildingsBlocked,
+      techBlocked,
+      canDemolish: demoCheck.ok,
+      demolishReason: demoCheck.reason,
+      mult: lvMult,
+    };
+  }, [selectedBuildingId, state, tradeTier, nowMs, builtTotal]);
+
+  const timeMode: CityTimeMode = state.cityTimeMode || 'auto';
+  const weatherMode: CityWeatherMode = state.cityWeather || 'clear';
+  const hoverDef = hoverTip ? BUILDING_BY_ID[hoverTip.id] : null;
+  const hoverCount = hoverDef ? state.b?.[hoverDef.id] || 0 : 0;
+
+  const handlePreset = (preset: CameraPresetMode) => {
+    setCamPreset(preset);
+    engineRef.current?.setCameraPreset(preset);
   };
-
-  const bRef = useRef(state.b);
-  bRef.current = state.b;
-
-  useEffect(() => {
-    if (!visible || !animEnabled) return;
-    const coinTimer = window.setInterval(() => {
-      if (document.hidden || !cityRef.current || document.body.classList.contains('modal-open')) return;
-      const activeIds = Object.keys(bRef.current).filter((id) => (bRef.current[id] || 0) > 0);
-      if (!activeIds.length) return;
-      const pickId = activeIds[Math.floor(Math.random() * activeIds.length)];
-      spawnParticle('coin', buildingRefs.current[pickId] || null, '₨');
-    }, 2200);
-
-    const puffTimer = window.setInterval(() => {
-      if (document.hidden || !cityRef.current || document.body.classList.contains('modal-open')) return;
-      const emitterIds = ['factories', 'power_stations', 'steel_plants'].filter((id) => (bRef.current[id] || 0) > 0);
-      if (!emitterIds.length) return;
-      const pickId = emitterIds[Math.floor(Math.random() * emitterIds.length)];
-      if (Math.random() < 0.7) {
-        spawnParticle('puff', buildingRefs.current[pickId] || null);
-      }
-    }, 1500);
-
-    return () => {
-      window.clearInterval(coinTimer);
-      window.clearInterval(puffTimer);
-    };
-  }, [visible, animEnabled]);
-
-  useEffect(() => {
-    if (burstKey <= 0 || !visible || !animEnabled || !cityRef.current) return;
-    const activeIds = Object.keys(bRef.current)
-      .filter((id) => (bRef.current[id] || 0) > 0)
-      .slice(0, 6);
-    const timers: number[] = [];
-    activeIds.forEach((id, idx) => {
-      const tid = window.setTimeout(() => {
-        spawnParticle('coin', buildingRefs.current[id] || null, '₨');
-      }, idx * 70);
-      timers.push(tid);
-    });
-    return () => {
-      for (const tid of timers) window.clearTimeout(tid);
-    };
-  }, [burstKey, visible, animEnabled]);
-
-  useEffect(() => {
-    const prev = prevLevelsRef.current;
-    const newlyBuilt: string[] = [];
-    const nextPrev: Record<string, number> = {};
-    for (const d of BUILDINGS) {
-      const curCount = state.b[d.id] || 0;
-      nextPrev[d.id] = curCount;
-      if (prev[d.id] !== undefined && curCount > prev[d.id]) {
-        newlyBuilt.push(d.id);
-      }
-    }
-    prevLevelsRef.current = nextPrev;
-
-    if (newlyBuilt.length > 0 && newlyBuilt.length <= 2) {
-      setRisingIds((cur) => {
-        const next = { ...cur };
-        for (const id of newlyBuilt) next[id] = true;
-        return next;
-      });
-      const timer = window.setTimeout(() => {
-        setRisingIds((cur) => {
-          const next = { ...cur };
-          for (const id of newlyBuilt) delete next[id];
-          return next;
-        });
-      }, 850);
-      return () => window.clearTimeout(timer);
-    }
-  }, [state.b]);
 
   if (!visible) return null;
 
-  const totalRows = Math.ceil(BUILDINGS.length / 5);
-  const gap = totalRows > 4 ? 38 : 42;
-  const builtTotal = totalBuildings(state);
-
-  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement).closest('.sky-reset')) return;
-    dragRef.current.active = true;
-    dragRef.current.sx = e.clientX;
-    dragRef.current.t0 = Date.now();
-    dragRef.current.o0 = dragRef.current.off;
-    setDragging(true);
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {
-      // Ignore capture error
-    }
-  };
-
-  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragRef.current.active) return;
-    dragRef.current.off = dragRef.current.o0 + (e.clientX - dragRef.current.sx) * 0.6;
-    if (Math.abs(dragRef.current.off) > 4 && !rotated) setRotated(true);
-    if (rotRafRef.current === null) {
-      rotRafRef.current = requestAnimationFrame(() => {
-        rotRafRef.current = null;
-        applyRotation(-35 + dragRef.current.off);
-      });
-    }
-  };
-
-  const handlePointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragRef.current.active) return;
-    dragRef.current.active = false;
-    if (rotRafRef.current !== null) {
-      cancelAnimationFrame(rotRafRef.current);
-      rotRafRef.current = null;
-      applyRotation(-35 + dragRef.current.off);
-    }
-    setDragging(false);
-    if (
-      e.type !== 'pointerup' ||
-      Math.abs(e.clientX - dragRef.current.sx) > 7 ||
-      Date.now() - dragRef.current.t0 > 450
-    ) {
-      return;
-    }
-    const el = document.elementFromPoint(e.clientX, e.clientY);
-    const b = el?.closest('.bd') as HTMLElement | null;
-    if (!b || !skyRef.current) return;
-    const id = b.dataset.id;
-    const def = BUILDINGS.find((x) => x.id === id);
-    if (!def) return;
-    const lvl = state.b[def.id] || 0;
-    setPopId(null);
-    requestAnimationFrame(() => setPopId(def.id));
-    onBuildingTap(e.clientX, e.clientY);
-
-    const r = skyRef.current.getBoundingClientRect();
-    const mult = gxLevelMult(state, def.id);
-    setTip({
-      id: def.id,
-      text: `${def.n} · ${lvl ? `${lvl} built · +${formatRate(def.inc * lvl * mult)}/s` : 'Not built yet'}`,
-      x: Math.max(85, Math.min(r.width - 85, e.clientX - r.left)),
-      y: Math.max(44, e.clientY - r.top),
-      open: true,
-    });
-    if (tipTimerRef.current) window.clearTimeout(tipTimerRef.current);
-    tipTimerRef.current = window.setTimeout(() => {
-      setTip((prev) => ({ ...prev, open: false }));
-    }, 2200);
-  };
-
-  const handleResetView = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    dragRef.current.off = 0;
-    setRotated(false);
-    applyRotation(-35);
-  };
-
-  const cityClass = `city${animEnabled && !dragging && !rotated ? ' sway' : ''}`;
-
   return (
-    <div
-      className="sky"
-      ref={skyRef}
-      data-testid="city-3d"
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerEnd}
-      onPointerCancel={handlePointerEnd}
-    >
-      {rotated && (
-        <button type="button" className="sky-reset" onClick={handleResetView} title="Reset camera angle">
-          <RefreshCw size={11} />
-          <span>Reset view</span>
-        </button>
-      )}
-
-      <div className={cityClass} ref={cityRef}>
-        <i className="road" style={{ left: -124, top: -1, width: 248, height: 2 }} />
-        <i className="road" style={{ left: -124, top: -39, width: 248, height: 2 }} />
-        <i className="road" style={{ left: -124, top: 37, width: 248, height: 2 }} />
-        <i className="road" style={{ top: -108, left: 19, width: 2, height: 216 }} />
-        <i className="car" style={{ left: 0, top: -2, animation: 'carx 5.5s linear infinite' }} />
-        <i className="car cb" style={{ left: 0, top: -40, animation: 'carx 7.5s linear infinite reverse' }} />
-        <i className="car" style={{ left: 20, top: 0, width: 4, height: 8, animation: 'cary 6.5s linear infinite' }} />
-
-        {BUILDINGS.map((d, i) => {
-          const l = state.b[d.id] || 0;
-          const col = i % 5;
-          const row = Math.floor(i / 5);
-          const sz = CSZ[d.id] || 26;
-          const cx = (col - 2) * gap;
-          const cy = (row - (totalRows - 1) / 2) * gap;
-          const x = Math.round(cx - sz / 2);
-          const y = Math.round(cy - sz / 2);
-          const h = l ? Math.max(8, Math.round((8 + Math.min(l, 40) * 2.6) * (CHM[d.id] || 0.8))) : 2;
-          const cls = `bd${l ? '' : ' empty'}${risingIds[d.id] ? ' up' : ''}${popId === d.id ? ' pop' : ''}${h > 62 ? ' tall' : ''}`;
-          return (
-            <div
-              key={d.id}
-              ref={(el) => {
-                buildingRefs.current[d.id] = el;
-              }}
-              className={cls}
-              data-id={d.id}
-              style={
-                {
-                  '--x': `${x}px`,
-                  '--y': `${y}px`,
-                  '--s': `${sz}px`,
-                  '--h': `${h}px`,
-                  '--c': d.c,
-                  '--i': i,
-                } as React.CSSProperties
-              }
-            >
-              <i className="fT" />
-              <i className="fS" />
-              <i className="fN" />
-              <i className="fE" />
-              <i className="fW" />
-              {l > 0 && (
-                <b className="em3">
-                  <BuildingIcon id={d.id} size={13} color="#fff" />
-                </b>
-              )}
+    <div className={`city3d-shell${expanded ? ' is-expanded' : ''}`} data-testid="city-3d">
+      <div className="sky city3d-viewport">
+        {webglError || webglLost ? (
+          <div className="city3d-fallback" data-testid="city3d-fallback">
+            <BuildingIcon id="business_districts" size={32} color="#ffc23d" />
+            <div>
+              <b>{webglLost ? '3D Viewport Paused (WebGL Context Restoring)' : '3D National City Overview'}</b>
+              <p>
+                {builtTotal} active buildings across {BUILDINGS.length} national urban sectors. Use the Build tab or
+                click Retry to restore WebGL rendering.
+              </p>
             </div>
-          );
-        })}
+          </div>
+        ) : (
+          <div ref={mountRef} className="city3d-canvas-host" />
+        )}
+
+        {/* Top camera + atmosphere toolbar (solid/rgba surface — zero backdrop-filter!) */}
+        <div className="city3d-hud-top" role="toolbar" aria-label="3D City Camera Controls">
+          <div className="city3d-hud-group">
+            {(['overview', 'aerial', 'closeup', 'harbor'] as const).map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                className={`city3d-pill-btn${camPreset === preset ? ' on' : ''}`}
+                onClick={() => handlePreset(preset)}
+                title={`Switch camera to ${preset} view`}
+              >
+                {preset === 'overview' && <Compass size={11} />}
+                {preset === 'aerial' && <Camera size={11} />}
+                <span>{preset.charAt(0).toUpperCase() + preset.slice(1)}</span>
+              </button>
+            ))}
+            <button
+              type="button"
+              className="city3d-icon-btn"
+              onClick={() => engineRef.current?.zoomBy(0.82)}
+              title="Zoom in (+)"
+              aria-label="Zoom in"
+            >
+              <ZoomIn size={12} />
+            </button>
+            <button
+              type="button"
+              className="city3d-icon-btn"
+              onClick={() => engineRef.current?.zoomBy(1.2)}
+              title="Zoom out (-)"
+              aria-label="Zoom out"
+            >
+              <ZoomOut size={12} />
+            </button>
+            <button
+              type="button"
+              className="city3d-icon-btn"
+              onClick={() => handlePreset('overview')}
+              title="Reset camera (R)"
+              aria-label="Reset camera"
+            >
+              <RefreshCw size={12} />
+            </button>
+          </div>
+
+          <div className="city3d-hud-group">
+            <button
+              type="button"
+              className="city3d-pill-btn"
+              onClick={() => {
+                const order: CityTimeMode[] = ['auto', 'day', 'sunset', 'night'];
+                const next = order[(order.indexOf(timeMode) + 1) % order.length];
+                onChangeTimeMode(next);
+              }}
+              title="Cycle time of day"
+            >
+              {timeMode === 'night' ? (
+                <Moon size={11} color="#a58cff" />
+              ) : timeMode === 'sunset' ? (
+                <Sunset size={11} color="#fb923c" />
+              ) : (
+                <Sun size={11} color="#ffc23d" />
+              )}
+              <span>{timeMode === 'auto' ? 'Cycle' : timeMode}</span>
+            </button>
+
+            <button
+              type="button"
+              className="city3d-pill-btn"
+              onClick={() => {
+                const order: CityWeatherMode[] = ['clear', 'overcast', 'rain'];
+                const next = order[(order.indexOf(weatherMode) + 1) % order.length];
+                onChangeWeather(next);
+              }}
+              title="Toggle weather"
+            >
+              <CloudRain size={11} color={weatherMode === 'rain' ? '#5ccbff' : '#a79fd0'} />
+              <span>{weatherMode}</span>
+            </button>
+
+            <button
+              type="button"
+              className="city3d-icon-btn"
+              onClick={() => setExpanded((e) => !e)}
+              title={expanded ? 'Compact 3D viewport' : 'Expand 3D viewport'}
+              aria-label={expanded ? 'Compact 3D viewport' : 'Expand 3D viewport'}
+            >
+              {expanded ? <Minimize2 size={12} /> : <Expand size={12} />}
+            </button>
+          </div>
+        </div>
+
+        {/* Hover label over plot */}
+        {hoverTip && hoverDef && (
+          <div className="ctip on" style={{ left: hoverTip.x, top: hoverTip.y }}>
+            <BuildingIcon id={hoverDef.id} size={13} color="#ffc23d" />
+            <span>
+              {hoverDef.n} · {hoverCount > 0 ? `${hoverCount} built (Lv ${state.gx?.lvl?.[hoverDef.id] || 1})` : 'Vacant plot'}
+            </span>
+          </div>
+        )}
+
+        {builtTotal === 0 && !selectedData && (
+          <span className="dim-hint">
+            <Hammer size={13} color="#ffc23d" />
+            <span>Tap a 3D plot or build below · Drag to orbit · Scroll to zoom</span>
+          </span>
+        )}
       </div>
 
-      <div className={`ctip${tip.open ? ' on' : ''}`} style={{ left: tip.x, top: tip.y }}>
-        {tip.id && <BuildingIcon id={tip.id} size={14} color="#ffc23d" />}
-        <span>{tip.text}</span>
-      </div>
-      {builtTotal === 0 && (
-        <span className="dim-hint">
-          <Hammer size={13} color="#ffc23d" />
-          <span>Construct your first Farms or Markets below</span>
-        </span>
+      {/* Real Building Inspector Drawer (opens when a 3D plot is selected) */}
+      {selectedData && (
+        <div className="city3d-inspector" data-testid="city3d-inspector">
+          <div className="city3d-insp-head">
+            <div className="city3d-insp-title">
+              <span className="city3d-insp-ic" style={{ background: `${selectedData.def.c}26`, color: selectedData.def.c }}>
+                <BuildingIcon id={selectedData.def.id} size={18} color={selectedData.def.c} />
+              </span>
+              <div>
+                <b>{selectedData.def.n}</b>
+                <small>
+                  {CAT_LABEL_BY_ID[selectedData.def.cat] || selectedData.def.cat} · {selectedData.count} owned · Level {selectedData.lv}/5
+                  {selectedData.isQueued ? ` · Building (${selectedData.queueLeftSec}s)` : ''}
+                </small>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="city3d-icon-btn"
+              onClick={() => onSelectBuilding(null)}
+              aria-label="Close building inspector"
+            >
+              <X size={14} />
+            </button>
+          </div>
+
+          <div className="city3d-insp-metrics">
+            <div>
+              <span>Production</span>
+              <b style={{ color: '#3fe0b0' }}>
+                +{formatRate(selectedData.incPerUnit * Math.max(1, selectedData.count))}/s
+              </b>
+            </div>
+            <div>
+              <span>Upkeep</span>
+              <b style={{ color: '#ff6fa5' }}>
+                -{formatRate(selectedData.maintPerUnit * Math.max(1, selectedData.count))}/s
+              </b>
+            </div>
+            <div>
+              <span>Jobs / Grid</span>
+              <b>
+                {formatNumber(selectedData.jobsPerUnit * Math.max(1, selectedData.count))} ·{' '}
+                {selectedData.def.energy >= 0 ? `+${selectedData.def.energy}` : selectedData.def.energy} MW
+              </b>
+            </div>
+            <div>
+              <span>GDP Share</span>
+              <b style={{ color: '#ffc23d' }}>{selectedData.sharePct.toFixed(1)}%</b>
+            </div>
+          </div>
+
+          {/* Building Policy Selector */}
+          <div className="city3d-insp-policies">
+            <span className="city3d-insp-pol-lbl">
+              <SlidersHorizontal size={12} color="#a58cff" /> Policy:
+            </span>
+            {BUILDING_POLICIES.map((pol) => {
+              const allowed = isBuildingPolicyAllowedFor(selectedData.def, pol);
+              if (!allowed) return null;
+              const isActive = selectedData.activePolicyId === pol.id;
+              const check = canSetBuildingPolicy(state, selectedData.def.id, pol.id);
+              const disabled = !isActive && !check.ok;
+              return (
+                <button
+                  key={pol.id}
+                  type="button"
+                  disabled={disabled}
+                  className={`city3d-pol-chip${isActive ? ' on' : ''}`}
+                  title={isActive ? `${pol.desc} (Active)` : `${pol.desc}${check.reason ? ` — ${check.reason}` : ` · ₨ ${formatNumber(pol.applyCost)}`}`}
+                  onClick={() => {
+                    if (!isActive) onSetBuildingPolicy(selectedData.def.id, pol.id);
+                  }}
+                >
+                  {pol.name}
+                  {!isActive && pol.applyCost > 0 ? ` · ₨ ${formatNumber(pol.applyCost)}` : ''}
+                </button>
+              );
+            })}
+          </div>
+
+          {(selectedData.rankBlocked || selectedData.buildingsBlocked || selectedData.techBlocked) && (
+            <div className="city3d-insp-warn">
+              <Shield size={12} />
+              <span>
+                Requires Rank {selectedData.def.reqRank || 1}, {selectedData.def.reqBuildings || 0} city buildings
+                {selectedData.def.reqTech ? `, and ${selectedData.def.reqTech} research` : ''}.
+              </span>
+            </div>
+          )}
+
+          <div className="city3d-insp-actions">
+            <button
+              type="button"
+              className="btn sm gold"
+              disabled={!selectedData.buy1Ok}
+              onClick={() => onBuyBuilding(selectedData.def.id, 1)}
+            >
+              <CashCoinIcon size={13} />
+              <span>Build +1 (₨ {formatNumber(selectedData.nextCost1)})</span>
+            </button>
+            <button
+              type="button"
+              className="btn sm"
+              disabled={!selectedData.buy5Ok}
+              onClick={() => onBuyBuilding(selectedData.def.id, 5)}
+            >
+              <span>+5 (₨ {formatNumber(selectedData.nextCost5)})</span>
+            </button>
+            {selectedData.count > 0 && selectedData.lv < 5 && (
+              <button
+                type="button"
+                className="btn sm mint"
+                disabled={!selectedData.canUpgrade}
+                onClick={() => onUpgradeBuilding(selectedData.def.id)}
+              >
+                <span>
+                  {`Upgrade Lv${selectedData.lv + 1} (₨ ${formatNumber(selectedData.upCost)})`}
+                </span>
+              </button>
+            )}
+            {selectedData.count > 0 &&
+              (!demolishConfirm ? (
+                <button
+                  type="button"
+                  className="btn sm red"
+                  disabled={!selectedData.canDemolish}
+                  title={selectedData.canDemolish ? `Demolish 1 (+₨ ${formatNumber(selectedData.refund1)} refund)` : selectedData.demolishReason}
+                  onClick={() => setDemolishConfirm(true)}
+                >
+                  <Trash2 size={12} />
+                  <span>Demolish (+₨ {formatNumber(selectedData.refund1)})</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn sm red"
+                  onClick={() => {
+                    onDemolishBuilding(selectedData.def.id, 1);
+                    setDemolishConfirm(false);
+                  }}
+                >
+                  <span>Confirm Demolish</span>
+                </button>
+              ))}
+          </div>
+        </div>
       )}
     </div>
   );
 };
 
-export const City3D = memo(City3DInner, (prev, next) => {
-  return (
-    prev.visible === next.visible &&
-    prev.burstKey === next.burstKey &&
-    prev.state.set.anim === next.state.set.anim &&
-    mapsEqual(prev.state.b, next.state.b) &&
-    mapsEqual(prev.state.gx?.lvl, next.state.gx?.lvl)
-  );
-});
+export const City3D = memo(City3DInner);

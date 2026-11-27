@@ -2,9 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Copy, Trash2 } from 'lucide-react';
 import { FIREBASE_CONFIG, isFirebaseConfigured } from '../../firebase/config';
 import { formatErrorLogReport, type AppErrorEntry } from '../../firebase/errorLog';
-import { COUNTRIES, RANKS, SUBSCRIPTIONS } from '../../game/constants';
+import { COUNTRIES, MAX_RANK, RANKS, SUBSCRIPTIONS } from '../../game/constants';
 import { formatNumber, isProfileSubActive } from '../../game/rules';
-import type { GameState, NotificationItem, PlayerProfile } from '../../game/types';
+import type { GameState, GraphicsSettings, NotificationItem, PlayerProfile, RuntimePerfStats } from '../../game/types';
+import { GraphicsSettingsPanel } from '../GraphicsSettingsPanel';
 import {
   Bell,
   Cloud,
@@ -61,7 +62,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 }) => {
   useEscapeClose(Boolean(profile), onClose);
   if (!profile) return null;
-  const rk = RANKS[Math.max(1, Math.min(10, profile.rank || 1))] || RANKS[1];
+  const rk = RANKS[Math.max(1, Math.min(MAX_RANK, profile.rank || 1))] || RANKS[1];
   const subTier = isProfileSubActive(profile, Date.now());
   const subDef = subTier ? SUBSCRIPTIONS.find((x) => x.id === subTier) : null;
 
@@ -163,10 +164,13 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 interface SettingsModalProps {
   open: boolean;
   state: GameState;
+  graphics: GraphicsSettings;
+  perfStats: RuntimePerfStats;
   uid: string | null;
   email: string | null;
   errorCount: number;
   onToggleSetting: (key: 'sfx' | 'vib' | 'anim') => void;
+  onApplyGraphics: (next: GraphicsSettings) => void;
   onOpenAuth: () => void;
   onOpenErrorLog: () => void;
   onRequestReset: () => void;
@@ -176,76 +180,108 @@ interface SettingsModalProps {
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   open,
   state,
+  graphics,
+  perfStats,
   uid,
   email,
   errorCount,
   onToggleSetting,
+  onApplyGraphics,
   onOpenAuth,
   onOpenErrorLog,
   onRequestReset,
   onClose,
 }) => {
+  const [section, setSection] = useState<'general' | 'graphics'>('general');
   useEscapeClose(open, onClose);
   if (!open) return null;
 
   const rows: Array<{ key: 'sfx' | 'vib' | 'anim'; icon: React.ReactNode; label: string }> = [
     { key: 'sfx', icon: <Volume2 size={17} color="#5ccbff" />, label: 'Sound effects' },
     { key: 'vib', icon: <Smartphone size={17} color="#3fe0b0" />, label: 'Haptic vibration' },
-    { key: 'anim', icon: <Sparkles size={17} color="#ffc23d" />, label: 'Animations' },
+    { key: 'anim', icon: <Sparkles size={17} color="#ffc23d" />, label: 'UI Animations' },
   ];
 
   return (
     <div className="modal" role="dialog" aria-modal="true" aria-label="Settings" onClick={onClose}>
-      <div className="card" onClick={(e) => e.stopPropagation()}>
+      <div className={`card${section === 'graphics' ? ' settings-wide' : ''}`} onClick={(e) => e.stopPropagation()}>
         <h2>
           <SlidersHorizontal size={20} color="#5ccbff" />
           <span>Settings</span>
         </h2>
-        <p style={{ marginBottom: 8 }}>{uid ? `Cloud account: ${email || 'Signed in'}` : 'Playing in offline mode'}</p>
+        <p style={{ marginBottom: 10 }}>{uid ? `Cloud account: ${email || 'Signed in'}` : 'Playing in offline mode'}</p>
 
-        {rows.map((r) => {
-          const on = !!state.set[r.key];
-          return (
-            <div key={r.key} className="setrow">
-              <span>
-                {r.icon} {r.label}
-              </span>
-              <button
-                type="button"
-                aria-label={r.label}
-                aria-pressed={on}
-                className={`btn ${on ? 'mint' : ''}`}
-                onClick={() => onToggleSetting(r.key)}
-              >
-                {on ? 'On' : 'Off'}
-              </button>
-            </div>
-          );
-        })}
-
-        <div className="acts" style={{ marginTop: 14 }}>
-          <button type="button" className="btn" onClick={onOpenAuth}>
-            {uid ? <Cloud size={15} /> : <Lock size={15} />}
-            <span>{uid ? 'Account' : 'Sign in / Link Cloud'}</span>
+        <div className="subtabs" style={{ marginBottom: 12 }}>
+          <button
+            type="button"
+            className={section === 'general' ? 'on' : ''}
+            onClick={() => setSection('general')}
+          >
+            <span>Audio &amp; Account</span>
           </button>
           <button
             type="button"
-            className={`btn ${errorCount > 0 ? 'red' : ''}`}
-            onClick={onOpenErrorLog}
+            className={section === 'graphics' ? 'on' : ''}
+            onClick={() => setSection('graphics')}
           >
-            <AlertTriangle size={15} />
-            <span>{errorCount > 0 ? `Error Log (${errorCount})` : 'Error Log'}</span>
-          </button>
-          {!uid && (
-            <button type="button" className="btn red" onClick={onRequestReset}>
-              <RefreshCw size={15} />
-              <span>New Game</span>
-            </button>
-          )}
-          <button type="button" className="btn gold" onClick={onClose}>
-            Done
+            <span>Graphics &amp; FPS</span>
           </button>
         </div>
+
+        {section === 'general' ? (
+          <>
+            {rows.map((r) => {
+              const on = !!state.set[r.key];
+              return (
+                <div key={r.key} className="setrow">
+                  <span>
+                    {r.icon} {r.label}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={r.label}
+                    aria-pressed={on}
+                    className={`btn ${on ? 'mint' : ''}`}
+                    onClick={() => onToggleSetting(r.key)}
+                  >
+                    {on ? 'On' : 'Off'}
+                  </button>
+                </div>
+              );
+            })}
+
+            <div className="acts" style={{ marginTop: 14 }}>
+              <button type="button" className="btn" onClick={onOpenAuth}>
+                {uid ? <Cloud size={15} /> : <Lock size={15} />}
+                <span>{uid ? 'Account' : 'Sign in / Link Cloud'}</span>
+              </button>
+              <button
+                type="button"
+                className={`btn ${errorCount > 0 ? 'red' : ''}`}
+                onClick={onOpenErrorLog}
+              >
+                <AlertTriangle size={15} />
+                <span>{errorCount > 0 ? `Error Log (${errorCount})` : 'Error Log'}</span>
+              </button>
+              {!uid && (
+                <button type="button" className="btn red" onClick={onRequestReset}>
+                  <RefreshCw size={15} />
+                  <span>New Game</span>
+                </button>
+              )}
+              <button type="button" className="btn gold" onClick={onClose}>
+                Done
+              </button>
+            </div>
+          </>
+        ) : (
+          <GraphicsSettingsPanel
+            settings={graphics}
+            perfStats={perfStats}
+            onApply={(next) => onApplyGraphics(next)}
+            onCancel={onClose}
+          />
+        )}
       </div>
     </div>
   );

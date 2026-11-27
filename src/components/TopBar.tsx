@@ -1,5 +1,5 @@
 import React from 'react';
-import { RANKS, TAB_META } from '../game/constants';
+import { MAX_RANK, RANKS, TAB_META } from '../game/constants';
 import { formatNumber } from '../game/rules';
 import type { GameState, PlayerProfile, TabId } from '../game/types';
 import {
@@ -41,7 +41,7 @@ export const TopBar = React.memo<TopBarProps>(({
   onOpenAuth,
 }) => {
   const dt = new Date(2000, 0, 1 + Math.floor(state.day));
-  const rankDef = RANKS[Math.max(1, Math.min(10, state.rank || 1))] || RANKS[1];
+  const rankDef = RANKS[Math.max(1, Math.min(MAX_RANK, state.rank || 1))] || RANKS[1];
   const dateLabel = `${MONTH_YEAR_FORMATTER.format(dt)} · ${rankDef.n} · #${rankPosition}`;
   const cc = state.country?.[0];
 

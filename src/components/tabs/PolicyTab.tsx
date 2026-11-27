@@ -1,12 +1,14 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { GOV_CHANGE_CD_MS, GOVS, NATIONAL_POLICIES, POLICY_PRESETS } from '../../game/constants';
+import { BUILDING_POLICIES, BUILDINGS, GOV_CHANGE_CD_MS, GOVS, NATIONAL_POLICIES, POLICY_PRESETS } from '../../game/constants';
 import {
   canChangePolicyStance,
   canCommitFiscalReform,
+  canSetBuildingPolicy,
   computeEconomySnapshot,
   currentWorldEvent,
   extractFiscalDraft,
   formatNumber,
+  getActiveBuildingPolicyId,
   getFiscalCommitCost,
   getFiscalCooldownLeftMs,
   getGovDefinition,
@@ -14,12 +16,14 @@ import {
   getPolicyStance,
   getRecommendedPolicyHint,
   hasFiscalDraftChanges,
+  isBuildingPolicyAllowedFor,
   presetToFiscalDraft,
   targetHappiness,
   taxInfo,
 } from '../../game/rules';
-import type { GameState, PolicyCategoryId } from '../../game/types';
+import type { BuildingPolicyId, GameState, PolicyCategoryId } from '../../game/types';
 import {
+  BuildingIcon,
   CheckCircle2,
   Clock,
   Cloud,
@@ -40,6 +44,7 @@ interface PolicyTabProps {
   serverOffsetMs: number;
   onCommitFiscalReform: (draft: Partial<Record<keyof GameState, number>>) => boolean;
   onChangePolicyStance: (catId: PolicyCategoryId, stance: 0 | 1 | 2) => void;
+  onSetBuildingPolicy?: (buildingId: string, policyId: BuildingPolicyId) => void;
   onChangeGov: (govId: string) => void;
   onResetGame: () => void;
   onSaveCloudNow: () => void;
@@ -87,10 +92,12 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
   serverOffsetMs,
   onCommitFiscalReform,
   onChangePolicyStance,
+  onSetBuildingPolicy,
   onChangeGov,
   onResetGame,
   onSaveCloudNow,
 }) => {
+  const [selectedBldgId, setSelectedBldgId] = useState<string>('');
   const [draft, setDraft] = useState<Record<string, number>>(() => extractFiscalDraft(state));
   const committedSig = useMemo(() => JSON.stringify(extractFiscalDraft(state)), [state]);
   const prevCommittedSigRef = useRef<string>(committedSig);
@@ -238,6 +245,86 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
           );
         })}
       </div>
+
+      {onSetBuildingPolicy && (() => {
+        const ownedBldgs = BUILDINGS.filter((b) => (state.b?.[b.id] || 0) > 0);
+        const targetBldg = ownedBldgs.find((b) => b.id === selectedBldgId) || ownedBldgs[0];
+        return (
+          <div className="gxc" style={{ marginBottom: 14 }} data-testid="building-policies-card">
+            <div className="gxh" style={{ marginTop: 0 }}>
+              <SlidersHorizontal size={15} color="#5ccbff" />
+              <span>Building Operational Policies ({Object.keys(state.bPolicies || {}).length} Active)</span>
+            </div>
+            <p className="dim" style={{ marginBottom: 8 }}>
+              Tune shifts, cleanrooms, robotics, or civic subsidies on individual owned building types. Incompatible sector policies cannot run simultaneously.
+            </p>
+            {!targetBldg ? (
+              <p className="dim">Construct your first building to configure per-building operating charters.</p>
+            ) : (
+              <>
+                <div className="fchips" style={{ marginBottom: 10 }}>
+                  {ownedBldgs.map((b) => {
+                    const activeId = getActiveBuildingPolicyId(state, b.id);
+                    const isSel = b.id === targetBldg.id;
+                    return (
+                      <button
+                        key={b.id}
+                        type="button"
+                        className={`fchip ${isSel ? 'on' : ''}`}
+                        onClick={() => setSelectedBldgId(b.id)}
+                      >
+                        <BuildingIcon id={b.id} size={13} />
+                        <span>{b.n}</span>
+                        {activeId !== 'standard' && <em style={{ color: 'var(--mint)', fontStyle: 'normal', marginLeft: 4 }}>●</em>}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="pol-opts">
+                  {BUILDING_POLICIES.filter((p) => isBuildingPolicyAllowedFor(targetBldg, p)).map((pol) => {
+                    const activeId = getActiveBuildingPolicyId(state, targetBldg.id);
+                    const isActive = activeId === pol.id;
+                    const check = canSetBuildingPolicy(state, targetBldg.id, pol.id);
+                    return (
+                      <button
+                        key={pol.id}
+                        type="button"
+                        className={`pol-opt${isActive ? ' on' : ''}`}
+                        disabled={!isActive && !check.ok}
+                        title={isActive ? 'Active building policy' : check.reason}
+                        onClick={() => {
+                          if (!isActive) onSetBuildingPolicy(targetBldg.id, pol.id);
+                        }}
+                      >
+                        <div className="pol-opt-top">
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                            {isActive && <CheckCircle2 size={13} color="#3fe0b0" />}
+                            <span>{pol.name}</span>
+                          </span>
+                          <span style={{ color: isActive ? 'var(--mint)' : pol.applyCost > 0 ? 'var(--gold)' : 'var(--mu)', fontSize: 11.5 }}>
+                            {isActive ? 'Active' : pol.applyCost > 0 ? `₨ ${formatNumber(pol.applyCost)}` : 'Free'}
+                          </span>
+                        </div>
+                        <div className="pol-tags">
+                          {pol.pros.map((p) => (
+                            <span key={p} className="pol-pro">{p}</span>
+                          ))}
+                          {pol.cons.map((c) => (
+                            <span key={c} className="pol-con">{c}</span>
+                          ))}
+                          {!isActive && !check.ok && check.reason && (
+                            <span style={{ color: 'var(--gold)' }}>{check.reason}</span>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        );
+      })()}
 
       <div className="gxh">
         <Sparkles size={15} color="#ffc23d" />
@@ -430,6 +517,7 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
     prev.uid !== next.uid ||
     prev.onCommitFiscalReform !== next.onCommitFiscalReform ||
     prev.onChangePolicyStance !== next.onChangePolicyStance ||
+    prev.onSetBuildingPolicy !== next.onSetBuildingPolicy ||
     prev.onChangeGov !== next.onChangeGov ||
     prev.onResetGame !== next.onResetGame ||
     prev.onSaveCloudNow !== next.onSaveCloudNow
@@ -446,6 +534,7 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
     p.boost !== n.boost ||
     Math.round(p.pop) !== Math.round(n.pop) ||
     p.b !== n.b ||
+    p.bPolicies !== n.bPolicies ||
     p.stk !== n.stk ||
     p.tech !== n.tech ||
     p.milestones !== n.milestones ||

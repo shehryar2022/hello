@@ -7,10 +7,12 @@ import {
   GX_LEVEL_MULTS,
   GX_PROJECT_TYPES,
   GX_ROADS,
+  NATIONAL_DECISIONS,
   PROJECT_STAGES,
   TECH_TREE,
 } from '../../game/constants';
 import {
+  canEnactNationalDecision,
   canUnlockTech,
   computeEconomySnapshot,
   formatNumber,
@@ -75,6 +77,7 @@ interface GovtTabProps {
   onStartProject: (type: ProjectType) => void;
   onPayProjectStage: (projectId: string) => void;
   onUnlockTech: (techId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
+  onEnactDecision?: (decisionId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
 }
 
 export const GovtTab: React.FC<GovtTabProps> = memo(({
@@ -91,6 +94,7 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
   onStartProject,
   onPayProjectStage,
   onUnlockTech,
+  onEnactDecision,
 }) => {
   const gx = state.gx;
   const gbAvg = useMemo(() => gxAverageCondition(state, GX_GOV_BUILDINGS), [state]);
@@ -105,6 +109,10 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
   const researchedCount = useMemo(() => techCount(state), [state]);
   const readyTechCount = useMemo(
     () => TECH_TREE.filter((t) => canUnlockTech(state, t.id, nowSrv).ok).length,
+    [state, nowSrv],
+  );
+  const readyDecisionCount = useMemo(
+    () => NATIONAL_DECISIONS.filter((d) => canEnactNationalDecision(state, d, nowSrv).ok).length,
     [state, nowSrv],
   );
   const techRec = useMemo(() => getRecommendedTech(state), [state]);
@@ -155,6 +163,11 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
         <button type="button" className={subTab === 'infra' ? 'on' : ''} onClick={() => onChangeSubTab('infra')}>
           <Landmark size={14} />
           <span>Infra &amp; Upgrades</span>
+        </button>
+        <button type="button" className={subTab === 'decisions' ? 'on' : ''} onClick={() => onChangeSubTab('decisions')}>
+          <Zap size={14} />
+          <span>Decisions</span>
+          {readyDecisionCount > 0 && <em>{readyDecisionCount}</em>}
         </button>
         <button type="button" className={subTab === 'projects' ? 'on' : ''} onClick={() => onChangeSubTab('projects')}>
           <Hammer size={14} />
@@ -598,6 +611,73 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
         </div>
       )}
 
+      {subTab === 'decisions' && (
+        <div data-testid="cabinet-decisions-view">
+          <div className="tradelim">
+            <span>
+              <Zap size={14} color="#ffc23d" />
+              National Cabinet Decisions
+            </span>
+            <b>{NATIONAL_DECISIONS.length} Executive Mandates</b>
+          </div>
+          <div className="gxc" style={{ marginBottom: 10 }}>
+            <p className="dim">
+              Enact timed national directives with real treasury, grid, tax pool, and citizen morale tradeoffs.
+            </p>
+          </div>
+          <div className="list g2">
+            {NATIONAL_DECISIONS.map((dec) => {
+              const check = canEnactNationalDecision(state, dec, nowSrv);
+              return (
+                <div
+                  key={dec.id}
+                  className="row"
+                  style={{ '--c': check.ok ? '#3fe0b0' : '#a58cff' } as React.CSSProperties}
+                >
+                  <div className="em">
+                    <Landmark size={22} color={check.ok ? '#3fe0b0' : '#a58cff'} />
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <h2>
+                      <span>{dec.name}</span>
+                      <span className="lv">Rank {dec.reqRank}+ · {dec.reqBuildings} Bldgs</span>
+                    </h2>
+                    <p>{dec.desc}</p>
+                    <div className="bmeta">
+                      <span>Cooldown {Math.round(dec.cdSec / 60)}m</span>
+                      {dec.hapDelta !== 0 && (
+                        <span style={{ color: dec.hapDelta > 0 ? 'var(--mint)' : 'var(--pink)' }}>
+                          {dec.hapDelta > 0 ? `+${dec.hapDelta}` : dec.hapDelta}% Hap
+                        </span>
+                      )}
+                      {dec.apprDelta !== 0 && (
+                        <span style={{ color: dec.apprDelta > 0 ? 'var(--cy)' : 'var(--pink)' }}>
+                          {dec.apprDelta > 0 ? `+${dec.apprDelta}` : dec.apprDelta}% Appr
+                        </span>
+                      )}
+                      {dec.gemsDelta && <span style={{ color: 'var(--gold)' }}>+{dec.gemsDelta} Gems</span>}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className={`btn sm ${check.ok ? 'gold' : 'no'}`}
+                    disabled={!check.ok || !onEnactDecision}
+                    title={check.reason || dec.tradeoff}
+                    onClick={(e) => onEnactDecision?.(dec.id, e)}
+                  >
+                    {check.cdLeftSec > 0
+                      ? `${check.cdLeftSec}s CD`
+                      : dec.cost > 0
+                        ? `₨ ${formatNumber(dec.cost)}`
+                        : 'Enact Free'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {subTab === 'stats' && econSnap && (
         <div data-testid="economy-stats-view">
           <div className="econ-stats">
@@ -637,12 +717,21 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
               </span>
             </div>
             <div className="econ-tile">
+              <small>Housing &amp; Safety</small>
+              <b style={{ color: econSnap.housingRatio >= 0.9 ? 'var(--mint)' : 'var(--gold)' }}>
+                {Math.round(econSnap.housingRatio * 100)}% Housing
+              </b>
+              <span>
+                Cap {formatNumber(econSnap.housingCapacity)}M · Safety {Math.round(econSnap.publicSafetyScore)}%
+              </span>
+            </div>
+            <div className="econ-tile">
               <small>Inflation &amp; Trade</small>
               <b style={{ color: econSnap.inflationRate <= 3.5 ? 'var(--mint)' : 'var(--gold)' }}>
                 {econSnap.inflationRate.toFixed(1)}% CPI
               </b>
               <span>
-                Export +{Math.round(econSnap.tradeExportBonus * 100)}% · CPI ×{econSnap.inflationDrag.toFixed(2)}
+                Export +{Math.round(econSnap.tradeExportBonus * 100)}% · Pollution {Math.round(econSnap.pollutionLevel)}%
               </span>
             </div>
           </div>
@@ -661,13 +750,16 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
                   label: string;
                 }>;
                 const colors: Record<Exclude<BuildingCategory, 'all'>, string> = {
-                  agriculture: '#37e6a0',
+                  residential: '#60e6c8',
+                  commercial: '#f472b6',
                   industry: '#ff9a1f',
                   energy: '#ffe066',
                   infrastructure: '#60a5fa',
-                  commercial: '#f472b6',
+                  agriculture: '#37e6a0',
                   technology: '#3fd2ff',
                   healthcare_edu: '#a78bfa',
+                  public_services: '#93c5fd',
+                  special: '#fbbf24',
                 };
                 const maxVal = Math.max(
                   1,
@@ -707,7 +799,8 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
     prev.onUpgradeBuilding !== next.onUpgradeBuilding ||
     prev.onStartProject !== next.onStartProject ||
     prev.onPayProjectStage !== next.onPayProjectStage ||
-    prev.onUnlockTech !== next.onUnlockTech
+    prev.onUnlockTech !== next.onUnlockTech ||
+    prev.onEnactDecision !== next.onEnactDecision
   ) {
     return false;
   }
@@ -720,6 +813,7 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
     p.sub !== n.sub ||
     p.rank !== n.rank ||
     p.boosterCd !== n.boosterCd ||
+    p.decisionsCd !== n.decisionsCd ||
     p.gx.lvl !== n.gx.lvl ||
     p.gx.cond !== n.gx.cond ||
     p.gx.blk !== n.gx.blk ||
@@ -736,6 +830,9 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
   if (pSubActive !== nSubActive) return false;
   if (prev.subTab === 'infra') {
     return Math.floor(p.gx.acc || 0) === Math.floor(n.gx.acc || 0);
+  }
+  if (prev.subTab === 'decisions') {
+    return Math.floor(pNow / 1000) === Math.floor(nNow / 1000);
   }
   if (prev.subTab === 'projects') {
     return prev.liveProjectProgress === next.liveProjectProgress;

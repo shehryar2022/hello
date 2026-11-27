@@ -11,26 +11,31 @@ export type TabId =
 export type PlayersSubTab = 'lb' | 'chat' | 'dm';
 export type GiftsSubTab = 'in' | 'out' | 'hist' | 'find';
 export type ShopSubTab = 'rank' | 'sub' | 'boost';
-export type GovtSubTab = 'infra' | 'projects' | 'research' | 'stats';
+export type GovtSubTab = 'infra' | 'projects' | 'decisions' | 'research' | 'stats';
 
 export type CountryTuple = [code: string, name: string, realGdp?: number];
 
 export type BuildingCategory =
   | 'all'
-  | 'agriculture'
+  | 'residential'
+  | 'commercial'
   | 'industry'
   | 'energy'
   | 'infrastructure'
-  | 'commercial'
+  | 'agriculture'
   | 'technology'
-  | 'healthcare_edu';
+  | 'healthcare_edu'
+  | 'public_services'
+  | 'special';
+
+export type ExcludeAllBuildingCategory = Exclude<BuildingCategory, 'all'>;
 
 export interface BuildingDef {
   id: string;
   n: string;
   e: string;
   c: string;
-  cat: Exclude<BuildingCategory, 'all'>;
+  cat: ExcludeAllBuildingCategory;
   cost: number;
   costScale: number;
   buildSec: number;
@@ -41,7 +46,53 @@ export interface BuildingDef {
   hapDelta: number;
   reqRank: number;
   reqBuildings?: number;
+  reqTech?: string;
+  capacity?: number; // Housing beds / civic service capacity
+  demolishRefundPct?: number;
   d: string;
+}
+
+export type BuildingPolicyId =
+  | 'standard'
+  | 'overtime_shift'
+  | 'eco_operation'
+  | 'automated_floor'
+  | 'apprenticeship_crew'
+  | 'premium_service'
+  | 'civic_subsidy';
+
+export interface BuildingPolicyDef {
+  id: BuildingPolicyId;
+  name: string;
+  desc: string;
+  applyCost: number;
+  categories: ExcludeAllBuildingCategory[];
+  incompatibleWith?: BuildingPolicyId[];
+  incomeMult: number;
+  maintMult: number;
+  jobsMult: number;
+  energyMult: number;
+  hapDelta: number;
+  pros: string[];
+  cons: string[];
+}
+
+export interface NationalDecisionDef {
+  id: string;
+  name: string;
+  e: string;
+  cost: number;
+  cdSec: number;
+  reqRank: number;
+  reqBuildings: number;
+  cashDeltaPctGross?: number; // bounded instant cash return
+  hapDelta: number;
+  apprDelta: number;
+  taxPoolBoostSec?: number;
+  infraRepairBoost?: number;
+  gemsDelta?: number;
+  desc: string;
+  tradeoff: string;
 }
 
 export interface RankDef {
@@ -129,6 +180,10 @@ export interface EconomySnapshot {
   jobsCreated: number;
   laborPool: number;
   employmentRate: number;
+  housingCapacity: number;
+  housingRatio: number;
+  publicSafetyScore: number;
+  pollutionLevel: number;
   inflationRate: number;
   inflationDrag: number;
   tradeExportBonus: number;
@@ -139,7 +194,7 @@ export interface EconomySnapshot {
   researchCostMult: number;
   researchSpeedMult: number;
   realGdp: number;
-  sectorIncome: Record<Exclude<BuildingCategory, 'all'>, number>;
+  sectorIncome: Record<ExcludeAllBuildingCategory, number>;
 }
 
 export type TechCategory = 'economy' | 'civic' | 'infra';
@@ -250,6 +305,53 @@ export interface SettingsState {
   anim: number;
 }
 
+export type CityTimeMode = 'auto' | 'day' | 'sunset' | 'night';
+export type CityWeatherMode = 'clear' | 'overcast' | 'rain';
+export type CameraPresetMode = 'free' | 'aerial' | 'closeup';
+
+export type GraphicsPresetId = 'low' | 'medium' | 'high' | 'ultra' | 'custom';
+export type FpsTargetOption = 20 | 30 | 45 | 60 | 90 | 120 | 'auto';
+export type ShadowQuality = 'off' | 'low' | 'medium' | 'high';
+export type AntiAliasingMode = 'off' | 'fxaa' | 'msaa';
+export type TextureQuality = 'low' | 'medium' | 'high';
+export type DensityLevel = 'off' | 'low' | 'medium' | 'high';
+
+export interface GraphicsSettings {
+  preset: GraphicsPresetId;
+  fpsTarget: FpsTargetOption;
+  shadowQuality: ShadowQuality;
+  antiAliasing: AntiAliasingMode;
+  textureQuality: TextureQuality;
+  renderScale: number; // 0.5 .. 1.5
+  viewDistance: 'near' | 'medium' | 'far';
+  ambientOcclusion: boolean;
+  reflections: boolean;
+  particles: boolean;
+  trafficDensity: DensityLevel;
+  pedestrianDensity: DensityLevel;
+  weatherEffects: boolean;
+  dayNightCycle: boolean;
+  bloom: boolean;
+  motionBlur: boolean;
+  adaptiveOptimization: boolean;
+}
+
+export interface RuntimePerfStats {
+  fps: number;
+  avgFps: number;
+  frameTimeMs: number;
+  webglActive: boolean;
+  isSoftwareGl: boolean;
+  rendererName: string;
+  effectiveScale: number;
+  pixelRatio: number;
+  activePreset: GraphicsPresetId;
+  adaptiveActive: boolean;
+  adaptiveStepDown: number;
+  drawCalls: number;
+  triangles: number;
+}
+
 export interface GameState {
   cash: number;
   gems: number;
@@ -299,6 +401,14 @@ export interface GameState {
   sub?: SubscriptionState;
   subPromo?: SubPromoState;
   tech?: Record<string, number>;
+  // Extended national simulation fields (round-tripped cleanly via localStorage & provBudgetLog cloud pack)
+  bPolicies?: Record<string, BuildingPolicyId>;
+  achievements?: Record<string, number>;
+  weeklyDay?: string;
+  weeklyClaimed?: Record<string, number>;
+  decisionsCd?: Record<string, number>;
+  cityTimeMode?: CityTimeMode;
+  cityWeather?: CityWeatherMode;
 }
 
 export interface PlayerStats {
@@ -328,6 +438,15 @@ export interface PlayerProfile {
   stats: PlayerStats;
   createdAt?: unknown;
 }
+
+export type LeaderboardMode =
+  | 'overall'
+  | 'netWorth'
+  | 'buildingDev'
+  | 'production'
+  | 'contribution'
+  | 'weekly'
+  | 'monthly';
 
 export interface WalletData {
   cash: number;
@@ -423,4 +542,16 @@ export interface QuestDef {
   f: (s: GameState, ctx?: { rank: number }) => number;
   g: number;
   r: number;
+}
+
+export interface AchievementDef {
+  id: string;
+  n: string;
+  tier: 'Bronze' | 'Silver' | 'Gold' | 'Diamond';
+  cat: 'economy' | 'city' | 'civic' | 'diplomacy';
+  desc: string;
+  f: (s: GameState) => number;
+  goal: number;
+  rewardGems: number;
+  rewardCash: number;
 }

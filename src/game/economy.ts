@@ -1,5 +1,7 @@
 import {
+  ACHIEVEMENTS,
   BOOSTERS,
+  BUILDING_POLICIES,
   BUILDINGS,
   FISCAL_COMMIT_BASE_COST,
   FISCAL_COMMIT_CD_MS,
@@ -10,6 +12,7 @@ import {
   MAX_CONSTRUCTION_QUEUE,
   MAX_RANK,
   MIN_RANK,
+  NATIONAL_DECISIONS,
   NATIONAL_POLICIES,
   POLICY_CATEGORY_CD_MS,
   POLICY_PRESETS,
@@ -26,11 +29,14 @@ import {
 import type {
   BoosterDef,
   BoosterId,
-  BuildingCategory,
   BuildingDef,
+  BuildingPolicyDef,
+  BuildingPolicyId,
   ConstructionSlot,
   EconomySnapshot,
+  ExcludeAllBuildingCategory,
   GameState,
+  NationalDecisionDef,
   PolicyCategoryId,
   RankDef,
 } from './types';
@@ -620,6 +626,16 @@ export function canStartBuildingConstruction(
     };
   }
 
+  if (def.reqTech && !hasTech(s, def.reqTech)) {
+    const techDef = TECH_TREE.find((t) => t.id === def.reqTech);
+    return {
+      ok: false,
+      reason: `Requires ${techDef?.n || def.reqTech} doctrine`,
+      cost: 0,
+      durationSec: 0,
+    };
+  }
+
   const count = s.b?.[id] || 0;
   if (count >= 10_000) {
     return { ok: false, reason: 'Max building count reached', cost: 0, durationSec: 0 };
@@ -758,6 +774,241 @@ export function tickConstructionQueue(
   };
 }
 
+// ---------- Building Demolition (45% base refund) ----------
+
+export function getDemolishRefund(def: BuildingDef, qty = 1): number {
+  const pct = def.demolishRefundPct ?? 0.45;
+  return Math.max(1, Math.floor(def.cost * pct * Math.max(1, Math.floor(qty))));
+}
+
+export function canDemolishBuilding(
+  s: GameState,
+  id: string,
+  qty = 1,
+): { ok: boolean; reason?: string; refund: number } {
+  const def = BUILDINGS.find((b) => b.id === id);
+  if (!def) return { ok: false, reason: 'Unknown building', refund: 0 };
+  const count = Math.max(0, Math.floor(Number(s.b?.[id]) || 0));
+  const clamped = Math.max(1, Math.floor(qty));
+  if (count < clamped) {
+    return { ok: false, reason: 'Not enough owned buildings to demolish', refund: 0 };
+  }
+  return { ok: true, refund: getDemolishRefund(def, clamped) };
+}
+
+export function applyDemolishBuilding(
+  s: GameState,
+  id: string,
+  qty = 1,
+): { ok: boolean; state: GameState; refund: number; newCount: number; reason?: string } {
+  const check = canDemolishBuilding(s, id, qty);
+  if (!check.ok) {
+    return { ok: false, state: s, refund: 0, newCount: s.b?.[id] || 0, reason: check.reason };
+  }
+  const cur = Math.max(0, Math.floor(Number(s.b?.[id]) || 0));
+  const clamped = Math.max(1, Math.floor(qty));
+  const newCount = Math.max(0, cur - clamped);
+  const nextB = { ...(s.b || {}), [id]: newCount };
+  const nextPolicies = { ...(s.bPolicies || {}) };
+  if (newCount === 0) {
+    delete nextPolicies[id];
+  }
+  const safeCash = Number.isFinite(s.cash) ? Math.max(0, s.cash) : 0;
+  return {
+    ok: true,
+    refund: check.refund,
+    newCount,
+    state: {
+      ...s,
+      cash: Math.min(1e13, safeCash + check.refund),
+      b: nextB,
+      bPolicies: nextPolicies,
+    },
+  };
+}
+
+// ---------- Per-Building Management Policies ----------
+
+export function getBuildingPolicyDef(id?: BuildingPolicyId | string): BuildingPolicyDef {
+  return BUILDING_POLICIES.find((p) => p.id === id) || BUILDING_POLICIES[0];
+}
+
+export function getActiveBuildingPolicyId(s: GameState, buildingId: string): BuildingPolicyId {
+  const raw = s.bPolicies?.[buildingId];
+  if (raw && BUILDING_POLICIES.some((p) => p.id === raw)) return raw;
+  return 'standard';
+}
+
+export function isBuildingPolicyAllowedFor(def: BuildingDef, policy: BuildingPolicyDef): boolean {
+  return policy.categories.includes(def.cat);
+}
+
+export function canSetBuildingPolicy(
+  s: GameState,
+  buildingId: string,
+  policyId: BuildingPolicyId,
+): { ok: boolean; reason?: string; cost: number } {
+  const def = BUILDINGS.find((b) => b.id === buildingId);
+  if (!def) return { ok: false, reason: 'Unknown building', cost: 0 };
+  const owned = Math.max(0, Math.floor(Number(s.b?.[buildingId]) || 0));
+  if (owned < 1) return { ok: false, reason: 'Build at least 1 unit first', cost: 0 };
+  const pol = BUILDING_POLICIES.find((p) => p.id === policyId);
+  if (!pol) return { ok: false, reason: 'Unknown policy', cost: 0 };
+  if (!isBuildingPolicyAllowedFor(def, pol)) {
+    return { ok: false, reason: `Not applicable to ${def.cat} sector`, cost: 0 };
+  }
+  const curId = getActiveBuildingPolicyId(s, buildingId);
+  if (curId === policyId) {
+    return { ok: false, reason: 'Policy already active', cost: 0 };
+  }
+
+  // Enforce sector-level mutual exclusion across buildings in the same sector
+  if (pol.id !== 'standard' && pol.incompatibleWith?.length) {
+    for (const sibling of BUILDINGS) {
+      if (sibling.id === buildingId || sibling.cat !== def.cat) continue;
+      if ((s.b?.[sibling.id] || 0) <= 0) continue;
+      const sibPol = getActiveBuildingPolicyId(s, sibling.id);
+      if (pol.incompatibleWith.includes(sibPol)) {
+        const sibDef = getBuildingPolicyDef(sibPol);
+        return {
+          ok: false,
+          reason: `Conflicts with ${sibDef.name} on ${sibling.n}`,
+          cost: pol.applyCost,
+        };
+      }
+    }
+  }
+
+  const cost = pol.id === 'standard' ? 0 : pol.applyCost;
+  if (!Number.isFinite(s.cash) || s.cash < cost) {
+    return { ok: false, reason: 'Not enough Coins', cost };
+  }
+  return { ok: true, cost };
+}
+
+export function applySetBuildingPolicy(
+  s: GameState,
+  buildingId: string,
+  policyId: BuildingPolicyId,
+): { ok: boolean; state: GameState; cost: number; reason?: string } {
+  const check = canSetBuildingPolicy(s, buildingId, policyId);
+  if (!check.ok) return { ok: false, state: s, cost: check.cost, reason: check.reason };
+  const nextPolicies = { ...(s.bPolicies || {}) };
+  if (policyId === 'standard') {
+    delete nextPolicies[buildingId];
+  } else {
+    nextPolicies[buildingId] = policyId;
+  }
+  const safeCash = Number.isFinite(s.cash) ? Math.max(0, s.cash) : 0;
+  return {
+    ok: true,
+    cost: check.cost,
+    state: {
+      ...s,
+      cash: Math.max(0, safeCash - check.cost),
+      bPolicies: nextPolicies,
+    },
+  };
+}
+
+// ---------- National Cabinet Decisions ----------
+
+export function getNationalDecisionCooldownLeftSec(
+  s: GameState,
+  decisionId: string,
+  nowMs = Date.now(),
+): number {
+  const until = Number(s.decisionsCd?.[decisionId] || 0);
+  if (!Number.isFinite(until) || until <= nowMs) return 0;
+  return Math.ceil((until - nowMs) / 1000);
+}
+
+export function canEnactNationalDecision(
+  s: GameState,
+  decision: NationalDecisionDef,
+  nowMs = Date.now(),
+): { ok: boolean; reason?: string; cdLeftSec: number } {
+  const curRank = Math.max(MIN_RANK, Math.floor(Number(s.rank) || MIN_RANK));
+  if (curRank < decision.reqRank) {
+    return { ok: false, reason: `Requires Rank ${decision.reqRank}`, cdLeftSec: 0 };
+  }
+  const totalB = totalBuildings(s);
+  if (totalB < decision.reqBuildings) {
+    return { ok: false, reason: `Requires ${decision.reqBuildings} buildings`, cdLeftSec: 0 };
+  }
+  const cdLeftSec = getNationalDecisionCooldownLeftSec(s, decision.id, nowMs);
+  if (cdLeftSec > 0) {
+    return { ok: false, reason: `Cooldown: ${cdLeftSec}s`, cdLeftSec };
+  }
+  if (!Number.isFinite(s.cash) || s.cash < decision.cost) {
+    return { ok: false, reason: 'Not enough Coins', cdLeftSec: 0 };
+  }
+  return { ok: true, cdLeftSec: 0 };
+}
+
+export function applyEnactNationalDecision(
+  s: GameState,
+  decisionId: string,
+  nowMs = Date.now(),
+): { ok: boolean; state: GameState; summary?: string; reason?: string } {
+  const def = NATIONAL_DECISIONS.find((d) => d.id === decisionId);
+  if (!def) return { ok: false, state: s, reason: 'Unknown decision' };
+  const check = canEnactNationalDecision(s, def, nowMs);
+  if (!check.ok) return { ok: false, state: s, reason: check.reason };
+
+  const snap = computeEconomySnapshot(s, { nowMs, ignoreTempBoosters: true });
+  const baseGross = Math.max(25, snap.gross);
+  const baseNet = Math.max(20, snap.net);
+  const safeCash = Number.isFinite(s.cash) ? Math.max(0, s.cash) : 0;
+  const cashGain = def.cashDeltaPctGross ? Math.floor(baseGross * def.cashDeltaPctGross) : 0;
+  const poolGain = def.taxPoolBoostSec ? Math.floor(baseNet * def.taxPoolBoostSec) : 0;
+  const nextCash = Math.min(1e13, Math.max(0, safeCash - def.cost + cashGain));
+  const capPool = Math.max(0, baseNet * (hasTech(s, 'sovereign_vault') ? 2400 : 1800));
+  const nextPool =
+    poolGain > 0
+      ? (s.taxPool >= capPool ? s.taxPool : Math.min(capPool, (s.taxPool || 0) + poolGain))
+      : s.taxPool;
+
+  let nextCond = s.gx.cond;
+  if (def.infraRepairBoost && def.infraRepairBoost > 0) {
+    nextCond = { ...s.gx.cond };
+    for (const k of Object.keys(nextCond)) {
+      nextCond[k] = Math.min(100, (nextCond[k] ?? 100) + def.infraRepairBoost);
+    }
+  }
+
+  const nextGems = Math.min(1e9, Math.max(0, Math.floor(s.gems || 0) + (def.gemsDelta || 0)));
+  const nextHap = Math.min(100, Math.max(0, (s.hap || 60) + def.hapDelta));
+  const nextAppr = Math.min(100, Math.max(0, (s.appr || 55) + def.apprDelta));
+  const nextLog = [`Cabinet Decree: ${def.name}`, ...(s.gx?.log || [])].slice(0, 8);
+
+  return {
+    ok: true,
+    summary: `${def.name} enacted`,
+    state: {
+      ...s,
+      cash: nextCash,
+      gems: nextGems,
+      taxPool: nextPool,
+      hap: nextHap,
+      appr: nextAppr,
+      decisionsCd: {
+        ...(s.decisionsCd || {}),
+        [def.id]: Math.floor(nowMs + def.cdSec * 1000),
+      },
+      gx: {
+        ...s.gx,
+        cond: nextCond,
+        log: nextLog,
+      },
+    },
+  };
+}
+
+export function unlockedAchievementCount(s: GameState): number {
+  return ACHIEVEMENTS.filter((a) => Boolean(s.achievements?.[a.id])).length;
+}
+
 // ---------- Centralized National Economy Engine ----------
 
 export function taxInfo(s: GameState) {
@@ -849,14 +1100,17 @@ export function computeEconomySnapshot(
   const shopBoostInfo = ignoreTemp ? { active: false, id: '', mult: 1, leftSec: 0 } : getActiveShopIncomeBooster(s, nowMs);
   const growthBoostActive = !ignoreTemp && shopBoostInfo.active && shopBoostInfo.id === 'growth_boost';
 
-  const sectorRaw: Record<Exclude<BuildingCategory, 'all'>, number> = {
-    agriculture: 0,
+  const sectorRaw: Record<ExcludeAllBuildingCategory, number> = {
+    residential: 0,
+    commercial: 0,
     industry: 0,
     energy: 0,
     infrastructure: 0,
-    commercial: 0,
+    agriculture: 0,
     technology: 0,
     healthcare_edu: 0,
+    public_services: 0,
+    special: 0,
   };
 
   let energySupply = 12; // Base municipal generator capacity (MW)
@@ -864,12 +1118,19 @@ export function computeEconomySnapshot(
   let jobsCreated = 0;
   let maintCostRaw = 0;
   let capitalEquity = 0;
+  let housingCapacity = 80; // Baseline municipal capacity (M) so starters never suffer overcrowding
+  let safetyPoints = 0;
+  let pollutionRaw = 0;
+  let cleanPoints = 0;
+
+  const b = s.b || {};
 
   for (const d of BUILDINGS) {
-    const count = Math.max(0, Math.floor(Number(s.b?.[d.id]) || 0));
+    const count = Math.max(0, Math.floor(Number(b[d.id]) || 0));
     if (count <= 0) continue;
     const lvl = Math.max(1, Math.min(5, Math.floor(Number(s.gx?.lvl?.[d.id]) || 1)));
     const lvlMult = GX_LEVEL_MULTS[lvl - 1] || 1;
+    const bPol = getBuildingPolicyDef(getActiveBuildingPolicyId(s, d.id));
 
     capitalEquity += d.cost * count * (1 + (lvl - 1) * 0.45) * 1.15;
 
@@ -887,7 +1148,7 @@ export function computeEconomySnapshot(
     } else if (d.cat === 'infrastructure') {
       if (pInf === 1) catIncomeMult *= 1.1;
       if (pTrd === 1) catIncomeMult *= 1.16;
-      else if (pTrd === 2 && (d.id === 'ports' || d.id === 'airports')) catIncomeMult *= 0.92;
+      else if (pTrd === 2 && (d.id === 'ports' || d.id === 'airports' || d.id === 'logistics_center')) catIncomeMult *= 0.92;
     } else if (d.cat === 'commercial') {
       if (pEmp === 2) catIncomeMult *= 1.08;
       if (pHlth === 2) catIncomeMult *= 0.97;
@@ -897,10 +1158,24 @@ export function computeEconomySnapshot(
       if (researchBoostActive) catIncomeMult *= 1.25;
     } else if (d.cat === 'healthcare_edu') {
       if (pEdu === 1) catIncomeMult *= 1.14;
+    } else if (d.cat === 'public_services' || d.cat === 'residential') {
+      if (pHlth === 1) catIncomeMult *= 1.05;
     }
 
-    const baseOut = d.inc * count * lvlMult * catIncomeMult;
+    const baseOut = d.inc * count * lvlMult * catIncomeMult * bPol.incomeMult;
     sectorRaw[d.cat] += baseOut;
+
+    if (d.cat === 'residential' && d.capacity) {
+      housingCapacity += d.capacity * count * (1 + (lvl - 1) * 0.12);
+    }
+    if (d.cat === 'public_services') {
+      safetyPoints += count * (d.id === 'police_hq' ? 4.5 : d.id === 'fire_dept' ? 3.5 : 2.5);
+    }
+    if (d.hapDelta < 0) {
+      pollutionRaw += Math.abs(d.hapDelta) * count * (bPol.id === 'eco_operation' ? 0.55 : bPol.id === 'overtime_shift' ? 1.2 : 1);
+    } else if (d.id === 'solar_plants' || d.id === 'wind_farms' || d.id === 'water_plant' || d.id === 'smart_housing') {
+      cleanPoints += count * 1.4;
+    }
 
     if (d.energy > 0) {
       let gen = d.energy * count * (1 + (lvl - 1) * 0.15);
@@ -908,17 +1183,17 @@ export function computeEconomySnapshot(
       if (pNrg === 2) gen *= 1.14;
       energySupply += gen;
     } else if (d.energy < 0) {
-      let dem = Math.abs(d.energy) * count * (1 + (lvl - 1) * 0.08);
+      let dem = Math.abs(d.energy) * count * (1 + (lvl - 1) * 0.08) * bPol.energyMult;
       if (d.cat === 'industry' && pInd === 2) dem *= 1.1;
       energyDemand += dem;
     }
 
-    let j = d.jobs * count;
+    let j = d.jobs * count * bPol.jobsMult;
     if (d.cat === 'industry' && pInd === 2) j *= 0.92;
     if (pEmp === 1) j *= 1.12;
     jobsCreated += j;
 
-    let m = d.maint * count * (1 + (lvl - 1) * 0.25);
+    let m = d.maint * count * (1 + (lvl - 1) * 0.25) * bPol.maintMult;
     if (d.cat === 'industry' && pInd === 1) m *= 1.12;
     if (d.cat === 'agriculture' && pAgr === 1) m *= 1.15;
     if (d.cat === 'healthcare_edu') {
@@ -934,7 +1209,7 @@ export function computeEconomySnapshot(
     maintCostRaw += m;
   }
 
-  const rawBuildingSum = Object.values(sectorRaw).reduce((a, b) => a + b, 0);
+  const rawBuildingSum = Object.values(sectorRaw).reduce((a, x) => a + x, 0);
   const baseGross = 2 + rawBuildingSum;
 
   const energyRatio = energyDemand <= 0 ? 1.2 : energySupply / energyDemand;
@@ -954,38 +1229,59 @@ export function computeEconomySnapshot(
     (pHlth === 1 ? 1.04 : 1);
   empFactor = Math.max(0.75, Math.min(1.45, empFactor));
 
+  const popNow = Math.max(1, Number(s.pop) || 48);
+  const housingRatio = Number((housingCapacity / popNow).toFixed(2));
+  const housingFactor = housingRatio >= 1 ? 1 + Math.min(0.04, (housingRatio - 1) * 0.04) : Math.max(0.9, 0.9 + housingRatio * 0.1);
+
+  const pollutionLevel = Math.max(
+    0,
+    Math.min(100, Math.round(pollutionRaw * (hasTech(s, 'eco_catalysis') ? 0.7 : 1) - cleanPoints - (s.green || 0) * 0.4)),
+  );
+  const publicSafetyScore = Math.max(
+    20,
+    Math.min(100, Math.round(62 + safetyPoints - pollutionLevel * 0.18)),
+  );
+
   const consumerDemandMult =
     1 +
     Math.min(
-      0.28,
-      (s.b?.markets || 0) * 0.012 +
-        (s.b?.shopping_centers || 0) * 0.025 +
-        (s.b?.business_districts || 0) * 0.035,
+      0.34,
+      (b.markets || 0) * 0.012 +
+        (b.shopping_centers || 0) * 0.025 +
+        (b.business_districts || 0) * 0.035 +
+        (b.corporate_tower || 0) * 0.04 +
+        (b.intl_hotel || 0) * 0.022 +
+        (b.national_stadium || 0) * 0.03,
     ) *
       (pEmp === 1 ? 1.04 : 1);
 
   let baseTradeExportBonus =
     tradeTier * 0.05 +
     Math.min(
-      0.35,
-      (s.b?.ports || 0) * 0.02 + (s.b?.airports || 0) * 0.03 + (s.b?.food_plant || 0) * 0.008,
+      0.42,
+      (b.ports || 0) * 0.02 +
+        (b.airports || 0) * 0.03 +
+        (b.food_plant || 0) * 0.008 +
+        (b.logistics_center || 0) * 0.025 +
+        (b.trade_center || 0) * 0.035 +
+        (b.convention_center || 0) * 0.03,
     );
   if (pInd === 1) baseTradeExportBonus += 0.1;
   if (pAgr === 2) baseTradeExportBonus += 0.12;
   if (pTrd === 1) baseTradeExportBonus += 0.16;
   if (pTrd === 2) baseTradeExportBonus -= 0.08;
-  baseTradeExportBonus = Math.max(-0.08, Math.min(0.75, baseTradeExportBonus));
+  baseTradeExportBonus = Math.max(-0.08, Math.min(0.85, baseTradeExportBonus));
   const tradeExportBonus = Math.max(
     -0.08,
-    Math.min(0.75, baseTradeExportBonus + (growthBoostActive ? 0.2 : 0)),
+    Math.min(0.85, baseTradeExportBonus + (growthBoostActive ? 0.2 : 0)),
   );
   const growthTradeLift = (1 + tradeExportBonus) / Math.max(0.5, 1 + baseTradeExportBonus);
   const tradeImportDrag = pTrd === 1 ? 0.03 : 0;
 
-  // Inflation model
+  // Inflation model (stabilized by National Reserve Bank & food output)
   const ti = taxInfo(s);
   const taxInflation = Math.max(0, ti.burden - 24) * 0.08;
-  const agrFoodSupplyOffset = Math.min(1.5, ((s.b?.farms || 0) + (s.b?.greenhouses || 0)) * 0.05);
+  const agrFoodSupplyOffset = Math.min(2.0, ((b.farms || 0) + (b.greenhouses || 0)) * 0.05 + (b.national_bank || 0) * 0.35);
   let inflationRate = 2.0 + taxInflation - agrFoodSupplyOffset;
   if (pTax === 2) inflationRate *= 0.85;
   if (pAgr === 1) inflationRate -= 0.8;
@@ -999,6 +1295,7 @@ export function computeEconomySnapshot(
   let prodMult =
     energyFactor *
     empFactor *
+    housingFactor *
     consumerDemandMult *
     inflationDrag *
     (1 + tradeExportBonus) *
@@ -1018,10 +1315,10 @@ export function computeEconomySnapshot(
   const rankDef = RANKS[Math.max(MIN_RANK, Math.min(MAX_RANK, Math.floor(s.rank || MIN_RANK)))] || RANKS[MIN_RANK];
   const rankMult = 1 + (rankDef.incomeBonusPct || 0) / 100;
 
-  const greenCount = (s.b?.solar_plants || 0) + (s.b?.wind_farms || 0);
+  const greenCount = (b.solar_plants || 0) + (b.wind_farms || 0);
   const greenSynergy = 1 + Math.min(0.4, greenCount * (s.green || 0) * 0.0025);
-  const transitSynergy = 1 + Math.min(0.38, ((s.b?.roads || 0) + (s.b?.railways || 0)) * (s.transitSub || 0) * 0.002);
-  const rAndDSynergy = 1 + Math.min(0.4, ((s.b?.research_centers || 0) + (s.b?.universities || 0)) * 0.015);
+  const transitSynergy = 1 + Math.min(0.38, ((b.roads || 0) + (b.railways || 0) + (b.highway_network || 0) + (b.transit_hub || 0)) * (s.transitSub || 0) * 0.002);
+  const rAndDSynergy = 1 + Math.min(0.45, ((b.research_centers || 0) + (b.universities || 0) + (b.central_lab || 0) + (b.space_center || 0)) * 0.015);
 
   const macroMult =
     ti.mult *
@@ -1045,7 +1342,7 @@ export function computeEconomySnapshot(
   const buildingGross = baseGross * totalMult;
 
   const sectorIncome = { ...sectorRaw };
-  for (const k of Object.keys(sectorIncome) as Array<Exclude<BuildingCategory, 'all'>>) {
+  for (const k of Object.keys(sectorIncome) as ExcludeAllBuildingCategory[]) {
     sectorIncome[k] = sectorIncome[k] * totalMult;
   }
 
@@ -1061,7 +1358,6 @@ export function computeEconomySnapshot(
   const net = buildingGross - maintCost - salaryCost - welfareCost;
 
   // Real National GDP: anchored on capital equity + annualized productivity + human capital + bounded treasury
-  // Never craters when spending liquid cash on buildings/gifts.
   const baseFlow = Math.max(0, net);
   const humanCapital = (s.pop || 48) * 220 + jobsCreated * 45 + techCount(s) * 150_000;
   const treasuryComponent = Math.min(1e12, Math.max(0, Number(s.cash) || 0) * 0.35);
@@ -1084,6 +1380,10 @@ export function computeEconomySnapshot(
     jobsCreated: Math.round(jobsCreated),
     laborPool,
     employmentRate: Number(employmentRate.toFixed(3)),
+    housingCapacity: Math.round(housingCapacity),
+    housingRatio,
+    publicSafetyScore,
+    pollutionLevel,
     inflationRate,
     inflationDrag: Number(inflationDrag.toFixed(3)),
     tradeExportBonus: Number(tradeExportBonus.toFixed(3)),

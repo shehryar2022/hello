@@ -7,7 +7,14 @@ import {
   getActiveSubscription,
   getBoosterActivationInfo,
 } from '../game/rules';
-import type { GameState } from '../game/types';
+import type {
+  BuildingPolicyId,
+  CityTimeMode,
+  CityWeatherMode,
+  GameState,
+  GraphicsSettings,
+  RuntimePerfStats,
+} from '../game/types';
 import { City3D } from './City3D';
 import {
   Activity,
@@ -16,6 +23,8 @@ import {
   Coins,
   Flame,
   GemDiamondIcon,
+  Home,
+  Shield,
   Smile,
   SubIcon,
   TrendingUp,
@@ -26,24 +35,42 @@ import {
 
 interface HeroPanelProps {
   state: GameState;
+  graphics: GraphicsSettings;
   tradeTier: number;
   serverOffsetMs?: number;
   showCity: boolean;
-  burstKey: number;
+  selectedBuildingId: string | null;
+  focusRequest?: { id: string; seq: number } | null;
   onCollectTax: (e: React.MouseEvent<HTMLButtonElement>) => void;
   onActivateGemBoost: () => void;
-  onCityBuildingTap: (clientX?: number, clientY?: number) => void;
+  onSelectBuilding: (id: string | null) => void;
+  onBuyBuilding: (id: string, qty: 1 | 5) => void;
+  onUpgradeBuilding: (id: string) => void;
+  onDemolishBuilding: (id: string, qty: 1 | 5) => void;
+  onSetBuildingPolicy: (id: string, policyId: BuildingPolicyId) => void;
+  onChangeTimeMode: (mode: CityTimeMode) => void;
+  onChangeWeather: (mode: CityWeatherMode) => void;
+  onPerfStats: (stats: RuntimePerfStats) => void;
 }
 
 export const HeroPanel: React.FC<HeroPanelProps> = memo(({
   state,
+  graphics,
   tradeTier,
   serverOffsetMs = 0,
   showCity,
-  burstKey,
+  selectedBuildingId,
+  focusRequest,
   onCollectTax,
   onActivateGemBoost,
-  onCityBuildingTap,
+  onSelectBuilding,
+  onBuyBuilding,
+  onUpgradeBuilding,
+  onDemolishBuilding,
+  onSetBuildingPolicy,
+  onChangeTimeMode,
+  onChangeWeather,
+  onPerfStats,
 }) => {
   const now = (state.t || Date.now()) + serverOffsetMs;
   const snap = useMemo(
@@ -117,7 +144,23 @@ export const HeroPanel: React.FC<HeroPanelProps> = memo(({
           </small>
         </div>
 
-        <City3D state={state} visible={showCity} burstKey={burstKey} onBuildingTap={onCityBuildingTap} />
+        <City3D
+          state={state}
+          graphics={graphics}
+          visible={showCity}
+          tradeTier={tradeTier}
+          serverOffsetMs={serverOffsetMs}
+          selectedBuildingId={selectedBuildingId}
+          focusRequest={focusRequest}
+          onSelectBuilding={onSelectBuilding}
+          onBuyBuilding={onBuyBuilding}
+          onUpgradeBuilding={onUpgradeBuilding}
+          onDemolishBuilding={onDemolishBuilding}
+          onSetBuildingPolicy={onSetBuildingPolicy}
+          onChangeTimeMode={onChangeTimeMode}
+          onChangeWeather={onChangeWeather}
+          onPerfStats={onPerfStats}
+        />
 
         <div className="hero-macro">
           <div className="hero-macro-cell">
@@ -126,21 +169,48 @@ export const HeroPanel: React.FC<HeroPanelProps> = memo(({
               Grid MW
             </small>
             <b style={{ color: snap.energyRatio >= 1 ? 'var(--mint)' : 'var(--pink)' }}>
-              {snap.energySupply}/{snap.energyDemand} MW
+              {snap.energySupply}/{snap.energyDemand}
             </b>
           </div>
           <div className="hero-macro-cell">
             <small>
-              <Briefcase size={11} color="#5ccbff" />
-              Employment
+              <Home size={11} color={snap.housingRatio >= 1 ? '#3fe0b0' : '#ffc23d'} />
+              Housing
+            </small>
+            <b style={{ color: snap.housingRatio >= 0.9 ? 'var(--mint)' : 'var(--gold)' }}>
+              {Math.round(snap.housingRatio * 100)}%
+            </b>
+          </div>
+          <div className="hero-macro-cell">
+            <small>
+              <Shield size={11} color="#5ccbff" />
+              Safety
+            </small>
+            <b style={{ color: snap.publicSafetyScore >= 60 ? 'var(--mint)' : 'var(--gold)' }}>
+              {Math.round(snap.publicSafetyScore)}%
+            </b>
+          </div>
+          <div className="hero-macro-cell">
+            <small>
+              <Briefcase size={11} color="#a58cff" />
+              Jobs
             </small>
             <b style={{ color: snap.employmentRate >= 0.65 ? 'var(--mint)' : 'var(--gold)' }}>
-              {Math.round(snap.employmentRate * 100)}% · {formatNumber(snap.jobsCreated)}
+              {Math.round(snap.employmentRate * 100)}%
             </b>
           </div>
           <div className="hero-macro-cell">
             <small>
-              <Activity size={11} color={snap.inflationRate <= 3.5 ? '#3fe0b0' : '#ffc23d'} />
+              <Activity size={11} color={snap.pollutionLevel <= 35 ? '#3fe0b0' : '#ff6fa5'} />
+              Pollution
+            </small>
+            <b style={{ color: snap.pollutionLevel <= 30 ? 'var(--mint)' : snap.pollutionLevel <= 55 ? 'var(--gold)' : 'var(--pink)' }}>
+              {Math.round(snap.pollutionLevel)}%
+            </b>
+          </div>
+          <div className="hero-macro-cell">
+            <small>
+              <TrendingUp size={11} color={snap.inflationRate <= 3.5 ? '#3fe0b0' : '#ffc23d'} />
               Inflation
             </small>
             <b style={{ color: snap.inflationRate <= 3.2 ? 'var(--mint)' : snap.inflationRate <= 6 ? 'var(--gold)' : 'var(--pink)' }}>

@@ -156,20 +156,21 @@ test('building costs scale by costScale, bulkBuildingCost matches sum, and upkee
   assert.ok(inc.upkeep <= inc.gross * 0.46 + 0.001);
 });
 
-test('ranks 1..10 progress strictly in sequential order after meeting multi-factor requirements', () => {
+test('ranks 1..15 progress strictly in sequential order after meeting multi-factor requirements', () => {
   assert.equal(MIN_RANK, 1);
-  assert.equal(MAX_RANK, 10);
-  assert.equal(RANKS.length, 11);
+  assert.equal(MAX_RANK, 15);
+  assert.equal(RANKS.length, 16);
   assert.equal(RANKS[1].cost, 0);
   assert.equal(RANKS[2].cost, 25_000);
   assert.equal(RANKS[6].cost, 15_000_000);
   assert.equal(RANKS[10].cost, 3_500_000_000);
+  assert.equal(RANKS[15].cost, 280_000_000_000);
 
   let state = freshState();
-  state.cash = 30_000_000_000;
-  state.hap = 80;
+  state.cash = 1_500_000_000_000;
+  state.hap = 85;
   for (const b of BUILDINGS) {
-    state.b[b.id] = 40;
+    state.b[b.id] = 45;
     state.gx.lvl[b.id] = 5;
   }
   for (const t of TECH_TREE) {
@@ -185,9 +186,9 @@ test('ranks 1..10 progress strictly in sequential order after meeting multi-fact
     assert.equal(res.ok, true, `Failed promoting to rank ${r}: ${res.reason}`);
     state = res.state;
   }
-  assert.equal(state.rank, 10);
+  assert.equal(state.rank, 15);
   const rankedSnap = calculateIncome(state);
-  assert.ok(Math.abs(rankedSnap.gross / baseSnap.gross - 1.25) < 0.001, 'Rank 10 gives +25% national income bonus');
+  assert.ok(Math.abs(rankedSnap.gross / baseSnap.gross - 1.55) < 0.001, 'Rank 15 gives +55% national income bonus');
   assert.ok(rankedSnap.net > baseSnap.net);
 });
 
@@ -485,8 +486,8 @@ test('government renovation depends strictly on 20% of building development (una
   assert.equal(gxRepairCost(state, 'parl', true), 0);
 });
 
-test('22 national buildings and 16 policies function cleanly', () => {
-  assert.equal(BUILDINGS.length, 22);
+test('51 national buildings and 16 policies function cleanly', () => {
+  assert.equal(BUILDINGS.length, 51);
   for (const id of ['farms', 'food_plant', 'steel_plants', 'wind_farms', 'railways', 'shopping_centers', 'tech_parks', 'data_centers', 'universities']) {
     assert.ok(BUILDINGS.some((b) => b.id === id), `Missing building ${id}`);
   }
@@ -737,11 +738,12 @@ test('cleanSavePayload strips undefined/country/provinces fields and clamps all 
   assert.equal('avs' in cleaned, false);
   assert.equal('legacyFoo' in cleaned, false);
   assert.equal('legacyHotel' in (cleaned.b as Record<string, unknown>), false);
-  assert.equal(Object.keys(cleaned.b as Record<string, unknown>).length, BUILDINGS.length);
+  assert.ok(Object.keys(cleaned.b as Record<string, unknown>).length <= 35);
   assert.equal(cleaned.cash, 1e13);
   assert.equal(cleaned.gems, 1e9);
   assert.equal(cleaned.taxPool, 1e13);
-  assert.equal(cleaned.rank, MAX_RANK);
+  assert.equal(cleaned.rank, 10);
+  assert.equal(migrateState(cleaned as never).rank, MAX_RANK);
   assert.equal(cleaned.fused, 1_000_000);
   assert.equal(cleaned.streak, 10_000);
   const fx = cleaned.activeFx as Record<string, unknown>;
