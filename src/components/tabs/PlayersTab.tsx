@@ -109,10 +109,11 @@ const LeaderboardRow: React.FC<LeaderboardRowProps> = memo(({
     ? SUBSCRIPTIONS.find((x) => x.id === subTier)?.periodLabel || subTier
     : '';
   const metricVal = computeLeaderboardMetrics(p)[lbMode];
+  const lbFxClass = p.cosLbAnim ? `lb-fx lb-fx--${p.cosLbAnim}` : '';
 
   return (
     <div
-      className={`row pcard ${me ? 'me' : ''} ${subTier ? `sub-card sub-card--${subTier}` : ''}`}
+      className={`row pcard ${me ? 'me' : ''} ${subTier ? `sub-card sub-card--${subTier}` : ''} ${lbFxClass}`.trim()}
       data-testid={`lb-row-${p.id}`}
     >
       <div className={`medal m${rankIndex + 1}`}>{rankIndex + 1}</div>

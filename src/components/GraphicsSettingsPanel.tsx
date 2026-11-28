@@ -16,6 +16,7 @@ import type {
   RuntimePerfStats,
   ShadowQuality,
   TextureQuality,
+  UiAnimationQuality,
 } from '../game/types';
 
 interface GraphicsSettingsPanelProps {
@@ -226,6 +227,20 @@ export const GraphicsSettingsPanel: React.FC<GraphicsSettingsPanelProps> = ({
             <option value="high">High</option>
           </select>
         </label>
+
+        <label className="gfx-field">
+          <span>UI Animation Quality</span>
+          <select
+            className="inp gfx-select"
+            aria-label="UI Animation Quality"
+            value={draft.uiAnimationQuality || 'high'}
+            onChange={(e) => updateField('uiAnimationQuality', e.target.value as UiAnimationQuality)}
+          >
+            <option value="low">Low (Minimal)</option>
+            <option value="medium">Medium (Balanced)</option>
+            <option value="high">High (Full Premium FX)</option>
+          </select>
+        </label>
       </div>
 
       {/* Effect Toggles */}
@@ -240,9 +255,11 @@ export const GraphicsSettingsPanel: React.FC<GraphicsSettingsPanelProps> = ({
             ['bloom', 'Night Emissive Glow'],
             ['motionBlur', 'Camera Motion Smooth'],
             ['adaptiveOptimization', 'Adaptive Performance Scaling'],
+            ['uiEffectsEnabled', 'UI Shimmer & Glow Effects'],
+            ['reducedMotion', 'Reduced Motion Accessibility'],
           ] as const
         ).map(([key, label]) => {
-          const active = draft[key];
+          const active = key === 'uiEffectsEnabled' ? draft.uiEffectsEnabled !== false : Boolean(draft[key]);
           return (
             <button
               key={key}

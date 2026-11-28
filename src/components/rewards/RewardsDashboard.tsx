@@ -1,9 +1,11 @@
 import React, { memo, useEffect, useMemo, useState } from 'react';
-import { ACHIEVEMENTS, WEEKLY_MISSIONS } from '../../game/constants';
+import { ACHIEVEMENTS, CHALLENGES_2_0, WEEKLY_MISSIONS } from '../../game/constants';
 import {
   formatCountdownShort,
+  getDailyQuestsView,
   getDailyRewardsView,
   msUntilNextKarachiDay,
+  rewardsDayKey,
 } from '../../game/rewards';
 import {
   formatNumber,
@@ -16,6 +18,7 @@ import {
   Calendar,
   CashCoinIcon,
   CheckCircle2,
+  Compass,
   GemDiamondIcon,
   Gift,
   Sparkles,
@@ -52,8 +55,10 @@ export interface RewardsDashboardProps {
   rankPosition: number;
   serverOffsetMs?: number;
   onClaimDailySlot?: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  onClaimDailyQuest?: (questId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
   onClaimWeekly?: (missionId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
   onClaimAchievement?: (achievementId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
+  onClaimChallenge?: (challengeId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
   onClaimMilestone: (milestoneId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
 }
 
@@ -64,21 +69,40 @@ export const RewardsDashboard = memo(function RewardsDashboard({
   rankPosition,
   serverOffsetMs = 0,
   onClaimDailySlot,
+  onClaimDailyQuest,
   onClaimWeekly,
   onClaimAchievement,
+  onClaimChallenge,
   onClaimMilestone,
 }: RewardsDashboardProps) {
+  const [achTierFilter, setAchTierFilter] = useState<'all' | 'Bronze' | 'Silver' | 'Gold' | 'Diamond'>('all');
+  const [showAllWeekly, setShowAllWeekly] = useState(false);
+
   const nowMs = (state.t || Date.now()) + serverOffsetMs;
+  const activeDayKey = dayKey || rewardsDayKey(nowMs);
   const dailyView = useMemo(() => {
-    void dayKey;
     return getDailyRewardsView(state, nowMs);
-  }, [state, nowMs, dayKey]);
+  }, [state, nowMs]);
+
+  const dailyQuestsView = useMemo(
+    () => getDailyQuestsView(state, activeDayKey, rankPosition),
+    [state, activeDayKey, rankPosition],
+  );
 
   const weeklyIndices = useMemo(() => selectWeeklyMissionIds(weekKey), [weekKey]);
+  const weeklyActiveSet = useMemo(() => new Set(weeklyIndices), [weeklyIndices]);
   const weeklyClaimed = state.weeklyDay === weekKey ? state.weeklyClaimed || {} : {};
   const unlockedAchCount = useMemo(
     () => ACHIEVEMENTS.filter((a) => !!state.achievements?.[a.id]).length,
     [state.achievements],
+  );
+  const filteredAchievements = useMemo(
+    () => (achTierFilter === 'all' ? ACHIEVEMENTS : ACHIEVEMENTS.filter((a) => a.tier === achTierFilter)),
+    [achTierFilter],
+  );
+  const completedChalCount = useMemo(
+    () => CHALLENGES_2_0.filter((c) => !!state.challenges?.[c.id]).length,
+    [state.challenges],
   );
 
   return (
@@ -157,25 +181,106 @@ export const RewardsDashboard = memo(function RewardsDashboard({
         )}
       </section>
 
-      {/* SECTION 2: WEEKLY STRATEGIC MISSIONS, ACHIEVEMENTS & MILESTONES */}
+      {/* SECTION 2: DAILY QUESTS (5 ROTATED DAILY FROM 20-QUEST POOL) */}
+      <section className="rw-section" aria-label="Daily Quests" data-testid="daily-quests-section">
+        <div className="tradelim" style={{ marginTop: 4 }}>
+          <span>
+            <Compass size={14} color="#3fe0b0" /> Daily Quests (5 of 20 Daily Pool)
+          </span>
+          <b>
+            {dailyQuestsView.claimedCount}/5 Claimed · {activeDayKey}
+          </b>
+        </div>
+
+        <div className="list" data-testid="daily-quests-list">
+          {dailyQuestsView.quests.map(({ def, progress, goal, ready, claimed }) => {
+            const pct = Math.max(0, Math.min(100, (progress / Math.max(1, goal)) * 100));
+            return (
+              <div
+                key={def.id}
+                className="row"
+                data-testid={`daily-quest-${def.id}`}
+                style={{ '--c': claimed ? '#3fe0b0' : ready ? '#ffc23d' : '#5ccbff' } as React.CSSProperties}
+              >
+                <div className="em">
+                  {claimed ? <CheckCircle2 size={22} color="#3fe0b0" /> : <Compass size={22} color="#5ccbff" />}
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <h2>
+                    <span>{def.t}</span>
+                    <span className="lv" style={{ textTransform: 'capitalize' }}>
+                      {def.cat}
+                    </span>
+                  </h2>
+                  <p>
+                    {formatNumber(Math.min(progress, goal))} / {formatNumber(goal)}
+                  </p>
+                  <div className="bmeta">
+                    <span style={{ color: 'var(--gold)' }}>
+                      +₨ {formatNumber(def.coins)} <CashCoinIcon size={11} />
+                    </span>
+                    <span style={{ color: 'var(--cy)' }}>
+                      +{def.r} <GemDiamondIcon size={11} />
+                    </span>
+                  </div>
+                  <div className="bar" style={{ marginTop: 5 }}>
+                    <i style={{ width: `${pct}%`, '--c': claimed ? '#3fe0b0' : '#5ccbff' } as React.CSSProperties} />
+                  </div>
+                </div>
+                {claimed ? (
+                  <span className="lv" style={{ background: 'var(--mint)', color: '#04332a' }}>
+                    Claimed
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className={`btn sm ${ready ? 'mint' : 'no'}`}
+                    disabled={!ready || !onClaimDailyQuest}
+                    onClick={(e) => onClaimDailyQuest?.(def.id, e)}
+                  >
+                    {ready ? `Claim +${def.r}💎` : `${Math.floor(pct)}%`}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* SECTION 3: WEEKLY STRATEGIC MISSIONS, ACHIEVEMENTS, CHALLENGES & MILESTONES */}
       <section className="rw-section" aria-label="Missions and Milestones">
         <div className="tradelim" style={{ marginTop: 4 }}>
           <span>
-            <Sparkles size={14} color="#5ccbff" /> Weekly Strategic Missions
+            <Sparkles size={14} color="#5ccbff" /> Weekly Strategic Missions ({WEEKLY_MISSIONS.length} Pool)
           </span>
-          <b>{weekKey}</b>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <b>{weekKey}</b>
+            <button
+              type="button"
+              className="btn sm"
+              style={{ padding: '4px 10px', fontSize: 11, minHeight: 28 }}
+              onClick={() => setShowAllWeekly((v) => !v)}
+            >
+              {showAllWeekly ? 'Active 3' : `All ${WEEKLY_MISSIONS.length}`}
+            </button>
+          </div>
         </div>
 
         <div className="list">
-          {weeklyIndices.map((idx) => {
-            const w = WEEKLY_MISSIONS[idx] || WEEKLY_MISSIONS[0];
+          {(showAllWeekly ? WEEKLY_MISSIONS : weeklyIndices.map((idx) => WEEKLY_MISSIONS[idx] || WEEKLY_MISSIONS[0])).map((w, listIdx) => {
+            const poolIdx = WEEKLY_MISSIONS.findIndex((m) => m.id === w.id);
+            const isActiveThisWeek = weeklyActiveSet.has(poolIdx);
             const cur = w.f(state, { rank: rankPosition });
             const pct = Math.max(0, Math.min(100, (cur / w.g) * 100));
             const isClaimed = !!weeklyClaimed[w.id];
-            const isReady = !isClaimed && cur >= w.g;
+            const isReady = isActiveThisWeek && !isClaimed && cur >= w.g;
 
             return (
-              <div key={w.id} className="row" style={{ '--c': isClaimed ? '#3fe0b0' : '#5ccbff' } as React.CSSProperties}>
+              <div
+                key={`${w.id}-${listIdx}`}
+                className="row"
+                style={{ '--c': isClaimed ? '#3fe0b0' : isActiveThisWeek ? '#5ccbff' : '#6c688a' } as React.CSSProperties}
+              >
                 <div className="em">
                   {isClaimed ? <CheckCircle2 size={22} color="#3fe0b0" /> : <Sparkles size={22} color="#5ccbff" />}
                 </div>
@@ -185,6 +290,11 @@ export const RewardsDashboard = memo(function RewardsDashboard({
                     <span className="lv">
                       +{w.r} <GemDiamondIcon size={12} />
                     </span>
+                    {showAllWeekly && !isActiveThisWeek && (
+                      <span className="lv" style={{ borderColor: 'rgba(255,255,255,0.2)', color: 'var(--mu)' }}>
+                        Next Rotation
+                      </span>
+                    )}
                   </h2>
                   <p>
                     {Math.min(Math.floor(cur), w.g).toLocaleString('en-US')} / {w.g.toLocaleString('en-US')}
@@ -196,6 +306,10 @@ export const RewardsDashboard = memo(function RewardsDashboard({
                 {isClaimed ? (
                   <span className="lv" style={{ background: 'var(--mint)', color: '#04332a' }}>
                     Claimed
+                  </span>
+                ) : !isActiveThisWeek ? (
+                  <span className="dim" style={{ fontSize: 11, fontWeight: 700 }}>
+                    Standby
                   </span>
                 ) : (
                   <button
@@ -219,13 +333,28 @@ export const RewardsDashboard = memo(function RewardsDashboard({
           })}
         </div>
 
-        <div className="gxh" style={{ marginTop: 4 }}>
-          <Award size={15} color="#ffc23d" />
-          <span>National Achievements ({unlockedAchCount}/{ACHIEVEMENTS.length})</span>
+        <div className="gxh" style={{ marginTop: 6, justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Award size={15} color="#ffc23d" />
+            <span>National Achievements ({unlockedAchCount}/{ACHIEVEMENTS.length})</span>
+          </span>
+          <div className="chiprow" style={{ gap: 6 }}>
+            {(['all', 'Bronze', 'Silver', 'Gold', 'Diamond'] as const).map((tier) => (
+              <button
+                key={tier}
+                type="button"
+                className={achTierFilter === tier ? 'on' : ''}
+                style={{ fontSize: 11, padding: '4px 9px' }}
+                onClick={() => setAchTierFilter(tier)}
+              >
+                {tier === 'all' ? `All (${ACHIEVEMENTS.length})` : tier}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="list g2" data-testid="achievements-grid">
-          {ACHIEVEMENTS.map((a) => {
+          {filteredAchievements.map((a) => {
             const cur = a.f(state);
             const pct = Math.max(0, Math.min(100, (cur / a.goal) * 100));
             const isClaimed = !!state.achievements?.[a.id];
@@ -280,7 +409,69 @@ export const RewardsDashboard = memo(function RewardsDashboard({
           })}
         </div>
 
-        <div className="gxh" style={{ marginTop: 4 }}>
+        <div className="gxh" style={{ marginTop: 6 }}>
+          <Trophy size={15} color="#5ccbff" />
+          <span>Long-Term National Challenges ({completedChalCount}/{CHALLENGES_2_0.length})</span>
+        </div>
+
+        <div className="list g2" data-testid="challenges-grid">
+          {CHALLENGES_2_0.map((c) => {
+            const cur = c.f(state);
+            const pct = Math.max(0, Math.min(100, (cur / Math.max(1, c.goal)) * 100));
+            const isClaimed = !!state.challenges?.[c.id];
+            const isReady = !isClaimed && cur >= c.goal;
+            const tierColor = c.tier === 'Grand' ? '#ffc23d' : c.tier === 'Elite' ? '#a58cff' : '#5ccbff';
+
+            return (
+              <div
+                key={c.id}
+                className="row"
+                data-testid={`challenge-${c.id}`}
+                style={{ '--c': isClaimed ? '#3fe0b0' : tierColor } as React.CSSProperties}
+              >
+                <div className="em">
+                  {isClaimed ? <CheckCircle2 size={22} color="#3fe0b0" /> : <Trophy size={22} color={tierColor} />}
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <h2>
+                    <span>{c.name}</span>
+                    <span className="lv" style={{ color: tierColor }}>{c.tier}</span>
+                  </h2>
+                  <p>
+                    {c.desc} ({formatNumber(Math.min(Math.floor(cur), c.goal))} / {formatNumber(c.goal)})
+                  </p>
+                  <div className="bmeta">
+                    <span style={{ color: 'var(--gold)' }}>
+                      +₨ {formatNumber(c.rewardCoins)} <CashCoinIcon size={11} />
+                    </span>
+                    <span style={{ color: 'var(--cy)' }}>
+                      +{c.rewardGems} <GemDiamondIcon size={11} />
+                    </span>
+                  </div>
+                  <div className="bar" style={{ marginTop: 5 }}>
+                    <i style={{ width: `${pct}%`, '--c': isClaimed ? '#3fe0b0' : tierColor } as React.CSSProperties} />
+                  </div>
+                </div>
+                {isClaimed ? (
+                  <span className="lv" style={{ background: 'var(--mint)', color: '#04332a' }}>
+                    Claimed
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className={`btn sm ${isReady ? 'gold' : 'no'}`}
+                    disabled={!isReady || !onClaimChallenge}
+                    onClick={(e) => onClaimChallenge?.(c.id, e)}
+                  >
+                    {isReady ? 'Claim' : `${Math.floor(pct)}%`}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="gxh" style={{ marginTop: 6 }}>
           <Trophy size={15} color="#ffc23d" />
           <span>National Milestones</span>
         </div>

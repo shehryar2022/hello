@@ -547,7 +547,9 @@ export function buildPlotGroup(params: {
   g.name = `plot:${plot.id}`;
 
   const { w, d, archetype } = plot;
-  const lv = Math.max(1, Math.min(5, level || 1));
+  const rawLvl = Math.max(1, Math.min(50, Math.floor(level || 1)));
+  // Smooth logarithmic progression across Lv 1..50 so upgrades visibly enrich the skyline up to Lv 50 without skybox clipping
+  const lv = 1 + Math.log1p(rawLvl - 1) * 0.85;
   const tierScale = count > 0 ? 1 + Math.min(0.32, Math.log1p(count) * 0.08) + (lv - 1) * 0.14 : 1;
 
   // Vacant lot (count === 0): crisp architectural survey pad + corner bollards + center marker
@@ -731,6 +733,7 @@ export function buildPlotGroup(params: {
     case 'auto_factory':
     case 'electronics_factory':
     case 'heavy_industry':
+    case 'robotics_plant':
     case 'food_plant': {
       const hHall = (archetype === 'heavy_industry' || archetype === 'steel_plant' ? 3.8 : 2.8) + lv * 0.35;
       addBox(g, w * 0.78, hHall, d * 0.66, -0.3, 0.28, 0, lib.industrialFacade);
@@ -746,8 +749,12 @@ export function buildPlotGroup(params: {
         addCyl(g, 0.32, 0.45, 5.2 + lv * 0.7, 10, sx, 0.28, sz, lib.darkSteel);
         addCyl(g, 0.34, 0.34, 0.45, 10, sx, 5.48 + lv * 0.7, sz, lib.roofRed, false);
       }
-      if (archetype === 'electronics_factory') {
-        addBox(g, w * 0.46, 0.2, d * 0.46, -0.3, 1.2 + hHall, 0, lib.emissiveGlassMat, false);
+      if (archetype === 'electronics_factory' || archetype === 'robotics_plant') {
+        addBox(g, w * 0.46, 0.24, d * 0.46, -0.3, 1.2 + hHall, 0, lib.emissiveGlassMat, false);
+      }
+      if (archetype === 'robotics_plant') {
+        const arm = addBox(g, 0.36, 2.2, 0.36, -w * 0.26, 1.44 + hHall, 0, lib.goldAccent);
+        animatedParts.push({ obj: arm, kind: 'radar', speed: 1.4, phase: plot.x * 0.2 });
       }
       break;
     }
@@ -792,12 +799,34 @@ export function buildPlotGroup(params: {
       break;
     }
 
-    case 'power_station': {
-      addBox(g, w * 0.42, 3.4 + lv * 0.3, d * 0.52, -w * 0.2, 0.28, 0, lib.industrialFacade);
-      // Hyperboloid-like cooling towers
-      for (const tz of [-d * 0.18, d * 0.18]) {
-        addCyl(g, 1.25, 1.75, 5.4 + lv * 0.6, 14, w * 0.22, 0.28, tz, lib.concreteBase);
-        addCyl(g, 1.3, 1.25, 0.5, 14, w * 0.22, 5.68 + lv * 0.6, tz, lib.goldAccent, false);
+    case 'power_station':
+    case 'nuclear':
+    case 'hydro':
+    case 'battery': {
+      if (archetype === 'battery') {
+        for (const bx of [-w * 0.28, 0, w * 0.28]) {
+          addBox(g, w * 0.22, 2.2 + lv * 0.35, d * 0.64, bx, 0.28, 0, lib.darkSteel);
+          addBox(g, w * 0.18, 0.25, d * 0.56, bx, 2.5 + lv * 0.35, 0, lib.emissiveGlassMat, false);
+        }
+      } else if (archetype === 'hydro') {
+        addBox(g, w * 0.82, 3.6 + lv * 0.4, d * 0.36, 0, 0.28, -d * 0.16, lib.concreteBase);
+        addBox(g, w * 0.78, 0.35, d * 0.42, 0, 0.3, d * 0.22, lib.waterMat, false);
+        addBox(g, w * 0.36, 1.8, d * 0.24, 0, 3.9 + lv * 0.4, -d * 0.16, lib.roofBlue);
+      } else if (archetype === 'nuclear') {
+        addCyl(g, 2.0, 2.25, 4.4 + lv * 0.45, 16, -w * 0.18, 0.28, 0, lib.concreteBase);
+        const dome = new THREE.Mesh(new THREE.SphereGeometry(2.0, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.5), lib.brightSteel);
+        dome.position.set(-w * 0.18, 4.65 + lv * 0.45, 0);
+        dome.castShadow = true;
+        g.add(dome);
+        addCyl(g, 1.2, 1.65, 5.2 + lv * 0.5, 14, w * 0.24, 0.28, 0, lib.concreteBase);
+        addCyl(g, 1.25, 1.25, 0.35, 14, w * 0.24, 5.48 + lv * 0.5, 0, lib.emissiveGlassMat, false);
+      } else {
+        addBox(g, w * 0.42, 3.4 + lv * 0.3, d * 0.52, -w * 0.2, 0.28, 0, lib.industrialFacade);
+        // Hyperboloid-like cooling towers
+        for (const tz of [-d * 0.18, d * 0.18]) {
+          addCyl(g, 1.25, 1.75, 5.4 + lv * 0.6, 14, w * 0.22, 0.28, tz, lib.concreteBase);
+          addCyl(g, 1.3, 1.25, 0.5, 14, w * 0.22, 5.68 + lv * 0.6, tz, lib.goldAccent, false);
+        }
       }
       break;
     }
@@ -885,12 +914,28 @@ export function buildPlotGroup(params: {
     case 'lab':
     case 'tech_park':
     case 'data_center':
+    case 'ai_campus':
+    case 'cyber_ops':
     case 'telecom': {
       if (archetype === 'data_center') {
         for (const ox of [-w * 0.22, w * 0.22]) {
           addBox(g, w * 0.36, 3.4 + lv * 0.55, d * 0.66, ox, 0.28, 0, lib.darkSteel);
           addBox(g, w * 0.38, 0.3, d * 0.68, ox, 2.1, 0, lib.emissiveGlassMat, false);
         }
+      } else if (archetype === 'ai_campus') {
+        addBox(g, w * 0.72, 2.4, d * 0.68, 0, 0.28, 0, lib.glassFacade);
+        const core = new THREE.Mesh(new THREE.OctahedronGeometry(1.75 + lv * 0.18, 0), lib.emissiveGlassMat);
+        core.position.set(0, 4.8 + lv * 0.45, 0);
+        g.add(core);
+        animatedParts.push({ obj: core, kind: 'radar', speed: 1.05, phase: plot.z * 0.15 });
+      } else if (archetype === 'cyber_ops') {
+        addBox(g, w * 0.68, 3.2 + lv * 0.45, d * 0.58, 0, 0.28, 0, lib.darkSteel);
+        addBox(g, w * 0.72, 0.28, d * 0.62, 0, 2.0, 0, accent, false);
+        const dish = new THREE.Mesh(new THREE.ConeGeometry(1.1, 0.7, 10), lib.emissiveGlassMat);
+        dish.position.set(w * 0.16, 4.2 + lv * 0.45, 0);
+        dish.rotation.x = Math.PI * 0.3;
+        g.add(dish);
+        animatedParts.push({ obj: dish, kind: 'radar', speed: 1.2, phase: 0.4 });
       } else if (archetype === 'telecom') {
         addBox(g, w * 0.5, 2.4, d * 0.5, 0, 0.28, 0, lib.darkSteel);
         addCyl(g, 0.25, 0.75, 8.5 + lv * 1.1, 10, 0, 2.68, 0, lib.brightSteel);
@@ -912,6 +957,18 @@ export function buildPlotGroup(params: {
       break;
     }
 
+    case 'monument': {
+      addBox(g, w * 0.62, 1.2, d * 0.62, 0, 0.28, 0, lib.concreteBase);
+      const obelisk = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 1.25, 8.5 + lv * 1.1, 4), lib.goldAccent);
+      obelisk.rotation.y = Math.PI * 0.25;
+      obelisk.position.set(0, 1.48 + (8.5 + lv * 1.1) * 0.5, 0);
+      obelisk.castShadow = true;
+      g.add(obelisk);
+      const beacon = addCyl(g, 0.25, 0.25, 0.35, 8, 0, 10.1 + lv * 1.1, 0, lib.beaconMat, false);
+      animatedParts.push({ obj: beacon, kind: 'beacon', speed: 2.0, phase: 0.7 });
+      break;
+    }
+
     case 'space': {
       // Mission control wing + gantry launch tower + upright rocket
       addBox(g, w * 0.45, 2.6 + lv * 0.3, d * 0.55, -w * 0.22, 0.28, 0, lib.glassFacade);
@@ -929,8 +986,15 @@ export function buildPlotGroup(params: {
     }
 
     case 'farm':
-    case 'greenhouse': {
-      if (archetype === 'farm') {
+    case 'greenhouse':
+    case 'aquaculture': {
+      if (archetype === 'aquaculture') {
+        addBox(g, w * 0.86, 0.35, d * 0.7, 0, 0.14, 0, lib.concreteBase, false, true);
+        for (const px of [-w * 0.24, w * 0.24]) {
+          addCyl(g, 2.0, 2.1, 0.7, 16, px, 0.45, 0, lib.waterMat, false);
+        }
+        addBox(g, w * 0.26, 2.0 + lv * 0.2, d * 0.36, 0, 0.48, -d * 0.18, lib.roofBlue);
+      } else if (archetype === 'farm') {
         addBox(g, w * 0.55, 0.12, d * 0.75, -w * 0.16, 0.24, 0, lib.cropMat, false, true);
         addBox(g, 3.2, 2.1 + lv * 0.2, 2.6, w * 0.24, 0.28, -d * 0.14, lib.roofRed);
         addCyl(g, 0.75, 0.75, 3.8 + lv * 0.4, 12, w * 0.32, 0.28, d * 0.2, lib.brightSteel);
@@ -1007,11 +1071,16 @@ export const DIAMOND_LANDMARK_SLOTS: Record<string, { x: number; z: number; prim
   asset_royal_fleet: { x: 23, z: 40, primary: 0xffc93c, accent: 0xfb7185 },
   asset_diamond_spire: { x: 38, z: 39, primary: 0x7ee8ff, accent: 0x9b6dff },
   asset_crystal_vault: { x: 54, z: 39, primary: 0xc084fc, accent: 0x7ee8ff },
+  asset_solar_monolith: { x: -56, z: 39, primary: 0xfb923c, accent: 0xfde047 },
+  asset_quantum_spire: { x: -38, z: 39, primary: 0x22d3ee, accent: 0xa855f7 },
+  asset_imperial_pavilion: { x: -20, z: 40, primary: 0xfbbf24, accent: 0x34d399 },
+  asset_celestial_observatory: { x: -72, z: 39, primary: 0x818cf8, accent: 0x7ee8ff },
+  asset_sovereign_colossus: { x: 70, z: 39, primary: 0xfde047, accent: 0xf472b6 },
 };
 
 /**
  * Multi-part PBR architectural landmark rendered on the capital waterfront esplanade
- * whenever a player owns one of the 4 Exclusive Diamond Assets.
+ * whenever a player owns one of the Exclusive Diamond Assets.
  */
 export function buildDiamondLandmarkGroup(params: {
   assetId: string;
@@ -1064,7 +1133,6 @@ export function buildDiamondLandmarkGroup(params: {
     g.add(gem);
     animatedParts.push({ obj: gem, kind: 'radar', speed: -1.4, phase: 0.5 });
   } else if (assetId === 'asset_royal_fleet') {
-    // Sovereign Prestige Ceremonial Arch flanking the bridge approach
     addBox(g, 1.35, 7.8, 1.8, -2.55, 0.8, 0, lib.brightSteel);
     addBox(g, 1.35, 7.8, 1.8, 2.55, 0.8, 0, lib.brightSteel);
     addBox(g, 7.4, 1.3, 2.1, 0, 8.6, 0, trimMat);
@@ -1083,6 +1151,66 @@ export function buildDiamondLandmarkGroup(params: {
     crown.scale.set(1, 1.55, 1);
     g.add(crown);
     animatedParts.push({ obj: crown, kind: 'radar', speed: 0.95, phase: 0.4 });
+  } else if (assetId === 'asset_solar_monolith') {
+    addBox(g, 3.2, 8.4, 1.6, 0, 0.8, 0, trimMat);
+    addBox(g, 1.6, 10.2, 0.9, 0, 0.8, 0, crystalMat);
+    const sunRing = new THREE.Mesh(new THREE.TorusGeometry(2.1, 0.16, 10, 28), crystalMat);
+    sunRing.position.set(0, 10.8, 0);
+    g.add(sunRing);
+    animatedParts.push({ obj: sunRing, kind: 'radar', speed: 0.9, phase: 0.3 });
+  } else if (assetId === 'asset_quantum_spire') {
+    addCyl(g, 1.4, 2.1, 10.5, 8, 0, 0.8, 0, lib.glassFacade);
+    const q1 = new THREE.Mesh(new THREE.TorusGeometry(2.3, 0.12, 8, 28), crystalMat);
+    q1.position.set(0, 8.2, 0);
+    q1.rotation.x = Math.PI * 0.32;
+    g.add(q1);
+    const q2 = new THREE.Mesh(new THREE.TorusGeometry(1.8, 0.12, 8, 28), trimMat);
+    q2.position.set(0, 10.6, 0);
+    q2.rotation.z = Math.PI * 0.28;
+    g.add(q2);
+    animatedParts.push({ obj: q1, kind: 'radar', speed: 1.4, phase: 0.1 });
+    animatedParts.push({ obj: q2, kind: 'radar', speed: -1.6, phase: 0.8 });
+    addCyl(g, 0.12, 0.35, 4.2, 8, 0, 11.3, 0, trimMat, false);
+  } else if (assetId === 'asset_imperial_pavilion') {
+    addCyl(g, 3.1, 3.3, 3.8, 12, 0, 0.8, 0, lib.concreteBase);
+    for (let i = 0; i < 6; i += 1) {
+      const a = (i / 6) * Math.PI * 2;
+      addCyl(g, 0.24, 0.26, 3.8, 8, Math.cos(a) * 2.8, 0.8, Math.sin(a) * 2.8, trimMat);
+    }
+    const goldDome = new THREE.Mesh(
+      new THREE.SphereGeometry(2.7, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.52),
+      crystalMat,
+    );
+    goldDome.position.set(0, 4.6, 0);
+    g.add(goldDome);
+    addCyl(g, 0.1, 0.25, 2.2, 6, 0, 7.2, 0, trimMat);
+  } else if (assetId === 'asset_celestial_observatory') {
+    addBox(g, 5.2, 3.2, 4.6, 0, 0.8, 0, lib.brightSteel);
+    const obsDome = new THREE.Mesh(
+      new THREE.SphereGeometry(2.3, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.55),
+      trimMat,
+    );
+    obsDome.position.set(0, 4.0, 0);
+    g.add(obsDome);
+    const scope = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.42, 4.2, 10), crystalMat);
+    scope.position.set(0.6, 6.2, 0.6);
+    scope.rotation.z = -Math.PI * 0.22;
+    scope.rotation.x = Math.PI * 0.14;
+    g.add(scope);
+    animatedParts.push({ obj: scope, kind: 'radar', speed: 0.45, phase: 0.5 });
+  } else if (assetId === 'asset_sovereign_colossus') {
+    addBox(g, 3.6, 3.0, 3.6, 0, 0.8, 0, lib.brightSteel);
+    addCyl(g, 0.9, 1.5, 9.8, 8, 0, 3.8, 0, trimMat);
+    const torch = new THREE.Mesh(new THREE.OctahedronGeometry(1.55, 0), crystalMat);
+    torch.position.set(0, 15.2, 0);
+    torch.scale.set(1, 1.4, 1);
+    g.add(torch);
+    const crownRing = new THREE.Mesh(new THREE.TorusGeometry(2.4, 0.14, 8, 28), crystalMat);
+    crownRing.position.set(0, 13.8, 0);
+    crownRing.rotation.x = Math.PI * 0.5;
+    g.add(crownRing);
+    animatedParts.push({ obj: torch, kind: 'beacon', speed: 1.8, phase: 0.4 });
+    animatedParts.push({ obj: crownRing, kind: 'radar', speed: 1.2, phase: 1.0 });
   } else {
     // asset_crystal_vault
     addBox(g, 6.2, 3.6, 5.0, 0, 0.8, 0, lib.concreteBase);

@@ -1,4 +1,4 @@
-import { calculateGdp, cleanSavePayload, getActiveSubscription, playerLevel, totalBuildings } from '../game/rules';
+import { calculateGdp, cleanSavePayload, getActiveSubscription, getEquippedCosmetics, playerLevel, totalBuildings } from '../game/rules';
 import type { GameState, PlayerStats } from '../game/types';
 
 export const SYNC_IMMEDIATE_DELAY_MS = 120;
@@ -106,7 +106,9 @@ export function buildPublicMetricsFingerprint(
   const trades = Math.max(pubStats?.completedTrades || 0, completedTradesCount);
   const sub = getActiveSubscription(state, nowSrvMs);
   const subKey = sub ? `${sub.def.id}:${Math.floor(sub.exp / 1000)}` : 'none';
-  return `${gdp}|${cash}|${gems}|${lvl}|${rank}|${bTotal}|${trades}|${subKey}`;
+  const eq = getEquippedCosmetics(state);
+  const cosKey = `${eq.frame || ''},${eq.nameEffect || ''},${eq.badge || ''},${eq.anim || ''},${eq.lbAnim || ''}`;
+  return `${gdp}|${cash}|${gems}|${lvl}|${rank}|${bTotal}|${trades}|${subKey}|${cosKey}`;
 }
 
 /**
@@ -170,6 +172,33 @@ export function buildMeaningfulSaveFingerprint(state: GameState, nowSrvMs?: numb
     weeklyClaimed: state.weeklyClaimed,
     cityTimeMode: state.cityTimeMode,
     cityWeather: state.cityWeather,
+    pol: state.pol,
+    upgQueue: state.upgQueue,
+    upgHistLen: state.upgHist?.length || 0,
+    resQueue: state.resQueue,
+    intlTrade: state.intlTrade
+      ? {
+          c: state.intlTrade.contracts?.length || 0,
+          done: state.intlTrade.completedCount || 0,
+          rev: Math.floor(state.intlTrade.exportRevenue || 0),
+          imp: Math.floor(state.intlTrade.importSpend || 0),
+          mil: state.intlTrade.milestonesClaimed || {},
+        }
+      : null,
+    challenges: state.challenges,
+    megaProjects: state.megaProjects?.map((p) => `${p.id}:${p.paid}:${p.status}:${p.claimed ? 1 : 0}`),
+    cos: state.cos,
+    cosEq: state.cosEq,
+    theme: state.theme,
+    dSlot: state.dSlot,
+    dLastDay: state.dLastDay,
+    dHistLen: state.dHist?.length || 0,
+    wMilDay: state.wMilDay,
+    wMilClaim: state.wMilClaim,
+    wHistLen: state.wHist?.length || 0,
+    qHistLen: state.qHist?.length || 0,
+    mig: state.mig,
+    fused: state.fused,
   });
 }
 

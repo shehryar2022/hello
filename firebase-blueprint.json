@@ -22,7 +22,7 @@
         "cash": { "type": "number" },
         "gems": { "type": "number" },
         "level": { "type": "integer", "minimum": 1 },
-        "rank": { "type": "integer", "minimum": 0, "maximum": 15 },
+        "rank": { "type": "integer", "minimum": 0, "maximum": 25 },
         "lastSeen": { "type": "string", "format": "date-time" },
         "createdAt": { "type": "string", "format": "date-time" },
         "subTier": { "type": "string", "enum": ["", "daily", "weekly", "monthly"] },
@@ -31,6 +31,7 @@
         "cosNameFx": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
         "cosBadge": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
         "cosAnim": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
+        "cosLbAnim": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
         "stats": { "type": "object" }
       },
       "required": ["username", "usernameLower", "countryCode", "countryName", "gdp", "cash", "gems", "level", "rank", "lastSeen", "stats", "createdAt"]
@@ -62,7 +63,7 @@
     },
     "PlayerSave": {
       "title": "PlayerSave",
-      "description": "Owner-only full game state snapshot including 22 national buildings, construction queue, 9 national policies, 16 fiscal sliders, 36 sticker slots, government, milestones, tech doctrines, activeFx, 7 boosters, and coin subscription state.",
+      "description": "Owner-only full game state save snapshot with Update 2.0 chunked v2Pack extension (107 buildings, Lv 1-50 upgrades, 50 techs, 20 policies, 70 stickers, 25 ranks, international trade, mega projects, cosmetics, and rewards).",
       "type": "object",
       "properties": {
         "save": { "type": "object" }
@@ -87,11 +88,11 @@
     },
     "GovProject": {
       "title": "GovProject",
-      "description": "Online-only timed government infrastructure construction project (max progress 2,400,000 ms).",
+      "description": "Online-only timed government infrastructure mega project (max progress 3,600,000 ms).",
       "type": "object",
       "properties": {
         "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "type": { "type": "string", "enum": ["school", "hospital", "bridge", "highway"] },
+        "type": { "type": "string", "enum": ["school", "hospital", "bridge", "highway", "spaceport", "fusion_grid", "metro_loop", "ai_corridor", "seawall_shield", "trade_canal"] },
         "paid": { "type": "integer" },
         "progressMs": { "type": "number" },
         "status": { "type": "string", "enum": ["active", "done", "failed"] },
@@ -147,7 +148,7 @@
         "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
         "name": { "type": "string", "minLength": 1, "maxLength": 16 },
         "cc": { "type": "string", "maxLength": 3 },
-        "rank": { "type": "integer", "minimum": 0, "maximum": 15 },
+        "rank": { "type": "integer", "minimum": 0, "maximum": 25 },
         "cosFrame": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
         "cosNameFx": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
         "cosBadge": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },

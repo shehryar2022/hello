@@ -3,6 +3,7 @@ import {
   BOOSTERS,
   BUILDING_POLICIES,
   BUILDINGS,
+  CHALLENGES_2_0,
   CLOUD_MAX_RANK,
   COUNTRIES,
   CRATE_CD_MS,
@@ -14,9 +15,10 @@ import {
   GOV_DAY_SEC,
   GOVS,
   GX_GOV_BUILDINGS,
+  GX_PROJECT_TYPES,
   GX_ROADS,
-  GX_UPGRADE_MULTS,
   LEGACY_22_BUILDING_IDS,
+  MAX_BUILDING_LEVEL,
   MAX_CONSTRUCTION_QUEUE,
   MAX_RANK,
   MIN_RANK,
@@ -29,27 +31,37 @@ import {
   STICKERS,
   SUBSCRIPTIONS,
   TECH_TREE,
+  TRADE_GOODS,
+  TRADE_MILESTONES,
   TZ,
   WEEKLY_MISSIONS,
 } from './constants';
 import type {
+  ActiveTradeContract,
   BoosterDef,
   BuildingPolicyId,
   CityTimeMode,
   CityWeatherMode,
+  EquippedCosmetics,
   GameState,
+  GameThemeId,
+  IntlTradeState,
   LeaderboardMode,
+  LocalMegaProjectSlot,
   PlayerProfile,
   PlayerStats,
   PolicyCategoryId,
+  ProjectType,
   QuestDef,
+  ResearchQueueSlot,
   RewardHistoryEntry,
   StickerDef,
   SubPromoState,
   SubscriptionDef,
   SubscriptionTierId,
-  EquippedCosmetics,
-  GameThemeId,
+  TradeGoodId,
+  UpgradeHistoryEntry,
+  UpgradeQueueSlot,
 } from './types';
 import {
   ALL_COSMETIC_ITEMS,
@@ -61,6 +73,7 @@ import {
 } from './cosmetics';
 import {
   computeReadyAchievementCount,
+  getDailyQuestsView,
   getDailyRewardsView,
 } from './rewards';
 import {
@@ -71,6 +84,10 @@ import {
   applyEnactNationalDecision,
   applySetBuildingPolicy,
   applyStartBuildingConstruction,
+  applyStartBuildingUpgrade,
+  applyStartLocalMegaProject,
+  applyStartResearch,
+  applyStartTradeContract,
   BOOSTER_ACTIVE_PREFIX,
   BOOSTER_DAILY_PREFIX,
   buildingCost,
@@ -82,6 +99,13 @@ import {
   canEnactNationalDecision,
   canSetBuildingPolicy,
   canStartBuildingConstruction,
+  canStartBuildingUpgrade,
+  canStartLocalMegaProject,
+  canStartResearch,
+  canStartTradeContract,
+  claimChallenge,
+  claimLocalMegaProject,
+  claimTradeMilestone,
   computeEconomySnapshot,
   currentWorldEvent,
   extractFiscalDraft,
@@ -91,6 +115,9 @@ import {
   getActiveSubscription,
   getBoosterActivationInfo,
   getBuildingPolicyDef,
+  getBuildingUpgradeCostAndDur,
+  getBuildingUpgradeQuote,
+  getBuildingUpgradeTier,
   getBuildSpeedMultiplier,
   getConstructionQueue,
   getDemolishRefund,
@@ -98,13 +125,22 @@ import {
   getFiscalCommitCost,
   getFiscalCooldownLeftMs,
   getGovDefinition,
+  getIntlTradeCapacity,
   getNationalDecisionCooldownLeftSec,
   getPolicyCooldownLeftMs,
   getPolicyStance,
   getRankEligibility,
   getResearchCostMult,
   getResearchSpeedMult,
+  getTechBuildSpeedBonus,
+  getTechEnergyBonus,
+  getTechHapBonus,
   getTechIncomeMult,
+  getTechMaintReduction,
+  getTechResearchSpeedBonus,
+  getTechTradeBonus,
+  getTradeGoodQuote,
+  getUpgradeQueue,
   gxAverageCondition,
   gxHappinessMod,
   gxLevelMult,
@@ -115,17 +151,23 @@ import {
   isBuildingPolicyAllowedFor,
   LEGACY_PROVINCE_MIGRATED_KEY,
   migrateLegacySaveToNational,
+  migrateRanksV2OneTime,
   POLICY_BOUNDS,
   POLICY_COOLDOWN_PREFIX,
   policyCooldownKey,
   presetToFiscalDraft,
   QUEUE_FINISH_PREFIX,
   QUEUE_QTY_PREFIX,
+  RANK_V2_MIGRATION_KEY,
   stickerBonus,
   stickerUniqueCount,
   taxInfo,
   techCount,
   tickConstructionQueue,
+  tickIntlTradeContracts,
+  tickLocalMegaProjects,
+  tickResearchQueue,
+  tickUpgradeQueue,
   totalBuildings,
   unlockedAchievementCount,
 } from './economy';
@@ -246,15 +288,33 @@ export function freshState(): GameState {
     wMilClaim: {},
     wHist: [],
     qHist: [],
+    pol: {},
+    upgQueue: [],
+    upgHist: [],
+    resQueue: null,
+    intlTrade: {
+      contracts: [],
+      completedCount: 0,
+      exportRevenue: 0,
+      importSpend: 0,
+      milestonesClaimed: {},
+    },
+    challenges: {},
+    megaProjects: [],
+    mig: { [RANK_V2_MIGRATION_KEY]: 1 },
   };
 }
+
+const VALID_STICKER_ID_SET = new Set(STICKERS.map((s) => s.id));
+const VALID_TECH_ID_SET = new Set(TECH_TREE.map((t) => t.id));
+const VALID_POLICY_ID_SET = new Set<string>(NATIONAL_POLICIES.map((p) => p.id));
 
 export function cleanStickersMap(raw: unknown): Record<string, number> {
   const out: Record<string, number> = {};
   if (!raw || typeof raw !== 'object') return out;
   for (const [k, val] of Object.entries(raw as Record<string, unknown>)) {
     const n = Math.floor(Number(val));
-    if (STICKERS.some((s) => s.id === k) && Number.isFinite(n) && n > 0) {
+    if (VALID_STICKER_ID_SET.has(k) && Number.isFinite(n) && n > 0) {
       out[k] = Math.min(1_000_000_000, n) + 0;
     }
   }
@@ -288,7 +348,6 @@ export function cleanMilestonesMap(raw: unknown): Record<string, number> {
     }
   }
 
-  // Construction queue pairs (up to MAX_CONSTRUCTION_QUEUE = 5 buildings => 10 keys)
   let queuePairs = 0;
   for (const [k, rawVal] of Object.entries(rawObj)) {
     if (!k.startsWith(QUEUE_FINISH_PREFIX)) continue;
@@ -304,7 +363,6 @@ export function cleanMilestonesMap(raw: unknown): Record<string, number> {
     queuePairs += 1;
   }
 
-  // Defensive enforcement of Firestore rules milestones.size() <= 40
   const keys = Object.keys(out);
   if (keys.length > 40) {
     const trimmed: Record<string, number> = {};
@@ -316,17 +374,17 @@ export function cleanMilestonesMap(raw: unknown): Record<string, number> {
   return out;
 }
 
-export function cleanTechMap(raw: unknown): Record<string, number> {
+export function cleanTechMap(raw: unknown, maxKeys = 64): Record<string, number> {
   const out: Record<string, number> = {};
   if (!raw || typeof raw !== 'object') return out;
   for (const [k, val] of Object.entries(raw as Record<string, unknown>)) {
     const n = Math.floor(Number(val));
-    if (TECH_TREE.some((t) => t.id === k) && n > 0) {
+    if (VALID_TECH_ID_SET.has(k) && n > 0) {
       out[k] = 1;
-    } else if (NATIONAL_POLICIES.some((p) => p.id === (k as PolicyCategoryId)) && (n === 1 || n === 2)) {
+    } else if (VALID_POLICY_ID_SET.has(k) && (n === 1 || n === 2)) {
       out[k] = n;
     }
-    if (Object.keys(out).length >= 16) break;
+    if (Object.keys(out).length >= maxKeys) break;
   }
   return out;
 }
@@ -341,6 +399,8 @@ const LEGACY_BOOSTER_MAP: Record<string, string> = {
 interface PackedV2Extension {
   ob?: Record<string, number>;
   ol?: Record<string, number>;
+  ot?: string[];
+  os?: Record<string, number>;
   r?: number;
   bp?: Record<string, string>;
   ach?: Record<string, number>;
@@ -359,6 +419,14 @@ interface PackedV2Extension {
   wc2?: Record<string, number>;
   wh?: RewardHistoryEntry[];
   qh?: RewardHistoryEntry[];
+  pol?: Record<string, 1 | 2>;
+  uq?: UpgradeQueueSlot[];
+  uh?: UpgradeHistoryEntry[];
+  rq?: ResearchQueueSlot | null;
+  it?: IntlTradeState;
+  ch?: Record<string, number>;
+  mp?: LocalMegaProjectSlot[];
+  mg?: Record<string, number>;
 }
 
 function unpackV2FromProvBudgetLog(rawLog: unknown): PackedV2Extension | null {
@@ -390,10 +458,8 @@ export function migrateState(
     provTxs?: unknown;
   };
 
-  // Unpack v2 extension envelope from provBudgetLog BEFORE stripping legacy province fields
   const v2Pack = unpackV2FromProvBudgetLog(raw?.provBudgetLog);
 
-  // Remove deprecated Bank & avatar fields cleanly
   delete s.loan;
   delete s.deals;
   delete s.avHist;
@@ -428,9 +494,16 @@ export function migrateState(
     };
   }
 
-  const rawStk = s.stk as Record<string, unknown> | undefined;
+  const rawStk = s.stk && typeof s.stk === 'object' ? { ...(s.stk as Record<string, unknown>) } : {};
+  if (v2Pack?.os && typeof v2Pack.os === 'object') {
+    for (const [k, val] of Object.entries(v2Pack.os)) {
+      if (!(k in rawStk) || Number(rawStk[k] || 0) === 0) {
+        rawStk[k] = val;
+      }
+    }
+  }
   const legacyFused =
-    rawStk && Number.isFinite(Number(rawStk.fused))
+    Number.isFinite(Number(rawStk.fused))
       ? Math.min(1_000_000, Math.max(0, Math.floor(Number(rawStk.fused))))
       : 0;
   s.stk = cleanStickersMap(rawStk);
@@ -476,7 +549,34 @@ export function migrateState(
     s.claimed = cleanClaimed;
   }
   s.milestones = cleanMilestonesMap(raw?.milestones ?? s.milestones);
-  s.tech = cleanTechMap(s.tech);
+
+  // Merge top-level tech & v2Pack.ot overflow techs
+  const rawTechMerged: Record<string, unknown> =
+    s.tech && typeof s.tech === 'object' ? { ...(s.tech as Record<string, unknown>) } : {};
+  if (Array.isArray(v2Pack?.ot)) {
+    for (const tid of v2Pack.ot) {
+      if (typeof tid === 'string') rawTechMerged[tid] = 1;
+    }
+  }
+  s.tech = cleanTechMap(rawTechMerged, 80);
+
+  // Policies map (raw.pol or v2Pack.pol or legacy tech p_ entries)
+  const rawPolSource = (raw?.pol && typeof raw.pol === 'object' ? raw.pol : v2Pack?.pol) as Record<string, unknown> | undefined;
+  const cleanPol: Record<string, 0 | 1 | 2> = {};
+  if (rawPolSource && typeof rawPolSource === 'object') {
+    for (const [k, v] of Object.entries(rawPolSource)) {
+      if (VALID_POLICY_ID_SET.has(k) && (Number(v) === 1 || Number(v) === 2)) {
+        cleanPol[k] = Number(v) as 1 | 2;
+      }
+    }
+  }
+  for (const p of NATIONAL_POLICIES) {
+    const legacyV = Number(s.tech?.[p.id]);
+    if ((legacyV === 1 || legacyV === 2) && !(p.id in cleanPol)) {
+      cleanPol[p.id] = legacyV as 1 | 2;
+    }
+  }
+  s.pol = cleanPol;
 
   if (!s.activeFx || typeof s.activeFx !== 'object') s.activeFx = {};
   const legacyFx = s.activeFx as Record<string, number>;
@@ -560,7 +660,7 @@ export function migrateState(
   const rawLvlSource = gx.lvl && typeof gx.lvl === 'object' ? { ...(gx.lvl as Record<string, unknown>) } : {};
   if (v2Pack?.ol && typeof v2Pack.ol === 'object') {
     for (const [k, val] of Object.entries(v2Pack.ol)) {
-      if (!(k in rawLvlSource) || Number(rawLvlSource[k] || 1) <= 1) {
+      if (Number(val) > Number(rawLvlSource[k] || 1)) {
         rawLvlSource[k] = val;
       }
     }
@@ -568,7 +668,7 @@ export function migrateState(
   const lvl: Record<string, number> = {};
   for (const d of BUILDINGS) {
     const v = Math.floor(Number(rawLvlSource[d.id]));
-    lvl[d.id] = v >= 1 && v <= 5 ? v : 1;
+    lvl[d.id] = v >= 1 && v <= MAX_BUILDING_LEVEL ? v : 1;
   }
   const rawExp = gx.exp && typeof gx.exp === 'object' ? (gx.exp as unknown as Record<string, unknown>) : null;
   const cleanExp = rawExp
@@ -591,8 +691,8 @@ export function migrateState(
     lvl,
     acc: Math.min(GOV_DAY_SEC, Math.max(0, Number.isFinite(accVal) ? accVal : 0)) + 0,
     blk: Math.min(1_000_000, Math.max(0, Number.isFinite(blkVal) ? blkVal : 0)) + 0,
-    pb: Math.min(0.25, Math.max(0, Number.isFinite(pbVal) ? pbVal : 0)) + 0,
-    ph: Math.min(10, Math.max(0, Number.isFinite(phVal) ? phVal : 0)) + 0,
+    pb: Math.min(0.4, Math.max(0, Number.isFinite(pbVal) ? pbVal : 0)) + 0,
+    ph: Math.min(16, Math.max(0, Number.isFinite(phVal) ? phVal : 0)) + 0,
     log: Array.isArray(gx.log)
       ? gx.log.filter((x): x is string => typeof x === 'string').map((x) => x.slice(0, 120)).slice(0, 8)
       : [],
@@ -637,7 +737,6 @@ export function migrateState(
     s.subPromo = {};
   }
 
-  // Sanitize v2 extended national fields cleanly
   const validBuildingSet = new Set(BUILDINGS.map((b) => b.id));
   const validPolicySet = new Set(BUILDING_POLICIES.map((p) => p.id));
   const rawBp = (raw?.bPolicies && typeof raw.bPolicies === 'object' ? raw.bPolicies : v2Pack?.bp) as Record<string, unknown> | undefined;
@@ -675,9 +774,11 @@ export function migrateState(
   const rawDc = (raw?.decisionsCd && typeof raw.decisionsCd === 'object' ? raw.decisionsCd : v2Pack?.dc) as Record<string, unknown> | undefined;
   const cleanDc: Record<string, number> = {};
   if (rawDc && typeof rawDc === 'object') {
-    for (const d of NATIONAL_DECISIONS) {
-      const val = Math.floor(Number(rawDc[d.id]));
-      if (Number.isFinite(val) && val > 0) cleanDc[d.id] = Math.min(1e13, val) + 0;
+    for (const [k, valRaw] of Object.entries(rawDc)) {
+      if (NATIONAL_DECISIONS.some((d) => d.id === k) || VALID_POLICY_CD_KEYS.has(k)) {
+        const val = Math.floor(Number(valRaw));
+        if (Number.isFinite(val) && val > 0) cleanDc[k] = Math.min(1e13, val) + 0;
+      }
     }
   }
   s.decisionsCd = cleanDc;
@@ -687,7 +788,6 @@ export function migrateState(
   const rawCw = raw?.cityWeather ?? v2Pack?.cw;
   s.cityWeather = rawCw === 'overcast' || rawCw === 'rain' ? rawCw : 'clear';
 
-  // Sanitize cosmetics, active theme & rewards dashboard state
   const rawCos = Array.isArray(raw?.cos) ? raw.cos : v2Pack?.co;
   const cosSet = new Set<string>();
   if (Array.isArray(rawCos)) {
@@ -702,7 +802,7 @@ export function migrateState(
   const rawEq = (raw?.cosEq && typeof raw.cosEq === 'object' ? raw.cosEq : v2Pack?.ce) as Record<string, unknown> | undefined;
   const cleanEq: EquippedCosmetics = {};
   if (rawEq && typeof rawEq === 'object') {
-    for (const slot of ['frame', 'nameEffect', 'badge', 'anim'] as const) {
+    for (const slot of ['frame', 'nameEffect', 'badge', 'anim', 'lbAnim', 'achFx', 'premiumVfx'] as const) {
       const id = rawEq[slot];
       if (typeof id === 'string' && cosSet.has(id)) {
         const def = COSMETIC_BY_ID.get(id);
@@ -761,7 +861,113 @@ export function migrateState(
   s.wHist = sanitizeHist(raw?.wHist ?? v2Pack?.wh);
   s.qHist = sanitizeHist(raw?.qHist ?? v2Pack?.qh);
 
-  // Strip province arrays cleanly AFTER idempotent migration
+  // Sanitize Update 2.0 fields (Upgrade Queue & History, Research Queue, Intl Trade, Challenges, Local Mega Projects, Migration flags)
+  const rawUpgQ = Array.isArray(raw?.upgQueue) ? raw.upgQueue : (Array.isArray(v2Pack?.uq) ? v2Pack.uq : []);
+  s.upgQueue = rawUpgQ
+    .filter((x): x is UpgradeQueueSlot => Boolean(x && typeof x === 'object' && validBuildingSet.has(x.buildingId)))
+    .slice(0, 4)
+    .map((x) => ({
+      buildingId: x.buildingId,
+      fromLevel: Math.max(1, Math.min(MAX_BUILDING_LEVEL - 1, Math.floor(Number(x.fromLevel) || 1))),
+      toLevel: Math.max(2, Math.min(MAX_BUILDING_LEVEL, Math.floor(Number(x.toLevel) || 2))),
+      finishAt: Math.max(0, Math.min(1e13, Math.floor(Number(x.finishAt) || 0))),
+      totalSec: Math.max(1, Math.min(3600, Math.floor(Number(x.totalSec) || 10))),
+      costPaid: Math.max(0, Math.min(1e13, Math.floor(Number(x.costPaid) || 0))),
+    }));
+
+  const rawUpgH = Array.isArray(raw?.upgHist) ? raw.upgHist : (Array.isArray(v2Pack?.uh) ? v2Pack.uh : []);
+  s.upgHist = rawUpgH
+    .filter((x): x is UpgradeHistoryEntry => Boolean(x && typeof x === 'object' && validBuildingSet.has(x.buildingId)))
+    .slice(0, 40)
+    .map((x) => ({
+      buildingId: x.buildingId,
+      name: String(x.name || x.buildingId).slice(0, 48),
+      fromLevel: Math.max(1, Math.min(MAX_BUILDING_LEVEL, Math.floor(Number(x.fromLevel) || 1))),
+      toLevel: Math.max(1, Math.min(MAX_BUILDING_LEVEL, Math.floor(Number(x.toLevel) || 2))),
+      cost: Math.max(0, Math.min(1e13, Math.floor(Number(x.cost) || 0))),
+      atMs: Math.max(0, Math.min(1e13, Math.floor(Number(x.atMs) || now))),
+    }));
+
+  const rawRq = (raw?.resQueue !== undefined ? raw.resQueue : v2Pack?.rq) as ResearchQueueSlot | null | undefined;
+  if (rawRq && typeof rawRq === 'object' && VALID_TECH_ID_SET.has(rawRq.techId)) {
+    s.resQueue = {
+      techId: rawRq.techId,
+      finishAt: Math.max(0, Math.min(1e13, Math.floor(Number(rawRq.finishAt) || 0))),
+      totalSec: Math.max(1, Math.min(7200, Math.floor(Number(rawRq.totalSec) || 15))),
+    };
+  } else {
+    s.resQueue = null;
+  }
+
+  const rawIt = (raw?.intlTrade && typeof raw.intlTrade === 'object' ? raw.intlTrade : v2Pack?.it) as IntlTradeState | undefined;
+  const validGoodSet = new Set<string>(TRADE_GOODS.map((g) => g.id));
+  const cleanContracts: ActiveTradeContract[] = Array.isArray(rawIt?.contracts)
+    ? rawIt.contracts
+        .filter((c): c is ActiveTradeContract => Boolean(c && typeof c === 'object' && validGoodSet.has(c.goodId)))
+        .slice(0, 8)
+        .map((c) => ({
+          id: String(c.id || 'tr').slice(0, 32),
+          partner: String(c.partner || 'EU Market').slice(0, 32),
+          goodId: c.goodId as TradeGoodId,
+          direction: c.direction === 'import' ? 'import' : 'export',
+          units: Math.max(1, Math.min(200, Math.floor(Number(c.units) || 1))),
+          unitPrice: Math.max(1, Math.min(1e9, Math.floor(Number(c.unitPrice) || 100))),
+          totalValue: Math.max(1, Math.min(1e12, Math.floor(Number(c.totalValue) || 100))),
+          finishAt: Math.max(0, Math.min(1e13, Math.floor(Number(c.finishAt) || now))),
+          durSec: Math.max(5, Math.min(600, Math.floor(Number(c.durSec) || 20))),
+          completed: Boolean(c.completed),
+        }))
+    : [];
+  const cleanTradeMil: Record<string, number> = {};
+  if (rawIt?.milestonesClaimed && typeof rawIt.milestonesClaimed === 'object') {
+    for (const tm of TRADE_MILESTONES) {
+      if (Number(rawIt.milestonesClaimed[tm.id]) > 0) cleanTradeMil[tm.id] = 1;
+    }
+  }
+  s.intlTrade = {
+    contracts: cleanContracts,
+    completedCount: Math.max(0, Math.min(1_000_000, Math.floor(Number(rawIt?.completedCount) || 0))),
+    exportRevenue: Math.max(0, Math.min(1e14, Math.floor(Number(rawIt?.exportRevenue) || 0))),
+    importSpend: Math.max(0, Math.min(1e14, Math.floor(Number(rawIt?.importSpend) || 0))),
+    importBuffUntil: rawIt?.importBuffUntil ? Math.max(0, Math.min(1e13, Math.floor(Number(rawIt.importBuffUntil)))) : undefined,
+    milestonesClaimed: cleanTradeMil,
+    lastDayKey: typeof rawIt?.lastDayKey === 'string' ? rawIt.lastDayKey.slice(0, 16) : undefined,
+    dailyVolumeUsed: Math.max(0, Math.min(100_000, Math.floor(Number(rawIt?.dailyVolumeUsed) || 0))),
+  };
+
+  const rawCh = (raw?.challenges && typeof raw.challenges === 'object' ? raw.challenges : v2Pack?.ch) as Record<string, unknown> | undefined;
+  const cleanCh: Record<string, number> = {};
+  if (rawCh && typeof rawCh === 'object') {
+    for (const c of CHALLENGES_2_0) {
+      if (Number(rawCh[c.id]) > 0) cleanCh[c.id] = 1;
+    }
+  }
+  s.challenges = cleanCh;
+
+  const rawMp = Array.isArray(raw?.megaProjects) ? raw.megaProjects : (Array.isArray(v2Pack?.mp) ? v2Pack.mp : []);
+  s.megaProjects = rawMp
+    .filter((p): p is LocalMegaProjectSlot => Boolean(p && typeof p === 'object' && p.type in GX_PROJECT_TYPES))
+    .slice(0, 12)
+    .map((p) => ({
+      id: String(p.id || `mp_${p.type}`).slice(0, 40),
+      type: p.type as ProjectType,
+      paid: Math.max(0, Math.min(1e13, Math.floor(Number(p.paid) || 0))),
+      startedAt: Math.max(0, Math.min(1e13, Math.floor(Number(p.startedAt) || now))),
+      finishAt: Math.max(0, Math.min(1e13, Math.floor(Number(p.finishAt) || now))),
+      totalSec: Math.max(1, Math.min(86_400, Math.floor(Number(p.totalSec) || 60))),
+      status: p.status === 'done' ? 'done' : 'active',
+      claimed: Boolean(p.claimed),
+    }));
+
+  const rawMig = (raw?.mig && typeof raw.mig === 'object' ? raw.mig : v2Pack?.mg) as Record<string, unknown> | undefined;
+  const cleanMig: Record<string, number> = {};
+  if (rawMig && typeof rawMig === 'object') {
+    for (const [k, v] of Object.entries(rawMig).slice(0, 10)) {
+      if (Number(v) > 0 && /^[a-zA-Z0-9_]{1,24}$/.test(k)) cleanMig[k] = 1;
+    }
+  }
+  s.mig = cleanMig;
+
   const migrated = migrateLegacySaveToNational(raw || {}, s);
   delete (migrated as unknown as Record<string, unknown>).provinces;
   delete (migrated as unknown as Record<string, unknown>).provBudgetLog;
@@ -834,7 +1040,6 @@ export function cleanSavePayload(s: GameState, nowMs = Date.now()): Record<strin
     : [];
   normalized.questDay = typeof normalized.questDay === 'string' ? normalized.questDay.slice(0, 32) : '';
 
-  // Enforce firestore.rules s.b.size() <= 35 and s.gx.lvl.size() <= 35
   const fullB = normalized.b || {};
   const fullLvl = normalized.gx?.lvl || {};
   const extraIds = BUILDINGS.map((d) => d.id)
@@ -853,23 +1058,51 @@ export function cleanSavePayload(s: GameState, nowMs = Date.now()): Record<strin
   const primaryLvl: Record<string, number> = {};
   for (const id of primaryIds) {
     primaryB[id] = fullB[id] || 0;
-    primaryLvl[id] = fullLvl[id] || 1;
+    primaryLvl[id] = Math.min(5, fullLvl[id] || 1);
   }
 
   const overflowB: Record<string, number> = {};
   const overflowLvl: Record<string, number> = {};
   for (const d of BUILDINGS) {
-    if (primarySet.has(d.id)) continue;
     const cnt = fullB[d.id] || 0;
     const lv = fullLvl[d.id] || 1;
-    if (cnt > 0) overflowB[d.id] = cnt;
-    if (lv > 1) overflowLvl[d.id] = lv;
+    if (!primarySet.has(d.id)) {
+      if (cnt > 0) overflowB[d.id] = cnt;
+      if (lv > 1) overflowLvl[d.id] = lv;
+    } else if (lv > 5) {
+      overflowLvl[d.id] = lv;
+    }
   }
+
+  // Cap top-level tech <= 16 and stk <= 48 while packing overflow into v2Pack
+  const fullTechKeys = Object.keys(normalized.tech || {});
+  const primaryTech: Record<string, number> = {};
+  const overflowTech: string[] = [];
+  fullTechKeys.forEach((k, idx) => {
+    if (idx < 16) {
+      primaryTech[k] = normalized.tech![k];
+    } else if ((normalized.tech?.[k] || 0) > 0) {
+      overflowTech.push(k);
+    }
+  });
+
+  const sortedStk = Object.entries(normalized.stk || {}).sort((a, b) => b[1] - a[1]);
+  const primaryStk: Record<string, number> = {};
+  const overflowStk: Record<string, number> = {};
+  sortedStk.forEach(([k, v], idx) => {
+    if (idx < 48) {
+      primaryStk[k] = v;
+    } else {
+      overflowStk[k] = v;
+    }
+  });
 
   const pack: PackedV2Extension = {};
   if (Object.keys(overflowB).length > 0) pack.ob = overflowB;
   if (Object.keys(overflowLvl).length > 0) pack.ol = overflowLvl;
-  if (fullRank > CLOUD_MAX_RANK) pack.r = fullRank;
+  if (overflowTech.length > 0) pack.ot = overflowTech;
+  if (Object.keys(overflowStk).length > 0) pack.os = overflowStk;
+  if (fullRank > 15) pack.r = fullRank;
   if (normalized.bPolicies && Object.keys(normalized.bPolicies).length > 0) pack.bp = normalized.bPolicies;
   if (normalized.achievements && Object.keys(normalized.achievements).length > 0) pack.ach = normalized.achievements;
   if (normalized.weeklyDay) pack.wk = normalized.weeklyDay;
@@ -887,8 +1120,31 @@ export function cleanSavePayload(s: GameState, nowMs = Date.now()): Record<strin
   if (normalized.wMilClaim && Object.keys(normalized.wMilClaim).length > 0) pack.wc2 = normalized.wMilClaim;
   if (normalized.wHist && normalized.wHist.length > 0) pack.wh = normalized.wHist.slice(0, 5);
   if (normalized.qHist && normalized.qHist.length > 0) pack.qh = normalized.qHist.slice(0, 5);
+  if (normalized.pol && Object.keys(normalized.pol).length > 0) {
+    const compactPol: Record<string, 1 | 2> = {};
+    for (const [k, v] of Object.entries(normalized.pol)) {
+      if (v === 1 || v === 2) compactPol[k] = v;
+    }
+    if (Object.keys(compactPol).length > 0) pack.pol = compactPol;
+  }
+  if (normalized.upgQueue && normalized.upgQueue.length > 0) pack.uq = normalized.upgQueue;
+  if (normalized.upgHist && normalized.upgHist.length > 0) pack.uh = normalized.upgHist.slice(0, 20);
+  if (normalized.resQueue) pack.rq = normalized.resQueue;
+  if (
+    normalized.intlTrade &&
+    ((normalized.intlTrade.contracts?.length || 0) > 0 ||
+      (normalized.intlTrade.completedCount || 0) > 0 ||
+      Object.keys(normalized.intlTrade.milestonesClaimed || {}).length > 0)
+  ) {
+    pack.it = normalized.intlTrade;
+  }
+  if (normalized.challenges && Object.keys(normalized.challenges).length > 0) pack.ch = normalized.challenges;
+  if (normalized.megaProjects && normalized.megaProjects.length > 0) pack.mp = normalized.megaProjects;
+  if (normalized.mig && Object.keys(normalized.mig).length > 0) pack.mg = normalized.mig;
 
   normalized.b = primaryB;
+  normalized.tech = primaryTech;
+  normalized.stk = primaryStk;
   normalized.gx = { ...normalized.gx, lvl: primaryLvl };
 
   const raw = stripUndefinedDeep(normalized) as Record<string, unknown>;
@@ -900,10 +1156,19 @@ export function cleanSavePayload(s: GameState, nowMs = Date.now()): Record<strin
   }
 
   if (Object.keys(pack).length > 0) {
-    const json = JSON.stringify(pack);
+    const CHUNK_SIZE = 800;
+    const MAX_CHUNKS = 50;
+    let json = JSON.stringify(pack);
+    if (json.length > CHUNK_SIZE * MAX_CHUNKS) {
+      delete pack.uh;
+      delete pack.dh;
+      delete pack.wh;
+      delete pack.qh;
+      json = JSON.stringify(pack);
+    }
     const chunks: string[] = [];
-    for (let i = 0; i < json.length && chunks.length < 20; i += 450) {
-      chunks.push(`v2:${json.slice(i, i + 450)}`);
+    for (let i = 0; i < json.length && chunks.length < MAX_CHUNKS; i += CHUNK_SIZE) {
+      chunks.push(`v2:${json.slice(i, i + CHUNK_SIZE)}`);
     }
     out.provBudgetLog = chunks;
   }
@@ -913,8 +1178,19 @@ export function cleanSavePayload(s: GameState, nowMs = Date.now()): Record<strin
 
 export function canUnlockTech(s: GameState, techId: string, nowMs = Date.now()): { ok: boolean; reason?: string; cost: number } {
   const def = TECH_TREE.find((t) => t.id === techId);
-  if (!def) return { ok: false, reason: 'Unknown doctrine', cost: 0 };
+  if (!def) return { ok: false, reason: 'Unknown research', cost: 0 };
   if (hasTech(s, techId)) return { ok: false, reason: 'Already researched', cost: def.cost };
+  const curRank = Math.max(MIN_RANK, Math.floor(Number(s.rank) || MIN_RANK));
+  if (def.reqRank && curRank < def.reqRank) {
+    return { ok: false, reason: `Requires Rank ${def.reqRank}`, cost: def.cost };
+  }
+  if (def.prereq?.length) {
+    const missing = def.prereq.find((pid) => !hasTech(s, pid));
+    if (missing) {
+      const mDef = TECH_TREE.find((t) => t.id === missing);
+      return { ok: false, reason: `Requires ${mDef?.n || missing}`, cost: def.cost };
+    }
+  }
   const ownedBldgs = totalBuildings(s);
   const cost = Math.max(1, Math.ceil(def.cost * getResearchCostMult(s, nowMs)));
   if (ownedBldgs < def.reqBuildings) {
@@ -947,6 +1223,7 @@ export function applyUnlockTech(
 export function getInfraDecayMult(s: GameState): number {
   let mult = hasTech(s, 'smart_grid') ? 0.8 : 1;
   if (getPolicyStance(s, 'p_inf') === 2) mult *= 0.75;
+  if (getPolicyStance(s, 'p_urb') === 1) mult *= 0.85;
   return mult;
 }
 
@@ -1026,15 +1303,23 @@ const POLLUTING_INDUSTRY_IDS = new Set([
   'auto_factory',
   'electronics_factory',
   'heavy_industry',
+  'auto_mfg_plant',
+  'steel_complex',
 ]);
 
 export function targetHappiness(s: GameState, nowMs = Date.now()): number {
-  const cleanEnergy = (s.b?.solar_plants || 0) + (s.b?.wind_farms || 0);
+  const cleanEnergy =
+    (s.b?.solar_plants || 0) +
+    (s.b?.wind_farms || 0) +
+    (s.b?.offshore_wind || 0) +
+    (s.b?.adv_solar_station || 0) +
+    (s.b?.hydro_plant || 0) +
+    (s.b?.geothermal_plant || 0);
   const carbonOffset = cleanEnergy * 2.5 + (s.green || 0) * 0.5;
   const carbonPen = Math.max(0, (s.carbon || 0) - carbonOffset) * 0.5;
   const ecoTech = hasTech(s, 'eco_catalysis');
   const careTech = hasTech(s, 'healthcare_act');
-  const techFlatHap = (ecoTech ? 2 : 0) + (careTech ? 5 : 0);
+  const techFlatHap = getTechHapBonus(s);
 
   let buildingHap = 0;
   let bPolicyHap = 0;
@@ -1045,7 +1330,7 @@ export function targetHappiness(s: GameState, nowMs = Date.now()): number {
     if (ecoTech && POLLUTING_INDUSTRY_IDS.has(d.id) && delta < 0) {
       delta *= 0.7;
     }
-    if (careTech && (d.id === 'hospitals' || d.id === 'adv_medical')) {
+    if (careTech && (d.id === 'hospitals' || d.id === 'adv_medical' || d.id === 'specialist_healthcare' || d.id === 'cancer_research_hospital')) {
       delta *= 1.25;
     }
     buildingHap += delta * count;
@@ -1053,7 +1338,6 @@ export function targetHappiness(s: GameState, nowMs = Date.now()): number {
     bPolicyHap += pol.hapDelta * Math.min(3, count);
   }
 
-  // National policy happiness effects
   let policyHap = 0;
   const pTax = getPolicyStance(s, 'p_tax');
   if (pTax === 1) policyHap += 4;
@@ -1070,6 +1354,10 @@ export function targetHappiness(s: GameState, nowMs = Date.now()): number {
   const pNrg = getPolicyStance(s, 'p_nrg');
   if (pNrg === 1) policyHap += 5;
   else if (pNrg === 2) policyHap -= 5;
+  if (getPolicyStance(s, 'p_env') === 1) policyHap += 4;
+  if (getPolicyStance(s, 'p_hou') === 1) policyHap += 4;
+  if (getPolicyStance(s, 'p_tou') === 1) policyHap += 2;
+  if (getPolicyStance(s, 'p_def') === 2) policyHap += 2;
 
   const empBoostBonus = isBoosterActive(s, 'emp_boost', nowMs) ? 4 : 0;
   const assetHapBonus = getDiamondAssetBonuses(s).hapBonus;
@@ -1121,7 +1409,6 @@ export function calculateTaxCollect(
     return { collected: pool, bonusApplied: false, bonusAmount: 0, baseNet, poolAmount: pool };
   }
 
-  // Strictly use unboosted base net income, capped at +30% of pool and max 2 min (120s) of base income
   const bonusAmount = Math.floor(Math.min(pool * 0.3, baseNet * 120));
   return {
     collected: pool + bonusAmount,
@@ -1138,7 +1425,7 @@ export function rollTradePortExport(
   baseNet: number,
   rng: () => number = Math.random,
 ): { gems: number; sticker: StickerDef | null } {
-  const ports = (s.b?.ports || 0) + (s.b?.airports || 0);
+  const ports = (s.b?.ports || 0) + (s.b?.airports || 0) + (s.b?.deep_sea_port || 0) + (s.b?.intl_airport_terminal || 0);
   if (ports <= 0 || poolCollected < Math.max(50, baseNet * 30)) {
     return { gems: 0, sticker: null };
   }
@@ -1197,28 +1484,31 @@ export function applyOfflineEarnings(
   nowMs = Date.now(),
   tradeTier = 0,
 ): { state: GameState; credited: number; awaySec: number; wasCapped: boolean } {
-  // Graduate any construction queue items that completed while player was away
-  const ticked = tickConstructionQueue(s, nowMs).state;
+  let working = tickConstructionQueue(s, nowMs).state;
+  working = tickUpgradeQueue(working, nowMs).state;
+  working = tickResearchQueue(working, nowMs).state;
+  working = tickIntlTradeContracts(working, nowMs).state;
+  working = tickLocalMegaProjects(working, nowMs).state;
 
-  const clampedT = !ticked.t || ticked.t > nowMs + 60_000 ? nowMs : ticked.t;
+  const clampedT = !working.t || working.t > nowMs + 60_000 ? nowMs : working.t;
   const rawAway = Math.max(0, (nowMs - clampedT) / 1000);
-  if (!Number.isFinite(rawAway) || rawAway <= 60 || totalBuildings(ticked) === 0) {
-    return { state: { ...ticked, t: nowMs }, credited: 0, awaySec: 0, wasCapped: false };
+  if (!Number.isFinite(rawAway) || rawAway <= 60 || totalBuildings(working) === 0) {
+    return { state: { ...working, t: nowMs }, credited: 0, awaySec: 0, wasCapped: false };
   }
 
   const away = Math.min(OFFLINE_CAP_SEC, rawAway);
-  const net = Math.max(0, calculateIncome(ticked, { tradeTier, nowMs, ignoreTempBoosters: true }).net);
+  const net = Math.max(0, calculateIncome(working, { tradeTier, nowMs, ignoreTempBoosters: true }).net);
   const credited = net * away * OFFLINE_RATE;
   if (net <= 0 || credited < 1) {
-    return { state: { ...ticked, t: nowMs }, credited: 0, awaySec: away, wasCapped: rawAway > OFFLINE_CAP_SEC };
+    return { state: { ...working, t: nowMs }, credited: 0, awaySec: away, wasCapped: rawAway > OFFLINE_CAP_SEC };
   }
 
-  const capPool = net * getTaxPoolCapSeconds(ticked);
-  const prevPool = ticked.taxPool || 0;
+  const capPool = net * getTaxPoolCapSeconds(working);
+  const prevPool = working.taxPool || 0;
   const newPool = prevPool >= capPool ? prevPool : Math.min(capPool, prevPool + credited);
 
   return {
-    state: { ...ticked, taxPool: newPool, t: nowMs },
+    state: { ...working, taxPool: newPool, t: nowMs },
     credited,
     awaySec: away,
     wasCapped: rawAway > OFFLINE_CAP_SEC,
@@ -1381,7 +1671,6 @@ export function applyBuySubscription(
       sub: {
         tier: subDef.id,
         exp,
-        // Preserve lastClaimDay so upgrading tiers cannot double-claim on the same day
         lastClaimDay: s.sub?.lastClaimDay || '',
       },
     },
@@ -1446,9 +1735,8 @@ export function gxUpgradeCost(s: GameState, buildingId: string, nowMs = Date.now
   const def = BUILDINGS.find((b) => b.id === buildingId);
   const count = s.b[buildingId] || 0;
   const lvl = s.gx.lvl[buildingId] || 1;
-  if (!def || count < 1 || lvl >= 5) return 0;
-  const disc = getDevelopmentDiscount(s, nowMs);
-  return Math.max(1, Math.ceil(def.cost * count * GX_UPGRADE_MULTS[lvl - 1] * (1 - disc)));
+  if (!def || count < 1 || lvl >= MAX_BUILDING_LEVEL) return 0;
+  return getBuildingUpgradeCostAndDur(s, def, lvl, count, nowMs).cost;
 }
 
 export function fuseSticker(
@@ -1540,18 +1828,45 @@ export function buyStickerCrate(
   };
 }
 
+export function applyBuyStickerWithDiamonds(
+  s: GameState,
+  stickerId: string,
+): { ok: boolean; state: GameState; sticker?: StickerDef; cost: number; reason?: string } {
+  const def = STICKERS.find((x) => x.id === stickerId);
+  if (!def) return { ok: false, state: s, cost: 0, reason: 'Unknown sticker' };
+  const ownedQty = Math.floor(Number(s.stk?.[stickerId]) || 0);
+  if (ownedQty > 0) {
+    return { ok: false, state: s, cost: 0, reason: 'Sticker already unlocked in collection' };
+  }
+  const cost = def.diamondPrice || (def.r === 1 ? 65 : def.r === 2 ? 145 : 295);
+  if (!Number.isFinite(s.gems) || s.gems < cost) {
+    return { ok: false, state: s, cost, reason: `Need ${cost} Diamonds` };
+  }
+  return {
+    ok: true,
+    sticker: def,
+    cost,
+    state: {
+      ...s,
+      gems: Math.max(0, Math.floor(s.gems) - cost),
+      stk: { ...(s.stk || {}), [stickerId]: 1 },
+    },
+  };
+}
 
 export const MILESTONES: QuestDef[] = [
   { id: 'm_first_bldg', t: 'First Infrastructure (Own 5 buildings)', f: (s) => totalBuildings(s), g: 5, r: 1 },
   { id: 'm_cash_1m', t: 'Millionaire Economy (Reach ₨ 1M Real GDP)', f: (s) => calculateGdp(s), g: 1_000_000, r: 2 },
   { id: 'm_builders_25', t: 'Urban Planner (Own 25 buildings)', f: (s) => totalBuildings(s), g: 25, r: 3 },
   { id: 'm_infra_5', t: 'Master Architect (Upgrade any building to Lv 5)', f: (s) => Math.max(1, ...Object.values(s.gx?.lvl || { farms: 1 })), g: 5, r: 3 },
+  { id: 'm_infra_25', t: 'Tier III Engineer (Upgrade any building to Lv 25)', f: (s) => Math.max(1, ...Object.values(s.gx?.lvl || { farms: 1 })), g: 25, r: 6 },
   { id: 'm_stk_10', t: 'Curator (Collect 10 unique stickers)', f: (s) => stickerUniqueCount(s), g: 10, r: 4 },
   { id: 'm_rank_4', t: 'Business Owner Charter (Reach Rank 4)', f: (s) => s.rank || MIN_RANK, g: 4, r: 5 },
-  { id: 'm_tech_3', t: 'Chief Scientist (Unlock 3 Research doctrines)', f: (s) => techCount(s), g: 3, r: 4 },
+  { id: 'm_tech_3', t: 'Chief Scientist (Unlock 3 Research techs)', f: (s) => techCount(s), g: 3, r: 4 },
   { id: 'm_gdp_100m', t: 'Economic Powerhouse (Real GDP ₨ 100M)', f: (s) => calculateGdp(s), g: 100_000_000, r: 6 },
   { id: 'm_rank_10', t: 'National Legend (Reach Rank 10)', f: (s) => s.rank || MIN_RANK, g: 10, r: 8 },
-  { id: 'm_rank_15', t: 'Eternal Chancellor (Reach Rank 15)', f: (s) => s.rank || MIN_RANK, g: MAX_RANK, r: 10 },
+  { id: 'm_rank_15', t: 'Continental Hegemon (Reach Rank 15)', f: (s) => s.rank || MIN_RANK, g: 15, r: 10 },
+  { id: 'm_rank_25', t: 'World Architect (Reach Rank 25)', f: (s) => s.rank || MIN_RANK, g: MAX_RANK, r: 25 },
 ];
 
 export function claimMilestone(
@@ -1577,7 +1892,6 @@ export function claimMilestone(
     },
   };
 }
-
 
 export function sanitizeStats(
   raw: Partial<PlayerStats> | undefined,
@@ -1695,6 +2009,9 @@ const HAPPY_BUILDINGS = new Set([
   'hospitals',
   'universities',
   'shopping_centers',
+  'eco_homes',
+  'affordable_housing',
+  'offshore_wind',
 ]);
 
 export function getRecommendedBuildings(
@@ -1778,9 +2095,9 @@ export function getRecommendedTech(s: GameState): Record<string, string> {
   const unlockable = TECH_TREE.filter((t) => canUnlockTech(s, t.id).ok);
   if (unlockable.length > 0) {
     if ((s.hap ?? 60) < 60) {
-      const civic = unlockable.find((t) => t.cat === 'civic');
-      if (civic) {
-        rec[civic.id] = 'Happiness Fix';
+      const care = unlockable.find((t) => (t.hapBonus || 0) > 0);
+      if (care) {
+        rec[care.id] = 'Happiness Fix';
         return rec;
       }
     }
@@ -1970,21 +2287,36 @@ export function applyUpgradeBuilding(
   id: string,
   nowMs = Date.now(),
 ): { ok: boolean; state: GameState; newLevel: number; cost: number; reason?: string } {
+  const def = BUILDINGS.find((b) => b.id === id);
   const lvl = s.gx?.lvl?.[id] || 1;
   const cost = gxUpgradeCost(s, id, nowMs);
-  if (lvl >= 5 || cost <= 0) return { ok: false, state: s, newLevel: lvl, cost: 0, reason: 'Already at max level' };
-  if (!Number.isFinite(s.cash) || s.cash < cost) return { ok: false, state: s, newLevel: lvl, cost, reason: 'Not enough Coins' };
+  if (!def || lvl >= MAX_BUILDING_LEVEL || cost <= 0) {
+    return { ok: false, state: s, newLevel: lvl, cost: 0, reason: 'Already at max level' };
+  }
+  if (!Number.isFinite(s.cash) || s.cash < cost) {
+    return { ok: false, state: s, newLevel: lvl, cost, reason: 'Not enough Coins' };
+  }
+  const newLevel = lvl + 1;
+  const histEntry: UpgradeHistoryEntry = {
+    buildingId: id,
+    name: def.n,
+    fromLevel: lvl,
+    toLevel: newLevel,
+    cost,
+    atMs: Math.floor(nowMs),
+  };
   return {
     ok: true,
-    newLevel: lvl + 1,
+    newLevel,
     cost,
     state: {
       ...s,
       cash: Math.max(0, s.cash - cost),
       gx: {
         ...s.gx,
-        lvl: { ...s.gx.lvl, [id]: lvl + 1 },
+        lvl: { ...s.gx.lvl, [id]: newLevel },
       },
+      upgHist: [histEntry, ...(Array.isArray(s.upgHist) ? s.upgHist : [])].slice(0, 40),
     },
   };
 }
@@ -2020,6 +2352,7 @@ export function getUnclaimedRewardsSummary(
   weeklyReady: number;
   questReady: number;
   achReady: number;
+  challengeReady: number;
   total: number;
   readyQuestIds: string[];
 } {
@@ -2037,15 +2370,20 @@ export function getUnclaimedRewardsSummary(
     }
   }
   const weeklyReady = weeklyMissionReady;
+  const dqView = getDailyQuestsView(s, dayKeyFor(nowMs), rankPos);
+  const questReady = dqView.readyCount;
+  const readyQuestIds = dqView.quests.filter((q) => q.ready).map((q) => q.def.id);
   const achReady = computeReadyAchievementCount(s);
+  const challengeReady = CHALLENGES_2_0.filter((c) => !s.challenges?.[c.id] && c.f(s) >= c.goal).length;
 
   return {
     dailyReady,
     weeklyReady,
-    questReady: 0,
+    questReady,
     achReady,
-    total: dailyReady + weeklyReady + achReady,
-    readyQuestIds: [],
+    challengeReady,
+    total: dailyReady + weeklyReady + questReady + achReady + challengeReady,
+    readyQuestIds,
   };
 }
 
@@ -2292,6 +2630,10 @@ export {
   applyEnactNationalDecision,
   applySetBuildingPolicy,
   applyStartBuildingConstruction,
+  applyStartBuildingUpgrade,
+  applyStartLocalMegaProject,
+  applyStartResearch,
+  applyStartTradeContract,
   buildingCost,
   bulkBuildingCost,
   canChangePolicyStance,
@@ -2300,6 +2642,13 @@ export {
   canEnactNationalDecision,
   canSetBuildingPolicy,
   canStartBuildingConstruction,
+  canStartBuildingUpgrade,
+  canStartLocalMegaProject,
+  canStartResearch,
+  canStartTradeContract,
+  claimChallenge,
+  claimLocalMegaProject,
+  claimTradeMilestone,
   computeEconomySnapshot,
   currentWorldEvent,
   extractFiscalDraft,
@@ -2308,6 +2657,9 @@ export {
   getActiveSubscription,
   getBoosterActivationInfo,
   getBuildingPolicyDef,
+  getBuildingUpgradeCostAndDur,
+  getBuildingUpgradeQuote,
+  getBuildingUpgradeTier,
   getBuildSpeedMultiplier,
   getConstructionQueue,
   getDemolishRefund,
@@ -2315,13 +2667,22 @@ export {
   getFiscalCommitCost,
   getFiscalCooldownLeftMs,
   getGovDefinition,
+  getIntlTradeCapacity,
   getNationalDecisionCooldownLeftSec,
   getPolicyCooldownLeftMs,
   getPolicyStance,
   getRankEligibility,
   getResearchCostMult,
   getResearchSpeedMult,
+  getTechBuildSpeedBonus,
+  getTechEnergyBonus,
+  getTechHapBonus,
   getTechIncomeMult,
+  getTechMaintReduction,
+  getTechResearchSpeedBonus,
+  getTechTradeBonus,
+  getTradeGoodQuote,
+  getUpgradeQueue,
   gxAverageCondition,
   gxHappinessMod,
   gxLevelMult,
@@ -2330,12 +2691,17 @@ export {
   hasTech,
   isBoosterActive,
   isBuildingPolicyAllowedFor,
+  migrateRanksV2OneTime,
   presetToFiscalDraft,
   stickerBonus,
   stickerUniqueCount,
   taxInfo,
   techCount,
   tickConstructionQueue,
+  tickIntlTradeContracts,
+  tickLocalMegaProjects,
+  tickResearchQueue,
+  tickUpgradeQueue,
   totalBuildings,
   unlockedAchievementCount,
   POLICY_BOUNDS,

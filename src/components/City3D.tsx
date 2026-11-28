@@ -18,22 +18,23 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { CityEngine, type CameraPresetMode } from '../city3d/CityEngine';
-import { BUILDING_CATEGORIES, BUILDING_POLICIES, BUILDINGS } from '../game/constants';
+import { BUILDING_CATEGORIES, BUILDING_POLICIES, BUILDINGS, getBuildingLevelMultiplier, MAX_BUILDING_LEVEL } from '../game/constants';
 import {
   buildingCost,
   bulkBuildingCost,
   canDemolishBuilding,
   canSetBuildingPolicy,
   canStartBuildingConstruction,
+  canStartBuildingUpgrade,
   computeEconomySnapshot,
   formatNumber,
   getActiveBuildingPolicyId,
   getBuildingPolicyDef,
+  getBuildingUpgradeQuote,
   getConstructionQueue,
   getDemolishRefund,
   getDevelopmentDiscount,
-  gxLevelMult,
-  gxUpgradeCost,
+  getUpgradeQueue,
   isBuildingPolicyAllowedFor,
   totalBuildings,
 } from '../game/rules';
@@ -167,12 +168,15 @@ const City3DInner: React.FC<City3DProps> = ({
     const queueIds = getConstructionQueue(state, 0)
       .map((q) => `${q.buildingId}@${q.finishAt}`)
       .join(',');
+    const upgIds = getUpgradeQueue(state)
+      .map((u) => `${u.buildingId}@${u.finishAt}`)
+      .join(',');
     const ownedAssets = (state.cos || [])
       .filter((id) => id.startsWith('asset_'))
       .sort()
       .join(',');
-    return `${bEntries}|${lvlEntries}|${queueIds}|${ownedAssets}|${previewLandmarkId || ''}|${state.cityTimeMode || 'auto'}|${state.cityWeather || 'clear'}`;
-  }, [state.b, state.gx?.lvl, state.milestones, state.cos, previewLandmarkId, state.cityTimeMode, state.cityWeather]);
+    return `${bEntries}|${lvlEntries}|${queueIds}|${upgIds}|${ownedAssets}|${previewLandmarkId || ''}|${state.cityTimeMode || 'auto'}|${state.cityWeather || 'clear'}`;
+  }, [state.b, state.gx?.lvl, state.milestones, state.upgQueue, state.cos, previewLandmarkId, state.cityTimeMode, state.cityWeather]);
 
   const latestStateRef = useRef(state);
   latestStateRef.current = state;
@@ -216,16 +220,16 @@ const City3DInner: React.FC<City3DProps> = ({
     const def = BUILDING_BY_ID[selectedBuildingId];
     if (!def) return null;
     const count = state.b?.[def.id] || 0;
-    const lv = Math.max(1, Math.min(5, state.gx?.lvl?.[def.id] || 1));
+    const lv = Math.max(1, Math.min(MAX_BUILDING_LEVEL, state.gx?.lvl?.[def.id] || 1));
     const activePolicyId = getActiveBuildingPolicyId(state, def.id);
     const activePolicy = getBuildingPolicyDef(activePolicyId);
-    const lvMult = gxLevelMult(state, def.id);
+    const lvMult = getBuildingLevelMultiplier(lv);
     const disc = getDevelopmentDiscount(state, nowMs);
     const snap = computeEconomySnapshot(state, { tradeTier, nowMs });
 
     const incPerUnit = def.inc * lvMult * activePolicy.incomeMult;
-    const maintPerUnit = def.maint * activePolicy.maintMult;
-    const jobsPerUnit = Math.round(def.jobs * activePolicy.jobsMult);
+    const maintPerUnit = def.maint * (1 + Math.pow(lv - 1, 0.85) * 0.14) * activePolicy.maintMult;
+    const jobsPerUnit = Math.round(def.jobs * (1 + (lv - 1) * 0.04) * activePolicy.jobsMult);
     const sharePct =
       snap.buildingGross > 0 && count > 0 ? ((incPerUnit * count) / snap.buildingGross) * 100 : 0;
 
@@ -233,12 +237,16 @@ const City3DInner: React.FC<City3DProps> = ({
     const buy5Check = canStartBuildingConstruction(state, def.id, 5, nowMs);
     const nextCost1 = buy1Check.cost || buildingCost(def, count, disc);
     const nextCost5 = buy5Check.cost || bulkBuildingCost(def, count, 5, disc);
-    const upCost = gxUpgradeCost(state, def.id, nowMs);
+    const upgQuote = getBuildingUpgradeQuote(state, def.id, nowMs);
+    const upgCheck = canStartBuildingUpgrade(state, def.id, nowMs);
+    const upgSlot = getUpgradeQueue(state).find((u) => u.buildingId === def.id);
+    const upgLeftSec = upgSlot ? Math.max(0, Math.ceil((upgSlot.finishAt - nowMs) / 1000)) : 0;
+    const upCost = upgQuote?.cost || 0;
     const refund1 = getDemolishRefund(def, 1);
     const queueSlot = getConstructionQueue(state, nowMs).find((q) => q.buildingId === def.id);
     const queueLeftSec = queueSlot ? Math.max(0, Math.ceil((queueSlot.finishAt - nowMs) / 1000)) : 0;
 
-    const canUpgrade = count > 0 && lv < 5 && upCost > 0 && state.cash >= upCost;
+    const canUpgrade = upgCheck.ok;
     const rankBlocked = (state.rank || 1) < (def.reqRank || 1);
     const buildingsBlocked = builtTotal < (def.reqBuildings || 0);
     const techBlocked = def.reqTech ? !state.tech?.[def.reqTech] : false;
@@ -257,6 +265,9 @@ const City3DInner: React.FC<City3DProps> = ({
       nextCost1,
       nextCost5,
       upCost,
+      upgReason: upgCheck.reason,
+      upgInProgress: Boolean(upgSlot),
+      upgLeftSec,
       refund1,
       activePolicyId,
       activePolicy,
@@ -425,8 +436,9 @@ const City3DInner: React.FC<City3DProps> = ({
               <div>
                 <b>{selectedData.def.n}</b>
                 <small>
-                  {CAT_LABEL_BY_ID[selectedData.def.cat] || selectedData.def.cat} · {selectedData.count} owned · Level {selectedData.lv}/5
+                  {CAT_LABEL_BY_ID[selectedData.def.cat] || selectedData.def.cat} · {selectedData.count} owned · Level {selectedData.lv}/{MAX_BUILDING_LEVEL}
                   {selectedData.isQueued ? ` · Building (${selectedData.queueLeftSec}s)` : ''}
+                  {selectedData.upgInProgress ? ` · Upgrading (${selectedData.upgLeftSec}s)` : ''}
                 </small>
               </div>
             </div>
@@ -523,15 +535,18 @@ const City3DInner: React.FC<City3DProps> = ({
             >
               <span>+5 (₨ {formatNumber(selectedData.nextCost5)})</span>
             </button>
-            {selectedData.count > 0 && selectedData.lv < 5 && (
+            {selectedData.count > 0 && selectedData.lv < MAX_BUILDING_LEVEL && (
               <button
                 type="button"
                 className="btn sm mint"
                 disabled={!selectedData.canUpgrade}
+                title={selectedData.upgReason || `Upgrade to Lv ${selectedData.lv + 1}`}
                 onClick={() => onUpgradeBuilding(selectedData.def.id)}
               >
                 <span>
-                  {`Upgrade Lv${selectedData.lv + 1} (₨ ${formatNumber(selectedData.upCost)})`}
+                  {selectedData.upgInProgress
+                    ? `Upgrading (${selectedData.upgLeftSec}s)`
+                    : `Upgrade Lv${selectedData.lv + 1} (₨ ${formatNumber(selectedData.upCost)})`}
                 </span>
               </button>
             )}

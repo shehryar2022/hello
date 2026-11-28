@@ -132,12 +132,83 @@ export const CosmeticItemArtwork = memo(function CosmeticItemArtwork({
     );
   }
 
+  if (item.category === 'leaderboard_anim') {
+    return (
+      <div
+        className="dx-art"
+        style={{
+          '--art-a': item.accentColor,
+          '--art-b': item.secondaryColor,
+        } as React.CSSProperties}
+      >
+        <div
+          className={`row pcard lb-fx lb-fx--${item.id}`}
+          style={{
+            width: '92%',
+            padding: '7px 9px',
+            margin: 0,
+            pointerEvents: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            background: 'rgba(13, 16, 38, 0.92)',
+          }}
+        >
+          <span style={{ fontWeight: 800, color: '#ffc93c', fontSize: 11 }}>#1</span>
+          <span style={{ fontWeight: 700, fontSize: 11.5, color: '#f8fafc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {username || 'Governor'}
+          </span>
+        </div>
+        <span className="dx-art-tag">{item.previewTag}</span>
+      </div>
+    );
+  }
+
+  if (item.category === 'achievement_fx') {
+    return (
+      <div
+        className="dx-art"
+        style={{
+          '--art-a': item.accentColor,
+          '--art-b': item.secondaryColor,
+        } as React.CSSProperties}
+      >
+        <div
+          className={`dx-art-anim-card ach-fx--${item.id}`}
+          style={{ width: '78%', padding: '10px 8px' }}
+        >
+          <span className="dx-art-anim-ic" aria-hidden="true">{item.icon}</span>
+          <span style={{ fontSize: 10.5, fontWeight: 700, color: '#f8fafc' }}>Trophy Unlocked</span>
+        </div>
+        <span className="dx-art-tag">{item.previewTag}</span>
+      </div>
+    );
+  }
+
+  if (item.category === 'premium_vfx') {
+    return (
+      <div
+        className={`dx-art pvfx--${item.id}`}
+        style={{
+          '--art-a': item.accentColor,
+          '--art-b': item.secondaryColor,
+        } as React.CSSProperties}
+      >
+        <div className="dx-art-medal">
+          <span aria-hidden="true">{item.icon}</span>
+        </div>
+        <span className="dx-art-tag">{item.previewTag}</span>
+      </div>
+    );
+  }
+
   if (item.category === 'animation') {
-    const isApex = item.id === 'anim_sovereign_nova' || item.id === 'anim_celestial_orbit';
+    const isApex = item.id === 'anim_sovereign_nova' || item.id === 'anim_celestial_orbit' || item.id === 'anim_apex_crown';
     const hasGlint =
       item.id === 'anim_sparkles' ||
       item.id === 'anim_aurora_curtain' ||
       item.id === 'anim_celebration' ||
+      item.id === 'anim_quantum_ripple' ||
       isApex;
     return (
       <div

@@ -4,39 +4,62 @@ import {
   BUILDINGS,
   GOV_DAY_SEC,
   GX_GOV_BUILDINGS,
-  GX_LEVEL_MULTS,
   GX_PROJECT_TYPES,
   GX_ROADS,
+  MAX_BUILDING_LEVEL,
   NATIONAL_DECISIONS,
   PROJECT_STAGES,
+  TECH_CATEGORY_META,
   TECH_TREE,
+  TRADE_GOODS,
+  TRADE_MILESTONES,
+  TRADE_PARTNERS,
 } from '../../game/constants';
 import {
   canEnactNationalDecision,
-  canUnlockTech,
+  canStartBuildingUpgrade,
+  canStartLocalMegaProject,
+  canStartResearch,
+  canStartTradeContract,
   computeEconomySnapshot,
   formatNumber,
+  getBuildingUpgradeQuote,
   getDevelopmentDiscount,
+  getIntlTradeCapacity,
   getProjectSpeedMult,
   getRecommendedTech,
   getResearchCostMult,
+  getTradeGoodQuote,
+  getUpgradeQueue,
   gxAverageCondition,
   gxRepairCost,
-  gxUpgradeCost,
   hasTech,
+  MAX_CONCURRENT_LOCAL_PROJECTS,
+  MAX_UPGRADE_QUEUE,
   techCount,
   totalBuildings,
 } from '../../game/rules';
-import type { BuildingCategory, GameState, GovtSubTab, GovProject, ProjectType } from '../../game/types';
+import type {
+  BuildingCategory,
+  GameState,
+  GovtSubTab,
+  GovProject,
+  ProjectType,
+  TechCategory,
+  TradeGoodId,
+} from '../../game/types';
 import { GdpChart } from '../GdpChart';
 import {
   BarChart3,
   Bell,
   BuildingIcon,
+  CashCoinIcon,
   CheckCircle2,
   Clock,
   Coins,
   FlaskConical,
+  GemDiamondIcon,
+  Globe,
   Hammer,
   InfraIcon,
   Landmark,
@@ -77,6 +100,16 @@ interface GovtTabProps {
   onStartProject: (type: ProjectType) => void;
   onPayProjectStage: (projectId: string) => void;
   onUnlockTech: (techId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
+  onStartResearch?: (techId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
+  onStartLocalMegaProject?: (type: ProjectType) => void;
+  onClaimLocalMegaProject?: (projectId: string) => void;
+  onStartTradeContract?: (
+    goodId: TradeGoodId,
+    partner: string,
+    direction: 'export' | 'import',
+    units: number,
+  ) => void;
+  onClaimTradeMilestone?: (milestoneId: string) => void;
   onEnactDecision?: (decisionId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
 }
 
@@ -94,6 +127,11 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
   onStartProject,
   onPayProjectStage,
   onUnlockTech,
+  onStartResearch,
+  onStartLocalMegaProject,
+  onClaimLocalMegaProject,
+  onStartTradeContract,
+  onClaimTradeMilestone,
   onEnactDecision,
 }) => {
   const gx = state.gx;
@@ -103,24 +141,39 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
   const builtBuildings = useMemo(() => BUILDINGS.filter((d) => (state.b[d.id] || 0) > 0), [state.b]);
   const nowSrv = (state.t || Date.now()) + serverOffsetMs;
   const activeCount = useMemo(() => projects.filter((p) => p.status === 'active').length, [projects]);
+  const localMegaProjects = state.megaProjects || [];
+  const activeLocalProjectsCount = useMemo(
+    () => localMegaProjects.filter((p) => !p.claimed).length,
+    [localMegaProjects],
+  );
   const disc = useMemo(() => getDevelopmentDiscount(state, nowSrv), [state, nowSrv]);
   const projSpeed = useMemo(() => getProjectSpeedMult(state, nowSrv), [state, nowSrv]);
   const researchCostMult = useMemo(() => getResearchCostMult(state, nowSrv), [state, nowSrv]);
   const researchedCount = useMemo(() => techCount(state), [state]);
   const readyTechCount = useMemo(
-    () => TECH_TREE.filter((t) => canUnlockTech(state, t.id, nowSrv).ok).length,
+    () => TECH_TREE.filter((t) => canStartResearch(state, t.id, nowSrv).ok).length,
     [state, nowSrv],
   );
   const readyDecisionCount = useMemo(
     () => NATIONAL_DECISIONS.filter((d) => canEnactNationalDecision(state, d, nowSrv).ok).length,
     [state, nowSrv],
   );
+  const activeTradeContracts = useMemo(
+    () => (state.intlTrade?.contracts || []).filter((c) => !c.completed),
+    [state.intlTrade?.contracts],
+  );
+  const upgQueue = useMemo(() => getUpgradeQueue(state), [state]);
   const techRec = useMemo(() => getRecommendedTech(state), [state]);
   const ownedBuildings = useMemo(() => totalBuildings(state), [state]);
   const econSnap = useMemo(
     () => (subTab === 'stats' ? computeEconomySnapshot(state, { nowMs: nowSrv }) : null),
     [state, subTab, nowSrv],
   );
+
+  const [techCat, setTechCat] = useState<'all' | TechCategory>('all');
+  const [tradePartner, setTradePartner] = useState<string>(TRADE_PARTNERS[0]?.code || 'AE');
+  const [tradeUnits, setTradeUnits] = useState<number>(5);
+  const [upgSearch, setUpgSearch] = useState<string>('');
 
   const dismissStorageKey = `cet_cleared_proj_${uid || 'offline'}`;
   const [hiddenPastIds, setHiddenPastIds] = useState<string[]>(() => {
@@ -172,12 +225,17 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
         <button type="button" className={subTab === 'projects' ? 'on' : ''} onClick={() => onChangeSubTab('projects')}>
           <Hammer size={14} />
           <span>Projects</span>
-          {activeCount > 0 && <em>{activeCount}</em>}
+          {activeCount + activeLocalProjectsCount > 0 && <em>{activeCount + activeLocalProjectsCount}</em>}
         </button>
         <button type="button" className={subTab === 'research' ? 'on' : ''} onClick={() => onChangeSubTab('research')}>
           <FlaskConical size={14} />
           <span>Research Lab</span>
           {readyTechCount > 0 && <em>{readyTechCount}</em>}
+        </button>
+        <button type="button" className={subTab === 'intl_trade' ? 'on' : ''} onClick={() => onChangeSubTab('intl_trade')}>
+          <Globe size={14} />
+          <span>Intl Trade</span>
+          {activeTradeContracts.length > 0 && <em>{activeTradeContracts.length}</em>}
         </button>
         <button type="button" className={subTab === 'stats' ? 'on' : ''} onClick={() => onChangeSubTab('stats')}>
           <BarChart3 size={14} />
@@ -330,49 +388,126 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
 
       <div className="gxh">
         <TrendingUp size={15} color="#3fe0b0" />
-        <span>Building Upgrades (Level 1–5)</span>
+        <span>Building Upgrades (Level 1–{MAX_BUILDING_LEVEL})</span>
       </div>
-      {builtBuildings.length ? (
-        <div className="list g2">
-          {builtBuildings.map((d) => {
-            const lvl = gx.lvl[d.id] || 1;
-            const upCost = gxUpgradeCost(state, d.id, nowSrv);
+      <div className="tradelim" style={{ marginBottom: 10 }}>
+        <span>
+          <Clock size={14} color="#5ccbff" />
+          Active Upgrade Queue ({upgQueue.length}/{MAX_UPGRADE_QUEUE})
+        </span>
+        <b>5 Tiers · Diminishing Returns</b>
+      </div>
+
+      {upgQueue.length > 0 && (
+        <div className="gxc" style={{ marginBottom: 10 }} data-testid="upgrade-queue-panel">
+          {upgQueue.map((slot) => {
+            const bDef = BUILDINGS.find((b) => b.id === slot.buildingId);
+            const leftMs = Math.max(0, slot.finishAt - nowSrv);
+            const pct = Math.max(5, Math.min(100, Math.round(100 - (leftMs / Math.max(1000, slot.totalSec * 1000)) * 100)));
             return (
-              <div key={d.id} className="row" style={{ '--c': d.c } as React.CSSProperties}>
-                <div className="em">
-                  <BuildingIcon id={d.id} size={22} />
+              <div key={`${slot.buildingId}_${slot.toLevel}`} style={{ marginBottom: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 4 }}>
+                  <b>
+                    {bDef?.n || slot.buildingId} · Lv {slot.fromLevel} → {slot.toLevel}
+                  </b>
+                  <span style={{ color: '#5ccbff' }}>{Math.ceil(leftMs / 1000)}s left</span>
                 </div>
-                <div>
-                  <h2>
-                    {d.n}
-                    <span className="lv">Lv {lvl}/5</span>
-                  </h2>
-                  <p>
-                    Output ×{GX_LEVEL_MULTS[lvl - 1]}
-                    {lvl < 5 ? ` → ×${GX_LEVEL_MULTS[lvl]}` : ' (MAX)'}
-                  </p>
-                  <div className="gxm">
-                    <b style={{ width: `${lvl * 20}%`, background: d.c }} />
-                  </div>
+                <div className="gxm">
+                  <b style={{ width: `${pct}%`, background: '#5ccbff' }} />
                 </div>
-                {lvl < 5 ? (
-                  <button
-                    type="button"
-                    className={`btn sm ${state.cash >= upCost ? 'mint' : 'no'}`}
-                    disabled={state.cash < upCost}
-                    onClick={() => onUpgradeBuilding(d.id)}
-                  >
-                    Upgrade ₨ {formatNumber(upCost)}
-                  </button>
-                ) : (
-                  <span className="lv">MAX</span>
-                )}
               </div>
             );
           })}
         </div>
+      )}
+
+      {builtBuildings.length ? (
+        <>
+          <div style={{ marginBottom: 10 }}>
+            <input
+              type="search"
+              className="inp"
+              value={upgSearch}
+              onChange={(e) => setUpgSearch(e.target.value)}
+              placeholder="Filter owned buildings to upgrade…"
+              aria-label="Filter owned buildings for upgrades"
+              style={{ marginBottom: 0, padding: '7px 10px', fontSize: 12.5 }}
+            />
+          </div>
+          <div className="list g2" data-testid="building-upgrades-list">
+            {builtBuildings
+              .filter((d) => !upgSearch.trim() || d.n.toLowerCase().includes(upgSearch.trim().toLowerCase()))
+              .map((d) => {
+                const quote = getBuildingUpgradeQuote(state, d.id, nowSrv);
+                const check = canStartBuildingUpgrade(state, d.id, nowSrv);
+                const queued = upgQueue.find((q) => q.buildingId === d.id);
+                const leftSec = queued ? Math.max(0, Math.ceil((queued.finishAt - nowSrv) / 1000)) : 0;
+                const progressPct = Math.round((quote.curLevel / MAX_BUILDING_LEVEL) * 100);
+                return (
+                  <div key={d.id} className="row" style={{ '--c': quote.tier.color } as React.CSSProperties}>
+                    <div className="em">
+                      <BuildingIcon id={d.id} size={22} />
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <h2>
+                        <span>{d.n}</span>
+                        <span className="lv" style={{ borderColor: quote.tier.color, color: quote.tier.color }}>
+                          Lv {quote.curLevel}/{MAX_BUILDING_LEVEL}
+                        </span>
+                      </h2>
+                      <p>
+                        {quote.tier.label} · Output ×{quote.curMult.toFixed(2)}
+                        {!quote.isMax ? ` → ×${quote.nextMult.toFixed(2)} (${formatDuration(quote.durSec * 1000)})` : ' (MAX)'}
+                      </p>
+                      <div className="bmeta" style={{ marginTop: 2 }}>
+                        <span style={{ color: 'var(--mint)' }}>
+                          ₨ {formatNumber(quote.curStats.inc * 60)}/m{!quote.isMax ? ` → ${formatNumber(quote.nextStats.inc * 60)}/m` : ''}
+                        </span>
+                        <span>
+                          Jobs {quote.curStats.jobs}{!quote.isMax ? ` → ${quote.nextStats.jobs}` : ''}
+                        </span>
+                      </div>
+                      <div className="gxm">
+                        <b style={{ width: `${progressPct}%`, background: quote.tier.color }} />
+                      </div>
+                    </div>
+                    {quote.isMax ? (
+                      <span className="lv" style={{ borderColor: 'var(--mint)', color: 'var(--mint)' }}>
+                        MAX
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        className={`btn sm ${check.ok ? 'mint' : 'no'}`}
+                        disabled={!check.ok}
+                        title={check.reason || `Upgrade ${d.n} to Lv ${quote.nextLevel}`}
+                        onClick={() => onUpgradeBuilding(d.id)}
+                      >
+                        {queued ? `Upgrading ${leftSec}s` : `Lv ${quote.nextLevel} · ₨ ${formatNumber(quote.cost)}`}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+          </div>
+        </>
       ) : (
         <p className="dim">Buy buildings in the Build tab first.</p>
+      )}
+
+      {(state.upgHist || []).length > 0 && (
+        <details style={{ marginTop: 10 }}>
+          <summary className="dim" style={{ cursor: 'pointer', fontSize: 12.5 }}>
+            Upgrade History ({(state.upgHist || []).length})
+          </summary>
+          <div className="gxc" style={{ marginTop: 8 }}>
+            {(state.upgHist || []).slice(0, 12).map((h, i) => (
+              <p key={`${h.buildingId}_${h.atMs}_${i}`} className="dim">
+                <b>{h.name}</b>: Lv {h.fromLevel} → Lv {h.toLevel} (₨ {formatNumber(h.cost)})
+              </p>
+            ))}
+          </div>
+        </details>
       )}
         </>
       )}
@@ -381,15 +516,107 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
         <>
           <div className="gxh" style={{ marginTop: 4 }}>
             <Hammer size={15} color="#a58cff" />
-            <span>Government Projects</span>
+            <span>National Mega Projects (10 Projects)</span>
+          </div>
+          <p className="dim" style={{ marginBottom: 10 }}>
+            Launch strategic sovereign mega projects (max {MAX_CONCURRENT_LOCAL_PROJECTS} active solo projects). Completing each grants permanent income, happiness, Coins, and Diamonds.
+          </p>
+
+          {localMegaProjects.filter((p) => !p.claimed).length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              {localMegaProjects
+                .filter((p) => !p.claimed)
+                .map((mp) => {
+                  const def = GX_PROJECT_TYPES[mp.type];
+                  const isDone = mp.status === 'done' || mp.finishAt <= nowSrv;
+                  const leftMs = Math.max(0, mp.finishAt - nowSrv);
+                  const pct = isDone
+                    ? 100
+                    : Math.max(4, Math.min(100, Math.round(((mp.totalSec * 1000 - leftMs) / Math.max(1000, mp.totalSec * 1000)) * 100)));
+                  return (
+                    <div key={mp.id} className="gxc" data-testid={`mega-project-active-${mp.type}`}>
+                      <p style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                          <InfraIcon id={mp.type} size={16} />
+                          <b>{def?.n || mp.type}</b>
+                        </span>
+                        <span style={{ color: isDone ? '#3fe0b0' : '#5ccbff', fontSize: 12 }}>
+                          {isDone ? 'Ready to Claim!' : `${formatDuration(leftMs)} left (${pct}%)`}
+                        </span>
+                      </p>
+                      <div className="gxm">
+                        <b style={{ width: `${pct}%`, background: isDone ? '#3fe0b0' : '#7c5cff' }} />
+                      </div>
+                      {isDone && onClaimLocalMegaProject && (
+                        <button
+                          type="button"
+                          className="btn sm gold"
+                          style={{ marginTop: 8 }}
+                          onClick={() => onClaimLocalMegaProject(mp.id)}
+                        >
+                          <Sparkles size={13} />
+                          <span>
+                            Claim +₨ {formatNumber(def?.rewardCoins || 0)} &amp; +{def?.rewardGems || 0} Diamonds
+                          </span>
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+
+          <div className="list g2" data-testid="mega-projects-catalog">
+            {(Object.keys(GX_PROJECT_TYPES) as ProjectType[]).map((k) => {
+              const def = GX_PROJECT_TYPES[k];
+              const check = canStartLocalMegaProject(state, k, nowSrv);
+              const isCompletedCount = localMegaProjects.filter((p) => p.type === k && p.claimed).length;
+              return (
+                <div key={k} className="row" style={{ '--c': '#a58cff' } as React.CSSProperties}>
+                  <div className="em">
+                    <InfraIcon id={k} size={22} />
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <h2>
+                      <span>{def.n}</span>
+                      {isCompletedCount > 0 && <span className="lv">Built ×{isCompletedCount}</span>}
+                    </h2>
+                    <p>{def.desc || 'National strategic construction project.'}</p>
+                    <div className="bmeta">
+                      <span>Cost ₨ {formatNumber(check.cost)}</span>
+                      <span>Time {formatDuration(check.durSec * 1000)}</span>
+                      {def.reqRank && <span>Rank {def.reqRank}+</span>}
+                      {def.minJobs && <span>{formatNumber(def.minJobs)} Jobs</span>}
+                      {def.minEnergySupply && <span>{def.minEnergySupply} MW</span>}
+                      <span style={{ color: 'var(--mint)' }}>+{Math.round(def.pb * 100)}% Inc · +{def.ph} Hap</span>
+                      {def.rewardGems && <span style={{ color: 'var(--cy)' }}>+{def.rewardGems} Diamonds</span>}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className={`btn sm ${check.ok ? 'gold' : 'no'}`}
+                    disabled={!check.ok || !onStartLocalMegaProject}
+                    title={check.reason || `Launch ${def.n}`}
+                    onClick={() => onStartLocalMegaProject?.(k)}
+                  >
+                    {check.ok ? `Launch · ₨ ${formatNumber(check.cost)}` : check.reason || 'Locked'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="gxh" style={{ marginTop: 14 }}>
+            <Landmark size={15} color="#5ccbff" />
+            <span>Online Sovereign Stage Contracts</span>
           </div>
       <p className="dim" style={{ marginBottom: 10 }}>
-        Pay in {PROJECT_STAGES} stages. Construction advances while you are online &amp; active (24h–96h deadlines; 75% refund if missed). Max 3 active.
+        Pay in {PROJECT_STAGES} stages while signed in. Construction advances while online &amp; active (24h–96h deadlines; 75% refund if missed). Max 3 active.
       </p>
 
       {!uid ? (
         <p className="dim" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <Lock size={14} /> Sign in to start government projects.
+          <Lock size={14} /> Sign in for cloud-tracked multi-stage contracts.
         </p>
       ) : (
         <>
@@ -533,11 +760,11 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
       )}
 
       {subTab === 'research' && (
-        <div>
+        <div data-testid="research-lab-view">
           <div className="tradelim">
             <span>
               <FlaskConical size={14} color="#5ccbff" />
-              National Research Doctrines
+              National Research Doctrines ({TECH_CATEGORY_META.length} Disciplines)
             </span>
             <b>
               {researchedCount} / {TECH_TREE.length} Unlocked · {ownedBuildings} Buildings
@@ -545,19 +772,65 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
             </b>
           </div>
 
-          <div className="gxc" style={{ marginBottom: 10 }}>
-            <p className="dim">
-              Permanent national breakthroughs that strengthen your grid, healthcare, customs, and treasury reserves without breaking economy balance.
-            </p>
+          {state.resQueue && state.resQueue.techId && (() => {
+            const qDef = TECH_TREE.find((t) => t.id === state.resQueue?.techId);
+            const leftMs = Math.max(0, state.resQueue.finishAt - nowSrv);
+            const totalMs = Math.max(1000, state.resQueue.totalSec * 1000);
+            const pct = Math.max(5, Math.min(100, Math.round(100 - (leftMs / totalMs) * 100)));
+            return (
+              <div className="gxc" style={{ marginBottom: 10 }} data-testid="active-research-banner">
+                <p style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <span>
+                    <FlaskConical size={14} color="#5ccbff" style={{ verticalAlign: 'middle', marginRight: 6 }} />
+                    <b>Researching: {qDef?.n || state.resQueue.techId}</b>
+                  </span>
+                  <span style={{ color: '#5ccbff', fontWeight: 700 }}>{Math.ceil(leftMs / 1000)}s left</span>
+                </p>
+                <div className="gxm">
+                  <b style={{ width: `${pct}%`, background: '#5ccbff' }} />
+                </div>
+              </div>
+            );
+          })()}
+
+          <div className="fchips" style={{ marginBottom: 10 }} role="tablist" aria-label="Research disciplines">
+            <button
+              type="button"
+              className={`fchip ${techCat === 'all' ? 'on' : ''}`}
+              onClick={() => setTechCat('all')}
+            >
+              All ({TECH_TREE.length})
+            </button>
+            {TECH_CATEGORY_META.map((cat) => {
+              const cnt = TECH_TREE.filter((t) => t.cat === cat.id && hasTech(state, t.id)).length;
+              const tot = TECH_TREE.filter((t) => t.cat === cat.id).length;
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  className={`fchip ${techCat === cat.id ? 'on' : ''}`}
+                  onClick={() => setTechCat(cat.id)}
+                >
+                  <span>{cat.icon}</span>
+                  <span>{cat.label}</span>
+                  <small style={{ opacity: 0.75, marginLeft: 4 }}>
+                    {cnt}/{tot}
+                  </small>
+                </button>
+              );
+            })}
           </div>
 
           <div className="list g2">
-            {TECH_TREE.map((t) => {
+            {TECH_TREE.filter((t) => techCat === 'all' || t.cat === techCat).map((t) => {
               const unlocked = hasTech(state, t.id);
-              const check = canUnlockTech(state, t.id, nowSrv);
-              const catColor = t.cat === 'economy' ? '#ffc23d' : t.cat === 'civic' ? '#3fe0b0' : '#5ccbff';
+              const isResearching = state.resQueue?.techId === t.id;
+              const check = canStartResearch(state, t.id, nowSrv);
+              const meta = TECH_CATEGORY_META.find((m) => m.id === t.cat);
+              const catColor = meta?.color || '#5ccbff';
               const metReq = ownedBuildings >= t.reqBuildings;
               const recReason = !unlocked ? techRec[t.id] : undefined;
+              const researchHandler = onStartResearch || onUnlockTech;
               return (
                 <div
                   key={t.id}
@@ -565,13 +838,13 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
                   style={{ '--c': unlocked ? '#3fe0b0' : catColor } as React.CSSProperties}
                 >
                   <div className="em">
-                    {unlocked ? <CheckCircle2 size={22} color="#3fe0b0" /> : <FlaskConical size={22} color={catColor} />}
+                    {unlocked ? <CheckCircle2 size={22} color="#3fe0b0" /> : <span style={{ fontSize: 20 }}>{meta?.icon || '🧪'}</span>}
                   </div>
                   <div style={{ minWidth: 0 }}>
                     <h2>
                       <span>{t.n}</span>
                       <span className="lv" style={{ borderColor: unlocked ? 'var(--mint)' : catColor, color: unlocked ? 'var(--mint)' : catColor, background: 'rgba(255,255,255,0.06)' }}>
-                        {t.cat.toUpperCase()}
+                        {meta?.label || t.cat.toUpperCase()}
                       </span>
                       {recReason && (
                         <span className="rec-badge">
@@ -584,14 +857,25 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
                       {t.d} <b style={{ color: '#e6dcff' }}>{t.effectLabel}</b>
                     </p>
                     {!unlocked && (
-                      <p className={metReq ? 'ok' : 'bad'} style={{ fontSize: 11.5 }}>
-                        Requires {t.reqBuildings} buildings ({ownedBuildings}/{t.reqBuildings})
-                      </p>
+                      <div className="bmeta" style={{ marginTop: 2 }}>
+                        <span className={metReq ? 'ok' : 'bad'}>
+                          {ownedBuildings}/{t.reqBuildings} Bldgs
+                        </span>
+                        {t.reqRank && <span>Rank {t.reqRank}+</span>}
+                        <span>{formatDuration((check.durSec || t.durSec) * 1000)}</span>
+                        {t.unlocksBuildings?.length ? (
+                          <span style={{ color: 'var(--gold)' }}>Unlocks {t.unlocksBuildings.length} building(s)</span>
+                        ) : null}
+                      </div>
                     )}
                   </div>
                   {unlocked ? (
                     <span className="lv" style={{ borderColor: 'var(--mint)', color: 'var(--mint)', background: 'rgba(63,224,176,0.14)' }}>
                       Active
+                    </span>
+                  ) : isResearching ? (
+                    <span className="lv" style={{ borderColor: 'var(--cy)', color: 'var(--cy)', background: 'rgba(92,203,255,0.14)' }}>
+                      {Math.max(0, Math.ceil(((state.resQueue?.finishAt || nowSrv) - nowSrv) / 1000))}s
                     </span>
                   ) : (
                     <button
@@ -599,7 +883,7 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
                       className={`btn sm ${check.ok ? 'gold' : 'no'}`}
                       disabled={!check.ok}
                       title={check.reason}
-                      onClick={(e) => onUnlockTech(t.id, e)}
+                      onClick={(e) => researchHandler(t.id, e)}
                     >
                       ₨ {formatNumber(check.cost)}
                     </button>
@@ -610,6 +894,197 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
           </div>
         </div>
       )}
+
+      {subTab === 'intl_trade' && (() => {
+        const cap = getIntlTradeCapacity(state);
+        const intl = state.intlTrade || {
+          contracts: [],
+          completedCount: 0,
+          exportRevenue: 0,
+          importSpend: 0,
+          milestonesClaimed: {},
+        };
+        const partnerObj = TRADE_PARTNERS.find((p) => p.code === tradePartner) || TRADE_PARTNERS[0];
+        const clampedUnits = Math.max(1, Math.min(cap.maxUnitsPerOrder, tradeUnits));
+        const importBuffLeft = intl.importBuffUntil && intl.importBuffUntil > nowSrv
+          ? Math.ceil((intl.importBuffUntil - nowSrv) / 1000)
+          : 0;
+        return (
+          <div data-testid="intl-trade-view">
+            <div className="tradelim">
+              <span>
+                <Globe size={14} color="#5ccbff" />
+                International Trade Corridor
+              </span>
+              <b>
+                Slots {activeTradeContracts.length}/{cap.maxConcurrent} · Daily Freight {cap.dailyVolumeUsed}/{cap.dailyVolumeCap}
+              </b>
+            </div>
+
+            <div className="econ-stats" style={{ marginBottom: 10 }}>
+              <div className="econ-tile">
+                <small>Completed Contracts</small>
+                <b style={{ color: 'var(--gold)' }}>{intl.completedCount || 0}</b>
+                <span>Max {cap.maxUnitsPerOrder} units / order</span>
+              </div>
+              <div className="econ-tile">
+                <small>Export Revenue</small>
+                <b style={{ color: 'var(--mint)' }}>₨ {formatNumber(intl.exportRevenue || 0)}</b>
+                <span>Dispatch fee 22% upfront</span>
+              </div>
+              <div className="econ-tile">
+                <small>Import Spend</small>
+                <b style={{ color: 'var(--cy)' }}>₨ {formatNumber(intl.importSpend || 0)}</b>
+                <span>{importBuffLeft > 0 ? `Supply Buff ${importBuffLeft}s` : 'Imports grant morale & supply buff'}</span>
+              </div>
+            </div>
+
+            <div className="gxc" style={{ marginBottom: 10 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <b>Trade Partner ({partnerObj.name} · ×{partnerObj.tariffBias.toFixed(2)} export)</b>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {[1, 5, 10, 20].map((u) => (
+                    <button
+                      key={u}
+                      type="button"
+                      className={`fchip ${clampedUnits === Math.min(cap.maxUnitsPerOrder, u) ? 'on' : ''}`}
+                      onClick={() => setTradeUnits(Math.min(cap.maxUnitsPerOrder, u))}
+                    >
+                      {Math.min(cap.maxUnitsPerOrder, u)} units
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="fchips">
+                {TRADE_PARTNERS.map((p) => (
+                  <button
+                    key={p.code}
+                    type="button"
+                    className={`fchip ${tradePartner === p.code ? 'on' : ''}`}
+                    onClick={() => setTradePartner(p.code)}
+                  >
+                    <span>{p.code} · {p.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {activeTradeContracts.length > 0 && (
+              <div className="gxc" style={{ marginBottom: 10 }} data-testid="active-trade-contracts">
+                <p style={{ marginBottom: 6 }}><b>Active Freight Shipments</b></p>
+                {activeTradeContracts.map((c) => {
+                  const good = TRADE_GOODS.find((g) => g.id === c.goodId);
+                  const leftMs = Math.max(0, c.finishAt - nowSrv);
+                  const pct = Math.max(5, Math.min(100, Math.round(100 - (leftMs / Math.max(1000, c.durSec * 1000)) * 100)));
+                  return (
+                    <div key={c.id} style={{ marginBottom: 8 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5 }}>
+                        <span>
+                          {good?.icon} <b>{c.direction.toUpperCase()}</b> {c.units} {good?.unitLabel || 'units'} ({c.partner})
+                        </span>
+                        <span style={{ color: c.direction === 'export' ? '#3fe0b0' : '#5ccbff' }}>
+                          {Math.ceil(leftMs / 1000)}s · {c.direction === 'export' ? `+₨ ${formatNumber(c.totalValue)}` : 'Supply Buff'}
+                        </span>
+                      </div>
+                      <div className="gxm">
+                        <b style={{ width: `${pct}%`, background: c.direction === 'export' ? '#3fe0b0' : '#5ccbff' }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="list g2" data-testid="trade-goods-grid">
+              {TRADE_GOODS.map((g) => {
+                const quote = getTradeGoodQuote(g.id, state, nowSrv);
+                const expCheck = canStartTradeContract(state, g.id, tradePartner, 'export', clampedUnits, nowSrv);
+                const impCheck = canStartTradeContract(state, g.id, tradePartner, 'import', clampedUnits, nowSrv);
+                return (
+                  <div key={g.id} className="row" style={{ '--c': quote.unlocked ? '#3fe0b0' : '#a58cff' } as React.CSSProperties}>
+                    <div className="em" style={{ fontSize: 22 }}>{g.icon}</div>
+                    <div style={{ minWidth: 0 }}>
+                      <h2>
+                        <span>{g.name}</span>
+                        <span className="lv" style={{ color: quote.demandTrendPct >= 0 ? 'var(--mint)' : 'var(--pink)' }}>
+                          {quote.demandTrendPct >= 0 ? `+${quote.demandTrendPct}%` : `${quote.demandTrendPct}%`} Market
+                        </span>
+                      </h2>
+                      <p>{g.effectLabel}</p>
+                      <div className="bmeta">
+                        <span style={{ color: 'var(--mint)' }}>Export ₨ {formatNumber(expCheck.unitPrice || quote.exportPrice)}/{g.unitLabel}</span>
+                        <span style={{ color: 'var(--cy)' }}>Import ₨ {formatNumber(quote.importPrice)}/{g.unitLabel}</span>
+                        {!quote.unlocked && <span style={{ color: 'var(--pink)' }}>Rank {g.minRank}+</span>}
+                      </div>
+                    </div>
+                    <div style={{ display: 'grid', gap: 4 }}>
+                      <button
+                        type="button"
+                        className={`btn sm ${expCheck.ok ? 'mint' : 'no'}`}
+                        disabled={!expCheck.ok || !onStartTradeContract}
+                        title={expCheck.reason || `Fee ₨ ${formatNumber(expCheck.upfrontCost)} → Return ₨ ${formatNumber(expCheck.expectedPayout)}`}
+                        onClick={() => onStartTradeContract?.(g.id, tradePartner, 'export', clampedUnits)}
+                      >
+                        {expCheck.ok ? `Export (${clampedUnits})` : expCheck.reason || 'Locked'}
+                      </button>
+                      <button
+                        type="button"
+                        className={`btn sm ${impCheck.ok ? 'gold' : 'no'}`}
+                        disabled={!impCheck.ok || !onStartTradeContract}
+                        title={impCheck.reason || `Import cost ₨ ${formatNumber(impCheck.upfrontCost)}`}
+                        onClick={() => onStartTradeContract?.(g.id, tradePartner, 'import', clampedUnits)}
+                      >
+                        {impCheck.ok ? `Import (${clampedUnits})` : 'Import'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="gxh" style={{ marginTop: 14 }}>
+              <Sparkles size={15} color="#ffc23d" />
+              <span>International Trade Milestones</span>
+            </div>
+            <div className="list g2">
+              {TRADE_MILESTONES.map((tm) => {
+                const claimed = Boolean(intl.milestonesClaimed?.[tm.id]);
+                const ready = !claimed && (intl.completedCount || 0) >= tm.count;
+                return (
+                  <div key={tm.id} className="row" style={{ '--c': claimed ? '#3fe0b0' : '#ffc23d' } as React.CSSProperties}>
+                    <div className="em">
+                      {claimed ? <CheckCircle2 size={20} color="#3fe0b0" /> : <Globe size={20} color="#ffc23d" />}
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <h2>{tm.label}</h2>
+                      <div className="bmeta">
+                        <span style={{ color: 'var(--gold)' }}>
+                          +₨ {formatNumber(tm.rewardCoins)} <CashCoinIcon size={11} />
+                        </span>
+                        <span style={{ color: 'var(--cy)' }}>
+                          +{tm.rewardGems} <GemDiamondIcon size={11} />
+                        </span>
+                      </div>
+                    </div>
+                    {claimed ? (
+                      <span className="lv" style={{ borderColor: 'var(--mint)', color: 'var(--mint)' }}>Claimed</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className={`btn sm ${ready ? 'gold' : 'no'}`}
+                        disabled={!ready || !onClaimTradeMilestone}
+                        onClick={() => onClaimTradeMilestone?.(tm.id)}
+                      >
+                        {ready ? 'Claim' : `${intl.completedCount || 0}/${tm.count}`}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {subTab === 'decisions' && (
         <div data-testid="cabinet-decisions-view">
@@ -800,6 +1275,11 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
     prev.onStartProject !== next.onStartProject ||
     prev.onPayProjectStage !== next.onPayProjectStage ||
     prev.onUnlockTech !== next.onUnlockTech ||
+    prev.onStartResearch !== next.onStartResearch ||
+    prev.onStartLocalMegaProject !== next.onStartLocalMegaProject ||
+    prev.onClaimLocalMegaProject !== next.onClaimLocalMegaProject ||
+    prev.onStartTradeContract !== next.onStartTradeContract ||
+    prev.onClaimTradeMilestone !== next.onClaimTradeMilestone ||
     prev.onEnactDecision !== next.onEnactDecision
   ) {
     return false;
@@ -810,10 +1290,16 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
     p.cash !== n.cash ||
     p.b !== n.b ||
     p.tech !== n.tech ||
+    p.pol !== n.pol ||
     p.sub !== n.sub ||
     p.rank !== n.rank ||
     p.boosterCd !== n.boosterCd ||
     p.decisionsCd !== n.decisionsCd ||
+    p.upgQueue !== n.upgQueue ||
+    p.upgHist !== n.upgHist ||
+    p.resQueue !== n.resQueue ||
+    p.intlTrade !== n.intlTrade ||
+    p.megaProjects !== n.megaProjects ||
     p.gx.lvl !== n.gx.lvl ||
     p.gx.cond !== n.gx.cond ||
     p.gx.blk !== n.gx.blk ||
@@ -829,12 +1315,30 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
   const nSubActive = !!(n.sub?.tier && (n.sub?.exp || 0) > nNow);
   if (pSubActive !== nSubActive) return false;
   if (prev.subTab === 'infra') {
+    if ((n.upgQueue?.length || 0) > 0 || (p.upgQueue?.length || 0) > 0) {
+      return Math.floor(pNow / 1000) === Math.floor(nNow / 1000);
+    }
     return Math.floor(p.gx.acc || 0) === Math.floor(n.gx.acc || 0);
   }
   if (prev.subTab === 'decisions') {
     return Math.floor(pNow / 1000) === Math.floor(nNow / 1000);
   }
+  if (prev.subTab === 'research') {
+    if (n.resQueue || p.resQueue) {
+      return Math.floor(pNow / 1000) === Math.floor(nNow / 1000);
+    }
+    return true;
+  }
+  if (prev.subTab === 'intl_trade') {
+    if ((n.intlTrade?.contracts?.length || 0) > 0 || (p.intlTrade?.contracts?.length || 0) > 0 || (n.intlTrade?.importBuffUntil || 0) > nNow) {
+      return Math.floor(pNow / 1000) === Math.floor(nNow / 1000);
+    }
+    return true;
+  }
   if (prev.subTab === 'projects') {
+    if ((n.megaProjects?.some((mp) => mp.status === 'active') || p.megaProjects?.some((mp) => mp.status === 'active')) && Math.floor(pNow / 1000) !== Math.floor(nNow / 1000)) {
+      return false;
+    }
     return prev.liveProjectProgress === next.liveProjectProgress;
   }
   if (prev.subTab === 'stats') {

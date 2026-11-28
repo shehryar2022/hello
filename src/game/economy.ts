@@ -2,13 +2,18 @@ import {
   ACHIEVEMENTS,
   BOOSTERS,
   BUILDING_POLICIES,
+  BUILDING_UPGRADE_TIERS,
   BUILDINGS,
+  CHALLENGES_2_0,
   FISCAL_COMMIT_BASE_COST,
   FISCAL_COMMIT_CD_MS,
   GOVS,
   GX_GOV_BUILDINGS,
-  GX_LEVEL_MULTS,
+  GX_PROJECT_TYPES,
   GX_ROADS,
+  LEGACY_BUILDING_MIGRATION_MAP,
+  LEGACY_RANK_V2_MAP,
+  MAX_BUILDING_LEVEL,
   MAX_CONSTRUCTION_QUEUE,
   MAX_RANK,
   MIN_RANK,
@@ -20,14 +25,18 @@ import {
   STICKERS,
   SUBSCRIPTIONS,
   TECH_TREE,
+  TRADE_GOODS,
+  TRADE_MILESTONES,
+  TRADE_PARTNERS,
   TZ,
   WORLD_EVENTS,
   EV_LEN_MS,
   EV_SLOT_MS,
-  LEGACY_BUILDING_MIGRATION_MAP,
+  getBuildingLevelMultiplier,
 } from './constants';
 import { getDiamondAssetBonuses } from './cosmetics';
 import type {
+  ActiveTradeContract,
   BoosterDef,
   BoosterId,
   BuildingDef,
@@ -37,18 +46,28 @@ import type {
   EconomySnapshot,
   ExcludeAllBuildingCategory,
   GameState,
+  IntlTradeState,
+  LocalMegaProjectSlot,
   NationalDecisionDef,
   PolicyCategoryId,
+  ProjectType,
   RankDef,
+  TradeGoodDef,
+  TradeGoodId,
+  UpgradeHistoryEntry,
+  UpgradeQueueSlot,
 } from './types';
 
 export const LEGACY_PROVINCE_MIGRATED_KEY = '__prov_migrated_v1';
+export const RANK_V2_MIGRATION_KEY = 'rankV2';
 export const POLICY_COOLDOWN_PREFIX = 'pc_';
 export const FISCAL_COOLDOWN_KEY = 'pc_fiscal';
 export const QUEUE_FINISH_PREFIX = 'cq_';
 export const QUEUE_QTY_PREFIX = 'cb_';
 export const BOOSTER_ACTIVE_PREFIX = 'ba_';
 export const BOOSTER_DAILY_PREFIX = 'bc_';
+export const MAX_UPGRADE_QUEUE = 3;
+export const MAX_CONCURRENT_LOCAL_PROJECTS = 2;
 
 export const POLICY_BOUNDS: Record<string, [number, number]> = {
   tax: [5, 45],
@@ -87,8 +106,8 @@ export function totalBuildings(s: GameState): number {
 }
 
 export function gxLevelMult(s: GameState, id: string): number {
-  const l = s.gx?.lvl?.[id] || 1;
-  return GX_LEVEL_MULTS[l - 1] || 1;
+  const l = Math.max(1, Math.min(MAX_BUILDING_LEVEL, Math.floor(Number(s.gx?.lvl?.[id]) || 1)));
+  return getBuildingLevelMultiplier(l);
 }
 
 export function gxAverageCondition(
@@ -140,7 +159,9 @@ export function stickerUniqueCount(s: GameState): number {
 }
 
 export function stickerBonus(s: GameState): number {
-  return stickerUniqueCount(s) * 0.005;
+  // Medium-difficulty diminishing bonus across 70 stickers (caps at +28%)
+  const uniq = stickerUniqueCount(s);
+  return Math.min(0.28, uniq * 0.004);
 }
 
 export function hasTech(s: GameState, techId: string): boolean {
@@ -165,22 +186,73 @@ export function getActiveSubscription(s: GameState, nowMs = Date.now()) {
   };
 }
 
+export function getTechMaintReduction(s: GameState): number {
+  let pct = 0;
+  for (const t of TECH_TREE) {
+    if (t.maintReductionPct && hasTech(s, t.id)) pct += t.maintReductionPct;
+  }
+  return Math.min(0.35, pct / 100);
+}
+
+export function getTechEnergyBonus(s: GameState): number {
+  let pct = 0;
+  for (const t of TECH_TREE) {
+    if (t.energyBonusPct && hasTech(s, t.id)) pct += t.energyBonusPct;
+  }
+  return Math.min(0.55, pct / 100);
+}
+
+export function getTechHapBonus(s: GameState): number {
+  let hap = 0;
+  for (const t of TECH_TREE) {
+    if (t.hapBonus && hasTech(s, t.id)) hap += t.hapBonus;
+  }
+  return Math.min(24, hap);
+}
+
+export function getTechTradeBonus(s: GameState): number {
+  let pct = 0;
+  for (const t of TECH_TREE) {
+    if (t.tradeBonusPct && hasTech(s, t.id)) pct += t.tradeBonusPct;
+  }
+  return Math.min(0.45, pct / 100);
+}
+
+export function getTechBuildSpeedBonus(s: GameState): number {
+  let pct = 0;
+  for (const t of TECH_TREE) {
+    if (t.buildSpeedPct && hasTech(s, t.id)) pct += t.buildSpeedPct;
+  }
+  return Math.min(0.6, pct / 100);
+}
+
+export function getTechResearchSpeedBonus(s: GameState): number {
+  let pct = 0;
+  for (const t of TECH_TREE) {
+    if (t.researchSpeedPct && hasTech(s, t.id)) pct += t.researchSpeedPct;
+  }
+  return Math.min(0.65, pct / 100);
+}
+
 export function getDevelopmentDiscount(s: GameState, nowMs = Date.now()): number {
   const active = getActiveSubscription(s, nowMs);
   const subDisc = active ? active.def.discountRate : 0;
   const techDisc = hasTech(s, 'civil_corps') ? 0.05 : 0;
-  return Math.min(0.35, subDisc + techDisc);
+  const policyDisc = getPolicyStance(s, 'p_hou') === 2 ? 0.04 : 0;
+  return Math.min(0.35, subDisc + techDisc + policyDisc);
 }
 
-// ---------- National Policy System (9 categories, 3 stances each, 5-min cooldown) ----------
+// ---------- National Policy System (20 categories, 3 stances each, 5-min cooldown) ----------
 
 export function policyCooldownKey(catId: PolicyCategoryId): string {
   return `${POLICY_COOLDOWN_PREFIX}${catId.replace(/^p_/, '')}`;
 }
 
 export function getPolicyStance(s: GameState, catId: PolicyCategoryId): 0 | 1 | 2 {
-  const raw = Math.floor(Number(s.tech?.[catId]) || 0);
-  if (raw === 1 || raw === 2) return raw;
+  const rawPol = Math.floor(Number(s.pol?.[catId]) || 0);
+  if (rawPol === 1 || rawPol === 2) return rawPol;
+  const rawLegacy = Math.floor(Number(s.tech?.[catId]) || 0);
+  if (rawLegacy === 1 || rawLegacy === 2) return rawLegacy;
   return 0;
 }
 
@@ -190,7 +262,7 @@ export function getPolicyCooldownLeftMs(
   nowMs = Date.now(),
 ): number {
   const key = policyCooldownKey(catId);
-  const until = Number(s.milestones?.[key] || 0);
+  const until = Number(s.milestones?.[key] ?? s.decisionsCd?.[key] ?? 0);
   return Math.max(0, Math.floor(until - nowMs));
 }
 
@@ -221,6 +293,10 @@ export function canChangePolicyStance(
   return { ok: true, cost, cooldownLeftMs: 0 };
 }
 
+const LEGACY_POLICY_SET = new Set<string>([
+  'p_tax', 'p_ind', 'p_agr', 'p_edu', 'p_hlth', 'p_emp', 'p_trd', 'p_nrg', 'p_inf',
+]);
+
 export function applyChangePolicyStance(
   s: GameState,
   catId: PolicyCategoryId,
@@ -231,17 +307,32 @@ export function applyChangePolicyStance(
   if (!check.ok) return { ok: false, state: s, cost: check.cost, reason: check.reason };
   const cat = NATIONAL_POLICIES.find((p) => p.id === catId)!;
   const opt = cat.options[stance];
+
+  const nextPol: Record<string, 0 | 1 | 2> = { ...(s.pol || {}) };
   const nextTech = { ...(s.tech || {}) };
+
   if (stance === 0) {
+    delete nextPol[catId];
     delete nextTech[catId];
   } else {
-    nextTech[catId] = stance;
+    nextPol[catId] = stance;
+    if (LEGACY_POLICY_SET.has(catId)) {
+      nextTech[catId] = stance;
+    } else {
+      delete nextTech[catId];
+    }
   }
+
   const cdKey = policyCooldownKey(catId);
-  const nextMilestones = {
-    ...(s.milestones || {}),
-    [cdKey]: Math.floor(nowMs + POLICY_CATEGORY_CD_MS),
-  };
+  const cdUntil = Math.floor(nowMs + POLICY_CATEGORY_CD_MS);
+  const nextMilestones = { ...(s.milestones || {}) };
+  const nextDecisionsCd = { ...(s.decisionsCd || {}) };
+  if (LEGACY_POLICY_SET.has(catId)) {
+    nextMilestones[cdKey] = cdUntil;
+  } else {
+    nextDecisionsCd[cdKey] = cdUntil;
+  }
+
   const safeCash = Number.isFinite(s.cash) ? Math.max(0, s.cash) : 0;
   return {
     ok: true,
@@ -250,17 +341,19 @@ export function applyChangePolicyStance(
     state: {
       ...s,
       cash: Math.max(0, safeCash - check.cost),
+      pol: nextPol,
       tech: nextTech,
       milestones: nextMilestones,
+      decisionsCd: nextDecisionsCd,
     },
   };
 }
 
-// ---------- Draft & Commit Fiscal Reform (prevents tax-flipping right before Collect Tax) ----------
+// ---------- Draft & Commit Fiscal Reform ----------
 
 export function getFiscalCommitCost(s: GameState): number {
   const bCount = totalBuildings(s);
-  return Math.max(FISCAL_COMMIT_BASE_COST, Math.floor(FISCAL_COMMIT_BASE_COST * (1 + bCount * 0.25)));
+  return Math.max(FISCAL_COMMIT_BASE_COST, Math.floor(FISCAL_COMMIT_BASE_COST * (1 + bCount * 0.2)));
 }
 
 export function getFiscalCooldownLeftMs(s: GameState, nowMs = Date.now()): number {
@@ -356,7 +449,7 @@ export function presetToFiscalDraft(
   return next;
 }
 
-// ---------- Boosters V2 (7 balanced boosters, daily caps, cooldowns, no stacking) ----------
+// ---------- Boosters V2 ----------
 
 export function boosterActiveKey(id: BoosterId): string {
   return `${BOOSTER_ACTIVE_PREFIX}${id}`;
@@ -388,7 +481,6 @@ export function getBoosterActivationInfo(
   const activeLeftSec = activeEnd > nowMs ? Math.ceil((activeEnd - nowMs) / 1000) : 0;
   const cooldownLeftSec = cdEnd > nowMs ? Math.ceil((cdEnd - nowMs) / 1000) : 0;
 
-  // Tax boost uses activeFx.taxSurge for "active until collected"
   const isTaxActive = boosterId === 'tax_boost' && Boolean(s.activeFx?.taxSurge);
 
   const todayInt = karachiDateInt(nowMs);
@@ -547,18 +639,20 @@ export function applyBuyBoosterV2(
 // ---------- National Building Construction Queue & Speed ----------
 
 export function getBuildSpeedMultiplier(s: GameState, nowMs = Date.now()): number {
-  let mult = 1;
+  let mult = 1 + getTechBuildSpeedBonus(s);
   if (isBoosterActive(s, 'build_speed_boost', nowMs)) {
     mult *= 2.0;
   }
   const pInf = getPolicyStance(s, 'p_inf');
   if (pInf === 1) mult += 0.25;
   else if (pInf === 2) mult -= 0.1;
+  if (getPolicyStance(s, 'p_urb') === 2) mult += 0.12;
+  if (getPolicyStance(s, 'p_hou') === 2) mult += 0.1;
   return Math.max(0.5, mult);
 }
 
 export function buildingCost(def: BuildingDef, level: number, discountRate = 0): number {
-  const scale = def.costScale || 1.24;
+  const scale = def.costScale || 1.22;
   const raw = def.cost * Math.pow(scale, Math.max(0, level));
   const clampedDisc = Math.max(0, Math.min(0.45, discountRate));
   return Math.max(1, Math.ceil(raw * (1 - clampedDisc)));
@@ -631,7 +725,7 @@ export function canStartBuildingConstruction(
     const techDef = TECH_TREE.find((t) => t.id === def.reqTech);
     return {
       ok: false,
-      reason: `Requires ${techDef?.n || def.reqTech} doctrine`,
+      reason: `Requires ${techDef?.n || def.reqTech} research`,
       cost: 0,
       durationSec: 0,
     };
@@ -775,7 +869,234 @@ export function tickConstructionQueue(
   };
 }
 
-// ---------- Building Demolition (45% base refund) ----------
+// ---------- Building Upgrade System (Levels 1..50 with 5 progression tiers & diminishing returns) ----------
+
+export function getBuildingUpgradeTier(lvl: number) {
+  const safe = Math.max(1, Math.min(MAX_BUILDING_LEVEL, Math.floor(Number(lvl) || 1)));
+  return (
+    BUILDING_UPGRADE_TIERS.find((t) => safe >= t.minLvl && safe <= t.maxLvl) ||
+    BUILDING_UPGRADE_TIERS[BUILDING_UPGRADE_TIERS.length - 1]
+  );
+}
+
+export function getBuildingUpgradeCostAndDur(
+  s: GameState,
+  def: BuildingDef,
+  curLevel: number,
+  count: number,
+  nowMs = Date.now(),
+): { cost: number; durSec: number } {
+  if (curLevel >= MAX_BUILDING_LEVEL || count < 1) return { cost: 0, durSec: 0 };
+  const tier = getBuildingUpgradeTier(curLevel + 1);
+  const disc = getDevelopmentDiscount(s, nowMs);
+  const countFactor = Math.max(1, Math.pow(count, 0.72));
+  const lvlInTier = Math.max(0, curLevel - tier.minLvl + 1);
+  const tierJump =
+    curLevel < 10
+      ? 0.42
+      : curLevel < 20
+        ? 1.15
+        : curLevel < 30
+          ? 3.2
+          : curLevel < 40
+            ? 9.0
+            : 24.0;
+  const rawCost = def.cost * countFactor * tierJump * Math.pow(tier.costFactor, lvlInTier);
+  const cost = Math.max(25, Math.ceil(rawCost * (1 - disc)));
+
+  const speed = getBuildSpeedMultiplier(s, nowMs);
+  const rawDur = tier.baseDurSec + lvlInTier * (curLevel < 10 ? 1 : curLevel < 30 ? 2 : 3);
+  const durSec = Math.max(3, Math.ceil(rawDur / speed));
+  return { cost, durSec };
+}
+
+export interface BuildingLevelStats {
+  level: number;
+  incPerSec: number;
+  maintPerSec: number;
+  jobs: number;
+  energy: number;
+}
+
+export interface BuildingUpgradeQuote {
+  def: BuildingDef;
+  count: number;
+  curLevel: number;
+  nextLevel: number;
+  isMax: boolean;
+  tier: (typeof BUILDING_UPGRADE_TIERS)[number];
+  cost: number;
+  durSec: number;
+  curStats: BuildingLevelStats;
+  nextStats: BuildingLevelStats;
+  deltas: {
+    incDelta: number;
+    maintDelta: number;
+    jobsDelta: number;
+    energyDelta: number;
+  };
+}
+
+function statsForLevel(def: BuildingDef, count: number, lvl: number): BuildingLevelStats {
+  const safeCount = Math.max(0, count);
+  const safeLvl = Math.max(1, Math.min(MAX_BUILDING_LEVEL, lvl));
+  const mult = getBuildingLevelMultiplier(safeLvl);
+  const incPerSec = Number((def.inc * safeCount * mult).toFixed(2));
+  const maintPerSec = Number((def.maint * safeCount * (1 + Math.pow(safeLvl - 1, 0.85) * 0.14)).toFixed(2));
+  const jobs = Math.round(def.jobs * safeCount * (1 + (safeLvl - 1) * 0.04));
+  const energy =
+    def.energy >= 0
+      ? Math.round(def.energy * safeCount * (1 + Math.pow(safeLvl - 1, 0.72) * 0.12))
+      : -Math.round(Math.abs(def.energy) * safeCount * (1 + Math.pow(safeLvl - 1, 0.65) * 0.06));
+  return { level: safeLvl, incPerSec, maintPerSec, jobs, energy };
+}
+
+export function getBuildingUpgradeQuote(
+  s: GameState,
+  buildingId: string,
+  nowMs = Date.now(),
+): BuildingUpgradeQuote | null {
+  const def = BUILDINGS.find((b) => b.id === buildingId);
+  if (!def) return null;
+  const count = Math.max(0, Math.floor(Number(s.b?.[buildingId]) || 0));
+  const curLevel = Math.max(1, Math.min(MAX_BUILDING_LEVEL, Math.floor(Number(s.gx?.lvl?.[buildingId]) || 1)));
+  const isMax = curLevel >= MAX_BUILDING_LEVEL;
+  const nextLevel = isMax ? MAX_BUILDING_LEVEL : curLevel + 1;
+  const tier = getBuildingUpgradeTier(nextLevel);
+  const { cost, durSec } = isMax || count < 1 ? { cost: 0, durSec: 0 } : getBuildingUpgradeCostAndDur(s, def, curLevel, count, nowMs);
+  const curStats = statsForLevel(def, Math.max(1, count), curLevel);
+  const nextStats = statsForLevel(def, Math.max(1, count), nextLevel);
+  return {
+    def,
+    count,
+    curLevel,
+    nextLevel,
+    isMax,
+    tier,
+    cost,
+    durSec,
+    curStats,
+    nextStats,
+    deltas: {
+      incDelta: Number((nextStats.incPerSec - curStats.incPerSec).toFixed(2)),
+      maintDelta: Number((nextStats.maintPerSec - curStats.maintPerSec).toFixed(2)),
+      jobsDelta: nextStats.jobs - curStats.jobs,
+      energyDelta: nextStats.energy - curStats.energy,
+    },
+  };
+}
+
+export function getUpgradeQueue(s: GameState): UpgradeQueueSlot[] {
+  return Array.isArray(s.upgQueue) ? s.upgQueue : [];
+}
+
+export function canStartBuildingUpgrade(
+  s: GameState,
+  buildingId: string,
+  nowMs = Date.now(),
+): { ok: boolean; reason?: string; cost: number; durSec: number; targetLevel: number } {
+  const quote = getBuildingUpgradeQuote(s, buildingId, nowMs);
+  if (!quote) return { ok: false, reason: 'Unknown building', cost: 0, durSec: 0, targetLevel: 1 };
+  if (quote.count < 1) {
+    return { ok: false, reason: 'Construct at least 1 unit first', cost: 0, durSec: 0, targetLevel: quote.nextLevel };
+  }
+  if (quote.isMax) {
+    return { ok: false, reason: `Max level (${MAX_BUILDING_LEVEL}) reached`, cost: 0, durSec: 0, targetLevel: MAX_BUILDING_LEVEL };
+  }
+  const queue = getUpgradeQueue(s);
+  if (queue.some((q) => q.buildingId === buildingId)) {
+    return { ok: false, reason: 'Upgrade already in progress', cost: quote.cost, durSec: quote.durSec, targetLevel: quote.nextLevel };
+  }
+  if (queue.length >= MAX_UPGRADE_QUEUE) {
+    return { ok: false, reason: `Upgrade queue full (${MAX_UPGRADE_QUEUE}/${MAX_UPGRADE_QUEUE})`, cost: quote.cost, durSec: quote.durSec, targetLevel: quote.nextLevel };
+  }
+  if (!Number.isFinite(s.cash) || s.cash < quote.cost) {
+    return { ok: false, reason: 'Not enough Coins', cost: quote.cost, durSec: quote.durSec, targetLevel: quote.nextLevel };
+  }
+  return { ok: true, cost: quote.cost, durSec: quote.durSec, targetLevel: quote.nextLevel };
+}
+
+export function applyStartBuildingUpgrade(
+  s: GameState,
+  buildingId: string,
+  nowMs = Date.now(),
+): { ok: boolean; state: GameState; cost: number; durSec: number; targetLevel: number; reason?: string } {
+  const check = canStartBuildingUpgrade(s, buildingId, nowMs);
+  if (!check.ok) {
+    return { ok: false, state: s, cost: check.cost, durSec: check.durSec, targetLevel: check.targetLevel, reason: check.reason };
+  }
+  const slot: UpgradeQueueSlot = {
+    buildingId,
+    fromLevel: check.targetLevel - 1,
+    toLevel: check.targetLevel,
+    finishAt: Math.floor(nowMs + check.durSec * 1000),
+    totalSec: check.durSec,
+    costPaid: check.cost,
+  };
+  return {
+    ok: true,
+    cost: check.cost,
+    durSec: check.durSec,
+    targetLevel: check.targetLevel,
+    state: {
+      ...s,
+      cash: Math.max(0, s.cash - check.cost),
+      upgQueue: [...getUpgradeQueue(s), slot],
+    },
+  };
+}
+
+export function tickUpgradeQueue(
+  s: GameState,
+  nowMs = Date.now(),
+): { state: GameState; completed: Array<{ buildingId: string; name: string; toLevel: number }> } {
+  const queue = getUpgradeQueue(s);
+  if (queue.length === 0) return { state: s, completed: [] };
+
+  const remaining: UpgradeQueueSlot[] = [];
+  const nextLvl = { ...(s.gx?.lvl || {}) };
+  const nextHist: UpgradeHistoryEntry[] = Array.isArray(s.upgHist) ? [...s.upgHist] : [];
+  const completed: Array<{ buildingId: string; name: string; toLevel: number }> = [];
+  let changed = false;
+
+  for (const slot of queue) {
+    const def = BUILDINGS.find((b) => b.id === slot.buildingId);
+    if (!def) {
+      changed = true;
+      continue;
+    }
+    if (slot.finishAt <= nowMs) {
+      const cur = Math.max(1, Math.floor(Number(nextLvl[slot.buildingId]) || 1));
+      const newLvl = Math.min(MAX_BUILDING_LEVEL, Math.max(cur + 1, slot.toLevel));
+      nextLvl[slot.buildingId] = newLvl;
+      nextHist.unshift({
+        buildingId: slot.buildingId,
+        name: def.n,
+        fromLevel: cur,
+        toLevel: newLvl,
+        cost: slot.costPaid,
+        atMs: Math.floor(slot.finishAt),
+      });
+      completed.push({ buildingId: slot.buildingId, name: def.n, toLevel: newLvl });
+      changed = true;
+    } else {
+      remaining.push(slot);
+    }
+  }
+
+  if (!changed) return { state: s, completed: [] };
+  return {
+    state: {
+      ...s,
+      gx: { ...s.gx, lvl: nextLvl },
+      upgQueue: remaining,
+      upgHist: nextHist.slice(0, 40),
+    },
+    completed,
+  };
+}
+
+// ---------- Building Demolition ----------
 
 export function getDemolishRefund(def: BuildingDef, qty = 1): number {
   const pct = def.demolishRefundPct ?? 0.45;
@@ -863,7 +1184,6 @@ export function canSetBuildingPolicy(
     return { ok: false, reason: 'Policy already active', cost: 0 };
   }
 
-  // Enforce sector-level mutual exclusion across buildings in the same sector
   if (pol.id !== 'standard' && pol.incompatibleWith?.length) {
     for (const sibling of BUILDINGS) {
       if (sibling.id === buildingId || sibling.cat !== def.cat) continue;
@@ -1010,7 +1330,480 @@ export function unlockedAchievementCount(s: GameState): number {
   return ACHIEVEMENTS.filter((a) => Boolean(s.achievements?.[a.id])).length;
 }
 
-// ---------- Centralized National Economy Engine ----------
+// ---------- Timed National Research Queue (50 Techs across 10 Categories) ----------
+
+export function canStartResearch(
+  s: GameState,
+  techId: string,
+  nowMs = Date.now(),
+): { ok: boolean; reason?: string; cost: number; durSec: number } {
+  const def = TECH_TREE.find((t) => t.id === techId);
+  if (!def) return { ok: false, reason: 'Unknown research', cost: 0, durSec: 0 };
+  if (hasTech(s, techId)) return { ok: false, reason: 'Already researched', cost: def.cost, durSec: 0 };
+  if (s.resQueue && s.resQueue.finishAt > nowMs) {
+    return { ok: false, reason: 'Another research project is underway', cost: def.cost, durSec: def.durSec };
+  }
+  const curRank = Math.max(MIN_RANK, Math.floor(Number(s.rank) || MIN_RANK));
+  if (def.reqRank && curRank < def.reqRank) {
+    return { ok: false, reason: `Requires Rank ${def.reqRank}`, cost: def.cost, durSec: def.durSec };
+  }
+  if (def.prereq?.length) {
+    const missing = def.prereq.find((pid) => !hasTech(s, pid));
+    if (missing) {
+      const mDef = TECH_TREE.find((t) => t.id === missing);
+      return { ok: false, reason: `Requires prerequisite: ${mDef?.n || missing}`, cost: def.cost, durSec: def.durSec };
+    }
+  }
+  const ownedBldgs = totalBuildings(s);
+  if (ownedBldgs < def.reqBuildings) {
+    return { ok: false, reason: `Requires ${def.reqBuildings} total buildings (${ownedBldgs}/${def.reqBuildings})`, cost: def.cost, durSec: def.durSec };
+  }
+  const cost = Math.max(1, Math.ceil(def.cost * getResearchCostMult(s, nowMs)));
+  const durSec = Math.max(5, Math.ceil((def.durSec || 25) / getResearchSpeedMult(s, nowMs)));
+  if (!Number.isFinite(s.cash) || s.cash < cost) {
+    return { ok: false, reason: 'Not enough Coins', cost, durSec };
+  }
+  return { ok: true, cost, durSec };
+}
+
+export function applyStartResearch(
+  s: GameState,
+  techId: string,
+  nowMs = Date.now(),
+): { ok: boolean; state: GameState; cost: number; durSec: number; reason?: string } {
+  const check = canStartResearch(s, techId, nowMs);
+  if (!check.ok) return { ok: false, state: s, cost: check.cost, durSec: check.durSec, reason: check.reason };
+  return {
+    ok: true,
+    cost: check.cost,
+    durSec: check.durSec,
+    state: {
+      ...s,
+      cash: Math.max(0, s.cash - check.cost),
+      resQueue: {
+        techId,
+        finishAt: Math.floor(nowMs + check.durSec * 1000),
+        totalSec: check.durSec,
+      },
+    },
+  };
+}
+
+export function tickResearchQueue(
+  s: GameState,
+  nowMs = Date.now(),
+): { state: GameState; completedTechId: string | null; completedName: string | null } {
+  const q = s.resQueue;
+  if (!q || !q.techId) return { state: s, completedTechId: null, completedName: null };
+  const def = TECH_TREE.find((t) => t.id === q.techId);
+  if (!def) {
+    return { state: { ...s, resQueue: null }, completedTechId: null, completedName: null };
+  }
+  if (q.finishAt > nowMs) {
+    return { state: s, completedTechId: null, completedName: null };
+  }
+  return {
+    completedTechId: def.id,
+    completedName: def.n,
+    state: {
+      ...s,
+      tech: { ...(s.tech || {}), [def.id]: 1 },
+      resQueue: null,
+      gx: {
+        ...s.gx,
+        log: [`Research Completed: ${def.n}`, ...(s.gx?.log || [])].slice(0, 8),
+      },
+    },
+  };
+}
+
+// ---------- International Trade Engine (8 Goods, Dynamic Anti-Arbitrage Pricing) ----------
+
+export interface TradeGoodQuote {
+  good: TradeGoodDef;
+  exportPrice: number;
+  importPrice: number;
+  demandTrendPct: number;
+  unlocked: boolean;
+}
+
+export function getIntlTradeCapacity(s: GameState): {
+  maxConcurrent: number;
+  maxUnitsPerOrder: number;
+  dailyVolumeCap: number;
+  dailyVolumeUsed: number;
+} {
+  const b = s.b || {};
+  const portInfra =
+    (b.ports || 0) +
+    (b.airports || 0) +
+    (b.container_port || 0) +
+    (b.freight_hub || 0) +
+    (b.logistics_center || 0) +
+    (b.trade_center || 0);
+  const maxConcurrent = Math.min(4, 1 + Math.floor(portInfra / 4) + (hasTech(s, 'auto_customs') ? 1 : 0));
+  const maxUnitsPerOrder = Math.min(50, 8 + portInfra * 2 + Math.floor((s.rank || 1) * 1.5));
+  const dailyVolumeCap = Math.min(600, 80 + portInfra * 25 + (s.rank || 1) * 15);
+  const dailyVolumeUsed = Math.max(0, Math.floor(s.intlTrade?.dailyVolumeUsed || 0));
+  return { maxConcurrent, maxUnitsPerOrder, dailyVolumeCap, dailyVolumeUsed };
+}
+
+export function getTradeGoodQuote(
+  goodId: TradeGoodId,
+  s: GameState,
+  nowMs = Date.now(),
+): TradeGoodQuote {
+  const good = TRADE_GOODS.find((g) => g.id === goodId) || TRADE_GOODS[0];
+  // Deterministic 10-minute global market window wave
+  const bucket = Math.floor(nowMs / 600_000);
+  const seed = goodId.split('').reduce((acc, ch) => acc * 31 + ch.charCodeAt(0), bucket);
+  const wave = Math.sin(seed * 0.73); // -1 .. +1
+  const demandTrendPct = Math.round(wave * 14); // -14% .. +14%
+
+  const tradeBoost = getTechTradeBonus(s) + (getPolicyStance(s, 'p_mar') === 1 ? 0.1 : 0) + (getPolicyStance(s, 'p_trd') === 1 ? 0.08 : 0);
+  const cappedExportMult = Math.min(1.25, 1 + tradeBoost * 0.4);
+  const exportPrice = Math.max(10, Math.round(good.baseExportPrice * (1 + demandTrendPct / 100) * cappedExportMult));
+  // Strict anti-arbitrage spread: importPrice is ALWAYS >= 1.55 * exportPrice
+  const rawImport = Math.round(good.baseImportPrice * (1 - demandTrendPct * 0.005));
+  const importPrice = Math.max(Math.ceil(exportPrice * 1.55), rawImport);
+
+  return {
+    good,
+    exportPrice,
+    importPrice,
+    demandTrendPct,
+    unlocked: (s.rank || MIN_RANK) >= good.minRank,
+  };
+}
+
+export function canStartTradeContract(
+  s: GameState,
+  goodId: TradeGoodId,
+  partner: string,
+  direction: 'export' | 'import',
+  units: number,
+  nowMs = Date.now(),
+): { ok: boolean; reason?: string; upfrontCost: number; expectedPayout: number; durSec: number; unitPrice: number } {
+  const quote = getTradeGoodQuote(goodId, s, nowMs);
+  if (!quote.unlocked) {
+    return { ok: false, reason: `Requires Rank ${quote.good.minRank}`, upfrontCost: 0, expectedPayout: 0, durSec: 0, unitPrice: 0 };
+  }
+  const partnerDef = TRADE_PARTNERS.find((p) => p.code === partner || p.name === partner);
+  if (!partnerDef) {
+    return { ok: false, reason: 'Invalid trade partner', upfrontCost: 0, expectedPayout: 0, durSec: 0, unitPrice: 0 };
+  }
+  const cap = getIntlTradeCapacity(s);
+  const activeContracts = (s.intlTrade?.contracts || []).filter((c) => !c.completed);
+  if (activeContracts.length >= cap.maxConcurrent) {
+    return { ok: false, reason: `All ${cap.maxConcurrent} trade slots busy`, upfrontCost: 0, expectedPayout: 0, durSec: 0, unitPrice: 0 };
+  }
+  const clampedUnits = Math.max(1, Math.min(cap.maxUnitsPerOrder, Math.floor(units)));
+  const dayStr = KARACHI_YMD_COMPACT.format(new Date(nowMs));
+  const usedToday = s.intlTrade?.lastDayKey === dayStr ? cap.dailyVolumeUsed : 0;
+  if (usedToday + clampedUnits > cap.dailyVolumeCap) {
+    return { ok: false, reason: `Daily freight cap reached (${usedToday}/${cap.dailyVolumeCap})`, upfrontCost: 0, expectedPayout: 0, durSec: 0, unitPrice: 0 };
+  }
+
+  const unitPrice =
+    direction === 'export'
+      ? Math.round(quote.exportPrice * partnerDef.tariffBias)
+      : quote.importPrice;
+  const totalValue = unitPrice * clampedUnits;
+  // Export requires a small logistics dispatch fee (22% of gross value); net gain on settlement is 78% of value
+  const upfrontCost = direction === 'export' ? Math.max(50, Math.round(totalValue * 0.22)) : totalValue;
+  const expectedPayout = direction === 'export' ? totalValue : 0;
+  const durSec = Math.max(15, Math.min(60, 18 + Math.floor(clampedUnits * 0.6)));
+
+  if (!Number.isFinite(s.cash) || s.cash < upfrontCost) {
+    return { ok: false, reason: 'Not enough Coins', upfrontCost, expectedPayout, durSec, unitPrice };
+  }
+  return { ok: true, upfrontCost, expectedPayout, durSec, unitPrice };
+}
+
+export function applyStartTradeContract(
+  s: GameState,
+  goodId: TradeGoodId,
+  partner: string,
+  direction: 'export' | 'import',
+  units: number,
+  nowMs = Date.now(),
+): { ok: boolean; state: GameState; contract?: ActiveTradeContract; reason?: string } {
+  const check = canStartTradeContract(s, goodId, partner, direction, units, nowMs);
+  if (!check.ok) return { ok: false, state: s, reason: check.reason };
+  const partnerDef = TRADE_PARTNERS.find((p) => p.code === partner || p.name === partner) || TRADE_PARTNERS[0];
+
+  const cap = getIntlTradeCapacity(s);
+  const clampedUnits = Math.max(1, Math.min(cap.maxUnitsPerOrder, Math.floor(units)));
+  const dayStr = KARACHI_YMD_COMPACT.format(new Date(nowMs));
+  const usedToday = s.intlTrade?.lastDayKey === dayStr ? cap.dailyVolumeUsed : 0;
+
+  const contract: ActiveTradeContract = {
+    id: `tr_${nowMs}_${Math.floor(Math.random() * 999)}`,
+    partner: partnerDef.code,
+    goodId,
+    direction,
+    units: clampedUnits,
+    unitPrice: check.unitPrice,
+    totalValue: check.unitPrice * clampedUnits,
+    finishAt: Math.floor(nowMs + check.durSec * 1000),
+    durSec: check.durSec,
+  };
+
+  const prev: IntlTradeState = s.intlTrade || {
+    contracts: [],
+    completedCount: 0,
+    exportRevenue: 0,
+    importSpend: 0,
+    milestonesClaimed: {},
+  };
+
+  return {
+    ok: true,
+    contract,
+    state: {
+      ...s,
+      cash: Math.max(0, s.cash - check.upfrontCost),
+      intlTrade: {
+        ...prev,
+        contracts: [...(prev.contracts || []), contract].slice(-8),
+        importSpend: prev.importSpend + (direction === 'import' ? check.upfrontCost : 0),
+        lastDayKey: dayStr,
+        dailyVolumeUsed: usedToday + clampedUnits,
+      },
+    },
+  };
+}
+
+export function tickIntlTradeContracts(
+  s: GameState,
+  nowMs = Date.now(),
+): { state: GameState; settled: ActiveTradeContract[] } {
+  const trade = s.intlTrade;
+  if (!trade || !Array.isArray(trade.contracts) || trade.contracts.length === 0) {
+    return { state: s, settled: [] };
+  }
+  const active: ActiveTradeContract[] = [];
+  const settled: ActiveTradeContract[] = [];
+  let cashAdd = 0;
+  let exportRevAdd = 0;
+  let importBuffUntil = trade.importBuffUntil || 0;
+  let hapAdd = 0;
+
+  for (const c of trade.contracts) {
+    if (!c.completed && c.finishAt <= nowMs) {
+      settled.push(c);
+      if (c.direction === 'export') {
+        cashAdd += c.totalValue;
+        exportRevAdd += c.totalValue;
+      } else {
+        importBuffUntil = Math.max(importBuffUntil, nowMs + 180_000);
+        hapAdd += 1;
+      }
+    } else if (!c.completed) {
+      active.push(c);
+    }
+  }
+
+  if (settled.length === 0) return { state: s, settled: [] };
+
+  return {
+    settled,
+    state: {
+      ...s,
+      cash: Math.min(1e13, (s.cash || 0) + cashAdd),
+      hap: Math.min(100, (s.hap || 60) + hapAdd),
+      intlTrade: {
+        ...trade,
+        contracts: active,
+        completedCount: (trade.completedCount || 0) + settled.length,
+        exportRevenue: Math.min(1e14, (trade.exportRevenue || 0) + exportRevAdd),
+        importBuffUntil,
+      },
+    },
+  };
+}
+
+export function claimTradeMilestone(
+  s: GameState,
+  milestoneId: string,
+): { ok: boolean; state: GameState; rewardCoins: number; rewardGems: number; reason?: string } {
+  const def = TRADE_MILESTONES.find((m) => m.id === milestoneId);
+  if (!def) return { ok: false, state: s, rewardCoins: 0, rewardGems: 0, reason: 'Unknown trade milestone' };
+  const trade = s.intlTrade || {
+    contracts: [],
+    completedCount: 0,
+    exportRevenue: 0,
+    importSpend: 0,
+    milestonesClaimed: {},
+  };
+  if (trade.milestonesClaimed?.[milestoneId]) {
+    return { ok: false, state: s, rewardCoins: 0, rewardGems: 0, reason: 'Already claimed' };
+  }
+  if ((trade.completedCount || 0) < def.count) {
+    return { ok: false, state: s, rewardCoins: 0, rewardGems: 0, reason: `Complete ${def.count} contracts first` };
+  }
+  return {
+    ok: true,
+    rewardCoins: def.rewardCoins,
+    rewardGems: def.rewardGems,
+    state: {
+      ...s,
+      cash: Math.min(1e13, (s.cash || 0) + def.rewardCoins),
+      gems: Math.min(1e9, Math.floor((s.gems || 0) + def.rewardGems)),
+      intlTrade: {
+        ...trade,
+        milestonesClaimed: { ...(trade.milestonesClaimed || {}), [milestoneId]: 1 },
+      },
+    },
+  };
+}
+
+// ---------- Local Mega Projects & Long-Term Challenges ----------
+
+export function canStartLocalMegaProject(
+  s: GameState,
+  type: ProjectType,
+  nowMs = Date.now(),
+): { ok: boolean; reason?: string; cost: number; durSec: number } {
+  const def = GX_PROJECT_TYPES[type];
+  if (!def) return { ok: false, reason: 'Unknown mega project', cost: 0, durSec: 0 };
+  const active = (s.megaProjects || []).filter((p) => !p.claimed);
+  if (active.some((p) => p.type === type)) {
+    return { ok: false, reason: 'Project already active or awaiting claim', cost: def.cost, durSec: Math.round(def.dur / 1000) };
+  }
+  if (active.length >= MAX_CONCURRENT_LOCAL_PROJECTS) {
+    return { ok: false, reason: `Max ${MAX_CONCURRENT_LOCAL_PROJECTS} active Mega Projects`, cost: def.cost, durSec: Math.round(def.dur / 1000) };
+  }
+  if (def.reqRank && (s.rank || MIN_RANK) < def.reqRank) {
+    return { ok: false, reason: `Requires Rank ${def.reqRank}`, cost: def.cost, durSec: Math.round(def.dur / 1000) };
+  }
+  const snap = computeEconomySnapshot(s, { nowMs, ignoreTempBoosters: true });
+  if (def.minJobs && snap.jobsCreated < def.minJobs) {
+    return { ok: false, reason: `Requires ${def.minJobs} active jobs`, cost: def.cost, durSec: Math.round(def.dur / 1000) };
+  }
+  if (def.minEnergySupply && snap.energySupply < def.minEnergySupply) {
+    return { ok: false, reason: `Requires ${def.minEnergySupply} MW grid capacity`, cost: def.cost, durSec: Math.round(def.dur / 1000) };
+  }
+  const disc = getDevelopmentDiscount(s, nowMs);
+  const cost = Math.max(100, Math.ceil(def.cost * (1 - disc)));
+  const speed = 1 + (hasTech(s, 'civil_corps') ? 0.15 : 0);
+  const durSec = Math.max(20, Math.ceil(def.dur / 1000 / speed));
+  if (!Number.isFinite(s.cash) || s.cash < cost) {
+    return { ok: false, reason: 'Not enough Coins', cost, durSec };
+  }
+  return { ok: true, cost, durSec };
+}
+
+export function applyStartLocalMegaProject(
+  s: GameState,
+  type: ProjectType,
+  nowMs = Date.now(),
+): { ok: boolean; state: GameState; project?: LocalMegaProjectSlot; reason?: string } {
+  const check = canStartLocalMegaProject(s, type, nowMs);
+  if (!check.ok) return { ok: false, state: s, reason: check.reason };
+  const slot: LocalMegaProjectSlot = {
+    id: `mp_${type}_${nowMs}`,
+    type,
+    paid: check.cost,
+    startedAt: nowMs,
+    finishAt: Math.floor(nowMs + check.durSec * 1000),
+    totalSec: check.durSec,
+    status: 'active',
+    claimed: false,
+  };
+  return {
+    ok: true,
+    project: slot,
+    state: {
+      ...s,
+      cash: Math.max(0, s.cash - check.cost),
+      megaProjects: [...(s.megaProjects || []), slot],
+    },
+  };
+}
+
+export function tickLocalMegaProjects(
+  s: GameState,
+  nowMs = Date.now(),
+): { state: GameState; finishedTypes: ProjectType[] } {
+  const list = s.megaProjects || [];
+  if (list.length === 0) return { state: s, finishedTypes: [] };
+  const finishedTypes: ProjectType[] = [];
+  let changed = false;
+  const nextList = list.map((p) => {
+    if (p.status === 'active' && p.finishAt <= nowMs) {
+      changed = true;
+      finishedTypes.push(p.type);
+      return { ...p, status: 'done' as const };
+    }
+    return p;
+  });
+  if (!changed) return { state: s, finishedTypes: [] };
+  return { state: { ...s, megaProjects: nextList }, finishedTypes };
+}
+
+export function claimLocalMegaProject(
+  s: GameState,
+  projectId: string,
+  nowMs = Date.now(),
+): { ok: boolean; state: GameState; coinsAdded: number; gemsAdded: number; reason?: string } {
+  const ticked = tickLocalMegaProjects(s, nowMs).state;
+  const list = ticked.megaProjects || [];
+  const target = list.find((p) => p.id === projectId);
+  if (!target) return { ok: false, state: ticked, coinsAdded: 0, gemsAdded: 0, reason: 'Project not found' };
+  if (target.claimed) return { ok: false, state: ticked, coinsAdded: 0, gemsAdded: 0, reason: 'Already claimed' };
+  if (target.status !== 'done') return { ok: false, state: ticked, coinsAdded: 0, gemsAdded: 0, reason: 'Project still under construction' };
+  const def = GX_PROJECT_TYPES[target.type];
+  const coinsAdded = def?.rewardCoins || 0;
+  const gemsAdded = def?.rewardGems || 0;
+  const pbAdd = def?.pb || 0.01;
+  const phAdd = def?.ph || 1;
+  const nextList = list.map((p) => (p.id === projectId ? { ...p, claimed: true } : p));
+  return {
+    ok: true,
+    coinsAdded,
+    gemsAdded,
+    state: {
+      ...ticked,
+      cash: Math.min(1e13, (ticked.cash || 0) + coinsAdded),
+      gems: Math.min(1e9, Math.floor((ticked.gems || 0) + gemsAdded)),
+      megaProjects: nextList,
+      gx: {
+        ...ticked.gx,
+        pb: Math.min(0.4, (ticked.gx.pb || 0) + pbAdd),
+        ph: Math.min(16, (ticked.gx.ph || 0) + phAdd),
+        log: [`Completed Mega Project: ${def?.n || target.type}`, ...(ticked.gx.log || [])].slice(0, 8),
+      },
+    },
+  };
+}
+
+export function claimChallenge(
+  s: GameState,
+  challengeId: string,
+): { ok: boolean; state: GameState; coinsAdded: number; gemsAdded: number; reason?: string } {
+  const def = CHALLENGES_2_0.find((c) => c.id === challengeId);
+  if (!def) return { ok: false, state: s, coinsAdded: 0, gemsAdded: 0, reason: 'Unknown challenge' };
+  if (s.challenges?.[challengeId]) {
+    return { ok: false, state: s, coinsAdded: 0, gemsAdded: 0, reason: 'Challenge already claimed' };
+  }
+  if (def.f(s) < def.goal) {
+    return { ok: false, state: s, coinsAdded: 0, gemsAdded: 0, reason: 'Challenge goal not reached' };
+  }
+  return {
+    ok: true,
+    coinsAdded: def.rewardCoins,
+    gemsAdded: def.rewardGems,
+    state: {
+      ...s,
+      cash: Math.min(1e13, (s.cash || 0) + def.rewardCoins),
+      gems: Math.min(1e9, Math.floor((s.gems || 0) + def.rewardGems)),
+      challenges: { ...(s.challenges || {}), [challengeId]: 1 },
+    },
+  };
+}
+
+// ---------- Centralized National Economy Engine (MEDIUM DIFFICULTY) ----------
 
 export function taxInfo(s: GameState) {
   const t = s.tax || 20;
@@ -1032,7 +1825,7 @@ export function taxInfo(s: GameState) {
     c / 100 +
     l / 120 +
     (co / 150) * (1 + (b.business_districts || 0) * 0.05) +
-    g / 70 * (1 + (b.shopping_centers || 0) * 0.04) +
+    (g / 70) * (1 + (b.shopping_centers || 0) * 0.04) +
     (p / 60) * Math.max(0.6, Math.min(2, (s.pop || 48) / 50)) +
     (d / 90) * (1 + ((b.ports || 0) + (b.airports || 0)) * 0.06) +
     (tr / 85) * (1 + ((b.airports || 0) + (b.shopping_centers || 0)) * 0.05) +
@@ -1044,37 +1837,45 @@ export function taxInfo(s: GameState) {
 
   const pTax = getPolicyStance(s, 'p_tax');
   const pEmp = getPolicyStance(s, 'p_emp');
+  const pFin = getPolicyStance(s, 'p_fin');
   const evBase = Math.max(0, Math.min(0.75, (burden - 30) / 70 + Math.max(0, 50 - (s.appr ?? 50)) / 400));
-  const ev = pTax === 1 ? evBase * 0.75 : evBase;
+  const ev = pTax === 1 ? evBase * 0.75 : pFin === 2 ? evBase * 0.85 : evBase;
 
   let policyTaxMult = 1;
   if (pTax === 1) policyTaxMult *= 0.9;
   else if (pTax === 2) policyTaxMult *= 1.14;
   if (pEmp === 1) policyTaxMult *= 0.94;
+  if (pFin === 1) policyTaxMult *= 1.05;
 
   return { mult: raw * (1 - ev) * policyTaxMult, raw, burden, ev };
 }
 
 export function getTechIncomeMult(s: GameState): number {
-  let bonus = 0;
-  if (hasTech(s, 'smart_grid')) bonus += 0.04;
-  if (hasTech(s, 'auto_customs')) bonus += 0.03;
-  if (hasTech(s, 'sovereign_vault')) bonus += 0.04;
-  return 1 + bonus;
+  let bonusPct = 0;
+  for (const t of TECH_TREE) {
+    if (t.incomeBonusPct && hasTech(s, t.id)) {
+      bonusPct += t.incomeBonusPct;
+    }
+  }
+  // Controlled diminishing cap so unlocking all 50 techs never creates runaway infinite inflation
+  return 1 + Math.min(1.15, bonusPct / 100);
 }
 
 export function getResearchCostMult(s: GameState, nowMs = Date.now()): number {
   let mult = 1;
   if (isBoosterActive(s, 'research_boost', nowMs)) mult *= 0.8;
   if (getPolicyStance(s, 'p_edu') === 2) mult *= 0.88;
+  if (getPolicyStance(s, 'p_sci') === 1) mult *= 0.9;
   return Math.max(0.5, mult);
 }
 
 export function getResearchSpeedMult(s: GameState, nowMs = Date.now()): number {
-  let mult = 1;
+  let mult = 1 + getTechResearchSpeedBonus(s);
   if (isBoosterActive(s, 'research_boost', nowMs)) mult += 0.25;
   if (getPolicyStance(s, 'p_edu') === 1) mult += 0.14;
-  return mult;
+  if (getPolicyStance(s, 'p_ai') === 1) mult += 0.12;
+  if (getPolicyStance(s, 'p_sci') === 2) mult += 0.15;
+  return Math.max(0.6, mult);
 }
 
 export function computeEconomySnapshot(
@@ -1094,6 +1895,17 @@ export function computeEconomySnapshot(
   const pTrd = getPolicyStance(s, 'p_trd');
   const pNrg = getPolicyStance(s, 'p_nrg');
   const pInf = getPolicyStance(s, 'p_inf');
+  const pAi = getPolicyStance(s, 'p_ai');
+  const pFin = getPolicyStance(s, 'p_fin');
+  const pDef = getPolicyStance(s, 'p_def');
+  const pEnv = getPolicyStance(s, 'p_env');
+  const pUrb = getPolicyStance(s, 'p_urb');
+  const pSci = getPolicyStance(s, 'p_sci');
+  const pMar = getPolicyStance(s, 'p_mar');
+  const pDig = getPolicyStance(s, 'p_dig');
+  const pTou = getPolicyStance(s, 'p_tou');
+  const pHou = getPolicyStance(s, 'p_hou');
+  const pRes = getPolicyStance(s, 'p_res');
 
   const prodBoostActive = !ignoreTemp && isBoosterActive(s, 'prod_boost', nowMs);
   const empBoostActive = !ignoreTemp && isBoosterActive(s, 'emp_boost', nowMs);
@@ -1114,87 +1926,112 @@ export function computeEconomySnapshot(
     special: 0,
   };
 
-  let energySupply = 12; // Base municipal generator capacity (MW)
+  let energySupply = 12;
   let energyDemand = 0;
   let jobsCreated = 0;
   let maintCostRaw = 0;
   let capitalEquity = 0;
-  let housingCapacity = 80; // Baseline municipal capacity (M) so starters never suffer overcrowding
+  let housingCapacity = 80;
   let safetyPoints = 0;
   let pollutionRaw = 0;
   let cleanPoints = 0;
 
+  const techMaintMult = 1 - getTechMaintReduction(s);
+  const techEnergyMult = 1 + getTechEnergyBonus(s);
   const b = s.b || {};
 
   for (const d of BUILDINGS) {
     const count = Math.max(0, Math.floor(Number(b[d.id]) || 0));
     if (count <= 0) continue;
-    const lvl = Math.max(1, Math.min(5, Math.floor(Number(s.gx?.lvl?.[d.id]) || 1)));
-    const lvlMult = GX_LEVEL_MULTS[lvl - 1] || 1;
+    const lvl = Math.max(1, Math.min(MAX_BUILDING_LEVEL, Math.floor(Number(s.gx?.lvl?.[d.id]) || 1)));
+    const lvlMult = getBuildingLevelMultiplier(lvl);
     const bPol = getBuildingPolicyDef(getActiveBuildingPolicyId(s, d.id));
 
-    capitalEquity += d.cost * count * (1 + (lvl - 1) * 0.45) * 1.15;
+    capitalEquity += d.cost * count * (1 + Math.pow(lvl - 1, 0.72) * 0.42) * 1.15;
 
     let catIncomeMult = 1;
     if (d.cat === 'agriculture') {
-      if (pAgr === 1) catIncomeMult *= 1.2;
-      else if (pAgr === 2 && d.id === 'food_plant') catIncomeMult *= 1.12;
+      if (pAgr === 1) catIncomeMult *= 1.18;
+      else if (pAgr === 2 && (d.id === 'food_plant' || d.id === 'dairy_plant')) catIncomeMult *= 1.12;
+      if (pRes === 1) catIncomeMult *= 1.08;
     } else if (d.cat === 'industry') {
-      if (pInd === 1) catIncomeMult *= 1.18;
-      else if (pInd === 2) catIncomeMult *= 1.1;
-      if (pTrd === 2) catIncomeMult *= 1.15;
+      if (pInd === 1) catIncomeMult *= 1.16;
+      else if (pInd === 2) catIncomeMult *= 1.09;
+      if (pTrd === 2) catIncomeMult *= 1.14;
       else if (pTrd === 1) catIncomeMult *= 0.94;
+      if (pRes === 2) catIncomeMult *= 1.08;
     } else if (d.cat === 'energy') {
-      if (pNrg === 1 && (d.id === 'solar_plants' || d.id === 'wind_farms')) catIncomeMult *= 1.18;
+      if (pNrg === 1 && (d.id === 'solar_plants' || d.id === 'wind_farms' || d.id === 'offshore_wind' || d.id === 'adv_solar_station' || d.id === 'hydro_plant' || d.id === 'geothermal_plant' || d.id === 'battery_mega_facility')) {
+        catIncomeMult *= 1.16;
+      }
+      if (pEnv === 1) catIncomeMult *= 1.08;
     } else if (d.cat === 'infrastructure') {
       if (pInf === 1) catIncomeMult *= 1.1;
-      if (pTrd === 1) catIncomeMult *= 1.16;
-      else if (pTrd === 2 && (d.id === 'ports' || d.id === 'airports' || d.id === 'logistics_center')) catIncomeMult *= 0.92;
+      if (pTrd === 1) catIncomeMult *= 1.14;
+      else if (pTrd === 2 && (d.id === 'ports' || d.id === 'airports' || d.id === 'logistics_center' || d.id === 'deep_sea_port' || d.id === 'intl_airport_terminal')) {
+        catIncomeMult *= 0.92;
+      }
+      if (pMar === 1) catIncomeMult *= 1.09;
     } else if (d.cat === 'commercial') {
       if (pEmp === 2) catIncomeMult *= 1.08;
       if (pHlth === 2) catIncomeMult *= 0.97;
-      if (pTrd === 1) catIncomeMult *= 1.16;
+      if (pTrd === 1) catIncomeMult *= 1.14;
+      if (pFin === 1) catIncomeMult *= 1.08;
+      if (pTou === 1) catIncomeMult *= 1.07;
     } else if (d.cat === 'technology') {
-      if (pEdu === 1) catIncomeMult *= 1.14;
-      if (researchBoostActive) catIncomeMult *= 1.25;
+      if (pEdu === 1) catIncomeMult *= 1.12;
+      if (pAi === 1) catIncomeMult *= 1.12;
+      if (pDig === 1) catIncomeMult *= 1.09;
+      if (pSci === 2) catIncomeMult *= 1.08;
+      if (researchBoostActive) catIncomeMult *= 1.2;
     } else if (d.cat === 'healthcare_edu') {
-      if (pEdu === 1) catIncomeMult *= 1.14;
+      if (pEdu === 1) catIncomeMult *= 1.12;
     } else if (d.cat === 'public_services' || d.cat === 'residential') {
       if (pHlth === 1) catIncomeMult *= 1.05;
+      if (d.cat === 'residential' && pHou === 1) catIncomeMult *= 1.06;
+    } else if (d.cat === 'special') {
+      if (pTou === 1) catIncomeMult *= 1.1;
+      if (pSci === 2) catIncomeMult *= 1.08;
     }
 
     const baseOut = d.inc * count * lvlMult * catIncomeMult * bPol.incomeMult;
     sectorRaw[d.cat] += baseOut;
 
     if (d.cat === 'residential' && d.capacity) {
-      housingCapacity += d.capacity * count * (1 + (lvl - 1) * 0.12);
+      const houMult = pHou === 1 ? 1.14 : pHou === 2 ? 1.08 : 1;
+      housingCapacity += d.capacity * count * (1 + Math.pow(lvl - 1, 0.7) * 0.1) * houMult;
     }
     if (d.cat === 'public_services') {
-      safetyPoints += count * (d.id === 'police_hq' ? 4.5 : d.id === 'fire_dept' ? 3.5 : 2.5);
+      const defBonus = pDef === 2 ? 1.15 : 1;
+      safetyPoints += count * (d.id === 'police_hq' || d.id === 'public_safety_hq' ? 4.5 : d.id === 'fire_dept' || d.id === 'emergency_response_center' ? 3.5 : 2.5) * defBonus;
     }
     if (d.hapDelta < 0) {
-      pollutionRaw += Math.abs(d.hapDelta) * count * (bPol.id === 'eco_operation' ? 0.55 : bPol.id === 'overtime_shift' ? 1.2 : 1);
-    } else if (d.id === 'solar_plants' || d.id === 'wind_farms' || d.id === 'water_plant' || d.id === 'smart_housing') {
+      const envCut = pEnv === 1 ? 0.72 : 1;
+      pollutionRaw += Math.abs(d.hapDelta) * count * envCut * (bPol.id === 'eco_operation' ? 0.55 : bPol.id === 'overtime_shift' ? 1.2 : 1);
+    } else if (d.id === 'solar_plants' || d.id === 'wind_farms' || d.id === 'offshore_wind' || d.id === 'adv_solar_station' || d.id === 'hydro_plant' || d.id === 'geothermal_plant' || d.id === 'battery_mega_facility' || d.id === 'water_plant' || d.id === 'smart_housing' || d.id === 'eco_homes') {
       cleanPoints += count * 1.4;
     }
 
     if (d.energy > 0) {
-      let gen = d.energy * count * (1 + (lvl - 1) * 0.15);
-      if (pNrg === 1 && (d.id === 'solar_plants' || d.id === 'wind_farms')) gen *= 1.18;
+      let gen = d.energy * count * (1 + Math.pow(lvl - 1, 0.72) * 0.12) * techEnergyMult;
+      if (pNrg === 1 && (d.id === 'solar_plants' || d.id === 'wind_farms' || d.id === 'offshore_wind' || d.id === 'adv_solar_station' || d.id === 'hydro_plant' || d.id === 'geothermal_plant')) gen *= 1.18;
       if (pNrg === 2) gen *= 1.14;
       energySupply += gen;
     } else if (d.energy < 0) {
-      let dem = Math.abs(d.energy) * count * (1 + (lvl - 1) * 0.08) * bPol.energyMult;
+      let dem = Math.abs(d.energy) * count * (1 + Math.pow(lvl - 1, 0.65) * 0.06) * bPol.energyMult;
       if (d.cat === 'industry' && pInd === 2) dem *= 1.1;
+      if (pEnv === 1) dem *= 0.94;
       energyDemand += dem;
     }
 
-    let j = d.jobs * count * bPol.jobsMult;
+    let j = d.jobs * count * (1 + (lvl - 1) * 0.04) * bPol.jobsMult;
     if (d.cat === 'industry' && pInd === 2) j *= 0.92;
     if (pEmp === 1) j *= 1.12;
+    if (pAi === 1 && d.cat === 'industry') j *= 0.94;
+    if (pUrb === 1) j *= 1.06;
     jobsCreated += j;
 
-    let m = d.maint * count * (1 + (lvl - 1) * 0.25) * bPol.maintMult;
+    let m = d.maint * count * (1 + Math.pow(lvl - 1, 0.85) * 0.14) * techMaintMult * bPol.maintMult;
     if (d.cat === 'industry' && pInd === 1) m *= 1.12;
     if (d.cat === 'agriculture' && pAgr === 1) m *= 1.15;
     if (d.cat === 'healthcare_edu') {
@@ -1207,6 +2044,7 @@ export function computeEconomySnapshot(
     if (d.cat === 'energy' && pNrg === 2) m *= 0.92;
     if (d.cat === 'infrastructure' && pInf === 1) m *= 1.15;
     if (pInf === 2) m *= 0.9;
+    if (pDef === 2) m *= 1.06;
     maintCostRaw += m;
   }
 
@@ -1246,11 +2084,14 @@ export function computeEconomySnapshot(
   const consumerDemandMult =
     1 +
     Math.min(
-      0.34,
+      0.38,
       (b.markets || 0) * 0.012 +
         (b.shopping_centers || 0) * 0.025 +
+        (b.intl_mall || 0) * 0.028 +
+        (b.luxury_boulevard || 0) * 0.032 +
         (b.business_districts || 0) * 0.035 +
         (b.corporate_tower || 0) * 0.04 +
+        (b.trading_tower || 0) * 0.04 +
         (b.intl_hotel || 0) * 0.022 +
         (b.national_stadium || 0) * 0.03,
     ) *
@@ -1258,10 +2099,14 @@ export function computeEconomySnapshot(
 
   let baseTradeExportBonus =
     tradeTier * 0.05 +
+    getTechTradeBonus(s) +
+    ((s.intlTrade?.importBuffUntil || 0) > nowMs ? 0.06 : 0) +
     Math.min(
-      0.42,
+      0.44,
       (b.ports || 0) * 0.02 +
         (b.airports || 0) * 0.03 +
+        (b.intl_airport_terminal || 0) * 0.035 +
+        (b.deep_sea_port || 0) * 0.035 +
         (b.food_plant || 0) * 0.008 +
         (b.logistics_center || 0) * 0.025 +
         (b.trade_center || 0) * 0.035 +
@@ -1272,6 +2117,7 @@ export function computeEconomySnapshot(
   if (pAgr === 2) baseTradeExportBonus += 0.12;
   if (pTrd === 1) baseTradeExportBonus += 0.16;
   if (pTrd === 2) baseTradeExportBonus -= 0.08;
+  if (pMar === 1) baseTradeExportBonus += 0.1;
   baseTradeExportBonus += assetBonuses.tradeBonus;
   baseTradeExportBonus = Math.max(-0.08, Math.min(0.85, baseTradeExportBonus));
   const tradeExportBonus = Math.max(
@@ -1281,10 +2127,9 @@ export function computeEconomySnapshot(
   const growthTradeLift = (1 + tradeExportBonus) / Math.max(0.5, 1 + baseTradeExportBonus);
   const tradeImportDrag = pTrd === 1 ? 0.03 : 0;
 
-  // Inflation model (stabilized by National Reserve Bank & food output)
   const ti = taxInfo(s);
   const taxInflation = Math.max(0, ti.burden - 24) * 0.08;
-  const agrFoodSupplyOffset = Math.min(2.0, ((b.farms || 0) + (b.greenhouses || 0)) * 0.05 + (b.national_bank || 0) * 0.35);
+  const agrFoodSupplyOffset = Math.min(2.2, ((b.farms || 0) + (b.greenhouses || 0) + (b.automated_farm_complex || 0)) * 0.05 + (b.national_bank || 0) * 0.35);
   let inflationRate = 2.0 + taxInflation - agrFoodSupplyOffset;
   if (pTax === 2) inflationRate *= 0.85;
   if (pAgr === 1) inflationRate -= 0.8;
@@ -1292,6 +2137,7 @@ export function computeEconomySnapshot(
   if (pTrd === 1) inflationRate -= 1.0;
   else if (pTrd === 2) inflationRate += 1.2;
   if (pNrg === 1) inflationRate -= 0.4;
+  if (pFin === 2) inflationRate -= 0.7;
   inflationRate = Math.max(0.5, Math.min(18, Number(inflationRate.toFixed(2))));
   const inflationDrag = Math.max(0.78, Math.min(1.02, 1 - Math.max(0, inflationRate - 2.8) * 0.014));
 
@@ -1312,16 +2158,15 @@ export function computeEconomySnapshot(
   const gov = getGovDefinition(s);
   const subMult = getActiveSubscription(s, nowMs)?.def.incomeMult ?? 1;
   const gemBoost = !ignoreTemp && (s.boost || 0) > 0 ? 2 : 1;
-  // Strictly cap combined temporary shop + growth trade + gem multipliers to 2.5x
   const tempMult = Math.min(2.5 / Math.max(1, growthTradeLift), shopBoostInfo.mult * gemBoost);
 
   const rankDef = RANKS[Math.max(MIN_RANK, Math.min(MAX_RANK, Math.floor(s.rank || MIN_RANK)))] || RANKS[MIN_RANK];
   const rankMult = 1 + (rankDef.incomeBonusPct || 0) / 100;
 
-  const greenCount = (b.solar_plants || 0) + (b.wind_farms || 0);
+  const greenCount = (b.solar_plants || 0) + (b.wind_farms || 0) + (b.offshore_wind || 0) + (b.adv_solar_station || 0);
   const greenSynergy = 1 + Math.min(0.4, greenCount * (s.green || 0) * 0.0025);
-  const transitSynergy = 1 + Math.min(0.38, ((b.roads || 0) + (b.railways || 0) + (b.highway_network || 0) + (b.transit_hub || 0)) * (s.transitSub || 0) * 0.002);
-  const rAndDSynergy = 1 + Math.min(0.45, ((b.research_centers || 0) + (b.universities || 0) + (b.central_lab || 0) + (b.space_center || 0)) * 0.015);
+  const transitSynergy = 1 + Math.min(0.38, ((b.roads || 0) + (b.railways || 0) + (b.highway_network || 0) + (b.transit_hub || 0) + (b.hs_railway_station || 0) + (b.smart_transit_hub || 0)) * (s.transitSub || 0) * 0.002);
+  const rAndDSynergy = 1 + Math.min(0.45, ((b.research_centers || 0) + (b.universities || 0) + (b.central_lab || 0) + (b.space_center || 0) + (b.ai_research_campus || 0) + (b.quantum_lab || 0) + (b.national_space_center || 0)) * 0.014);
 
   const macroMult =
     ti.mult *
@@ -1350,7 +2195,6 @@ export function computeEconomySnapshot(
     sectorIncome[k] = sectorIncome[k] * totalMult;
   }
 
-  // Balanced operating expenses (maintenance + national salaries + policy spending)
   const maintCost = Math.min(buildingGross * 0.3, maintCostRaw * Math.max(0.75, ti.mult * 0.5));
   const salaryScale = 0.016 * (pEmp === 2 ? 1.12 : 1);
   const salaryCost = Math.min(buildingGross * 0.16, jobsCreated * salaryScale);
@@ -1361,9 +2205,8 @@ export function computeEconomySnapshot(
   const welfareCost = buildingGross * policySpendShare;
   const net = buildingGross - maintCost - salaryCost - welfareCost;
 
-  // Real National GDP: anchored on capital equity + annualized productivity + human capital + bounded treasury
   const baseFlow = Math.max(0, net);
-  const humanCapital = (s.pop || 48) * 220 + jobsCreated * 45 + techCount(s) * 150_000;
+  const humanCapital = (s.pop || 48) * 220 + jobsCreated * 45 + techCount(s) * 140_000;
   const treasuryComponent = Math.min(1e12, Math.max(0, Number(s.cash) || 0) * 0.35);
   const realGdp = Math.max(
     1000,
@@ -1402,7 +2245,7 @@ export function computeEconomySnapshot(
   };
 }
 
-// ---------- Player Ranks (1..10, multi-factor economic gates) ----------
+// ---------- Player Ranks (1..25, multi-factor economic gates) ----------
 
 export interface RankEligibility {
   def: RankDef;
@@ -1455,7 +2298,7 @@ export function getRankEligibility(s: GameState, targetRankId: number): RankElig
   } else if (missingHap > 0) {
     reason = `Need ${def.minHap}% citizen happiness`;
   } else if (missingTech > 0) {
-    reason = `Need ${def.minTech} researched doctrine(s)`;
+    reason = `Need ${def.minTech} researched tech(s)`;
   } else if (missingCash > 0) {
     reason = 'Not enough Coins';
   }
@@ -1479,7 +2322,7 @@ export function getRankEligibility(s: GameState, targetRankId: number): RankElig
   };
 }
 
-// ---------- Idempotent Legacy Province + 24-Building Migration ----------
+// ---------- Idempotent Legacy Migrations ----------
 
 interface LegacyProvinceShape {
   slot?: unknown;
@@ -1489,21 +2332,37 @@ interface LegacyProvinceShape {
   pop?: unknown;
 }
 
+export function migrateRanksV2OneTime(s: GameState): GameState {
+  if (Number(s.mig?.[RANK_V2_MIGRATION_KEY]) > 0) {
+    return {
+      ...s,
+      rank: Math.max(MIN_RANK, Math.min(MAX_RANK, Math.floor(Number(s.rank) || MIN_RANK))),
+      mig: { ...(s.mig || {}), [RANK_V2_MIGRATION_KEY]: 1 },
+    };
+  }
+  const curRank = Math.max(MIN_RANK, Math.min(MAX_RANK, Math.floor(Number(s.rank) || MIN_RANK)));
+  const mappedRank = LEGACY_RANK_V2_MAP[curRank] ?? curRank;
+  const finalRank = Math.max(curRank, Math.min(MAX_RANK, mappedRank));
+  return {
+    ...s,
+    rank: finalRank,
+    mig: { ...(s.mig || {}), [RANK_V2_MIGRATION_KEY]: 1 },
+  };
+}
+
 export function migrateLegacySaveToNational(
   raw: Record<string, unknown>,
   s: GameState,
 ): GameState {
   const rawMilestones = (raw.milestones && typeof raw.milestones === 'object' ? raw.milestones : {}) as Record<string, unknown>;
   if (Number(rawMilestones[LEGACY_PROVINCE_MIGRATED_KEY]) > 0) {
-    // Already migrated: strictly preserve state (ensure rank >= 1 and marker kept)
-    return {
+    return migrateRanksV2OneTime({
       ...s,
       rank: Math.max(MIN_RANK, s.rank || MIN_RANK),
       milestones: { ...(s.milestones || {}), [LEGACY_PROVINCE_MIGRATED_KEY]: 1 },
-    };
+    });
   }
 
-  // First-time migration from legacy save (24 old building IDs & optional legacy provinces)
   const rawB = (raw.b && typeof raw.b === 'object' ? raw.b : {}) as Record<string, unknown>;
   const rawLvl = (
     raw.gx &&
@@ -1522,7 +2381,7 @@ export function migrateLegacySaveToNational(
     if (Number.isFinite(qty) && qty > 0) {
       nextB[targetId] = Math.min(10_000, (nextB[targetId] || 0) + qty);
       const oldLvl = Math.floor(Number(rawLvl[legacyKey]));
-      if (Number.isFinite(oldLvl) && oldLvl >= 1 && oldLvl <= 5) {
+      if (Number.isFinite(oldLvl) && oldLvl >= 1 && oldLvl <= MAX_BUILDING_LEVEL) {
         nextLvl[targetId] = Math.max(nextLvl[targetId] || 1, oldLvl);
       }
     }
@@ -1561,7 +2420,7 @@ export function migrateLegacySaveToNational(
     nextLog.unshift(summary);
   }
 
-  return {
+  return migrateRanksV2OneTime({
     ...s,
     cash: Math.min(1e13, Math.max(0, (s.cash || 0) + cashBonus)),
     pop: Math.min(100_000, Math.max(1, (s.pop || 48) + popBonus)),
@@ -1576,5 +2435,5 @@ export function migrateLegacySaveToNational(
       ...(s.milestones || {}),
       [LEGACY_PROVINCE_MIGRATED_KEY]: 1,
     },
-  };
+  });
 }

@@ -57,11 +57,14 @@ import { LivePreviewStudio } from './LivePreviewStudio';
 const DX_CATEGORY_TABS: Array<{ id: DxCategoryFilter; label: string; icon: React.ReactNode }> = [
   { id: 'all', label: 'All Exclusives', icon: <Sparkles size={14} /> },
   { id: 'bundle', label: 'Collections', icon: <Layers size={14} /> },
-  { id: 'profile_effect', label: 'Profile FX', icon: <Award size={14} /> },
-  { id: 'name_effect', label: 'Name FX', icon: <span style={{ fontSize: 13 }}>🖋️</span> },
+  { id: 'name_effect', label: 'Typography FX', icon: <span style={{ fontSize: 13 }}>🖋️</span> },
+  { id: 'leaderboard_anim', label: 'Leaderboard FX', icon: <span style={{ fontSize: 13 }}>🏆</span> },
+  { id: 'animation', label: 'UI Effects', icon: <Zap size={14} /> },
   { id: 'theme', label: 'Themes', icon: <Palette size={14} /> },
-  { id: 'animation', label: 'Animations', icon: <Zap size={14} /> },
   { id: 'badge', label: 'Badges', icon: <span style={{ fontSize: 13 }}>🏅</span> },
+  { id: 'achievement_fx', label: 'Achievement FX', icon: <Award size={14} /> },
+  { id: 'premium_vfx', label: 'Premium VFX', icon: <Sparkles size={14} /> },
+  { id: 'profile_effect', label: 'Static Borders', icon: <span style={{ fontSize: 13 }}>🖼️</span> },
   { id: 'diamond_asset', label: '3D Landmarks', icon: <Landmark size={14} /> },
 ];
 
@@ -315,6 +318,7 @@ export const DiamondExclusivesShop = memo(function DiamondExclusivesShop({
                 data-testid="dx-filter-rarity"
               >
                 <option value="all">All Rarities</option>
+                <option value="Common">Common</option>
                 <option value="Basic">Basic</option>
                 <option value="Uncommon">Uncommon</option>
                 <option value="Rare">Rare</option>

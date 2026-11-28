@@ -54,11 +54,14 @@ interface LivePreviewStudioProps {
 }
 
 const CATEGORY_DISPLAY: Record<string, string> = {
-  profile_effect: 'Profile FX',
-  name_effect: 'Name FX',
+  profile_effect: 'Profile Border',
+  name_effect: 'Typography FX',
+  leaderboard_anim: 'Leaderboard FX',
   theme: 'UI Theme',
-  animation: 'Card FX',
+  animation: 'UI Card FX',
   badge: 'Badge',
+  achievement_fx: 'Achievement FX',
+  premium_vfx: 'Premium VFX',
   diamond_asset: '3D Landmark',
 };
 
@@ -110,23 +113,32 @@ export const LivePreviewStudio = memo(function LivePreviewStudio({
   const activeFxCount = [
     resolved.frame,
     resolved.nameEffect,
+    resolved.lbAnim,
     resolved.badge,
     resolved.anim,
+    resolved.achFx,
+    resolved.premiumVfx,
     resolved.landmarkId,
   ].filter(Boolean).length;
 
   const slotRows = [
     {
-      label: 'Profile Frame',
+      label: 'Profile Border',
       slot: 'frame' as const,
       id: resolved.frame,
       previewing: Boolean(previewLoadout.frame),
     },
     {
-      label: 'Name FX',
+      label: 'Typography FX',
       slot: 'nameEffect' as const,
       id: resolved.nameEffect,
       previewing: Boolean(previewLoadout.nameEffect),
+    },
+    {
+      label: 'Leaderboard FX',
+      slot: 'lbAnim' as const,
+      id: resolved.lbAnim,
+      previewing: Boolean(previewLoadout.lbAnim),
     },
     {
       label: 'Prestige Badge',
@@ -135,10 +147,22 @@ export const LivePreviewStudio = memo(function LivePreviewStudio({
       previewing: Boolean(previewLoadout.badge),
     },
     {
-      label: 'Card FX',
+      label: 'UI Card FX',
       slot: 'anim' as const,
       id: resolved.anim,
       previewing: Boolean(previewLoadout.anim),
+    },
+    {
+      label: 'Achievement FX',
+      slot: 'achFx' as const,
+      id: resolved.achFx,
+      previewing: Boolean(previewLoadout.achFx),
+    },
+    {
+      label: 'Premium VFX',
+      slot: 'premiumVfx' as const,
+      id: resolved.premiumVfx,
+      previewing: Boolean(previewLoadout.premiumVfx),
     },
     {
       label: 'UI Theme',
@@ -260,7 +284,7 @@ export const LivePreviewStudio = memo(function LivePreviewStudio({
             </div>
             <div>
               <small>Active FX</small>
-              <b>{activeFxCount}/5</b>
+              <b>{activeFxCount}/8</b>
             </div>
           </div>
 
@@ -301,6 +325,7 @@ export const LivePreviewStudio = memo(function LivePreviewStudio({
           {effectiveMode === 'identity' ? (
             <CosmeticCardWrap
               animId={resolved.anim}
+              premiumVfxId={resolved.premiumVfx}
               animationsEnabled={state.set?.anim !== 0}
               className="lps-stage-hero"
               data-theme={resolved.themeId}
@@ -319,6 +344,23 @@ export const LivePreviewStudio = memo(function LivePreviewStudio({
                   </div>
                 </div>
               </div>
+              {resolved.lbAnim && (
+                <div
+                  className={`row pcard lb-fx lb-fx--${resolved.lbAnim}`}
+                  style={{
+                    marginTop: 8,
+                    padding: '6px 10px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    background: 'rgba(12, 16, 38, 0.85)',
+                  }}
+                >
+                  <span style={{ fontWeight: 800, color: 'var(--gold)', fontSize: 12 }}>#1</span>
+                  <CosmeticName name={username || 'Governor'} nameEffectId={resolved.nameEffect} />
+                  <small className="dim" style={{ marginLeft: 'auto' }}>Leaderboard Preview</small>
+                </div>
+              )}
               {resolved.landmarkId && (
                 <div className="lps-stage-landmark-pill">
                   <span>🏙️ 3D Landmark Preview:</span>

@@ -61,6 +61,7 @@ export const CosmeticBadgeChip = memo(function CosmeticBadgeChip({
 
 interface CosmeticCardWrapProps {
   animId?: string;
+  premiumVfxId?: string;
   animationsEnabled?: boolean;
   className?: string;
   children: React.ReactNode;
@@ -68,18 +69,21 @@ interface CosmeticCardWrapProps {
 
 export function CosmeticCardWrap({
   animId,
+  premiumVfxId,
   animationsEnabled = true,
   className = '',
   children,
 }: CosmeticCardWrapProps) {
   const def = animId && animationsEnabled ? getCosmeticDef(animId) : undefined;
+  const pvfxDef = premiumVfxId && animationsEnabled ? getCosmeticDef(premiumVfxId) : undefined;
   const animClass = def ? `cos-anim-card cos-anim--${def.id}` : '';
+  const pvfxClass = pvfxDef ? `pvfx--${pvfxDef.id}` : '';
   const sparkleCount =
     !animationsEnabled || !def
       ? 0
-      : def.id === 'anim_sovereign_nova'
+      : def.id === 'anim_sovereign_nova' || def.id === 'anim_apex_crown'
         ? 7
-        : def.id === 'anim_sparkles' || def.id === 'anim_celestial_orbit'
+        : def.id === 'anim_sparkles' || def.id === 'anim_celestial_orbit' || def.id === 'anim_quantum_ripple'
           ? 5
           : def.id === 'anim_celebration'
             ? 3
@@ -93,12 +97,16 @@ export function CosmeticCardWrap({
     { left: '58%', top: '44%', delay: '2.3s' },
     { left: '34%', top: '86%', delay: '1.1s' },
   ];
-  const showAurora = animationsEnabled && (def?.id === 'anim_aurora_curtain' || def?.id === 'anim_sovereign_nova');
-  const showOrbit = animationsEnabled && (def?.id === 'anim_celestial_orbit' || def?.id === 'anim_sovereign_nova');
-  const showNova = animationsEnabled && def?.id === 'anim_sovereign_nova';
+  const showAurora =
+    animationsEnabled &&
+    (def?.id === 'anim_aurora_curtain' || def?.id === 'anim_sovereign_nova' || def?.id === 'anim_quantum_ripple');
+  const showOrbit =
+    animationsEnabled &&
+    (def?.id === 'anim_celestial_orbit' || def?.id === 'anim_sovereign_nova' || def?.id === 'anim_apex_crown');
+  const showNova = animationsEnabled && (def?.id === 'anim_sovereign_nova' || def?.id === 'anim_apex_crown');
 
   return (
-    <div className={`${animClass} ${className}`.trim()}>
+    <div className={`${animClass} ${pvfxClass} ${className}`.trim()}>
       {showAurora ? <div className="cos-aurora-curtain" aria-hidden="true" /> : null}
       {showOrbit ? (
         <div className="cos-orbit-rings" aria-hidden="true">
@@ -135,18 +143,21 @@ export interface UnlockCelebrationInfo {
 interface UnlockCelebrationModalProps {
   info: UnlockCelebrationInfo | null;
   hasFanfare?: boolean;
+  achFxId?: string;
   onClose: () => void;
 }
 
 export function UnlockCelebrationModal({
   info,
   hasFanfare = false,
+  achFxId,
   onClose,
 }: UnlockCelebrationModalProps) {
   if (!info) return null;
+  const achClass = achFxId ? `ach-fx--${achFxId}` : '';
   return (
     <div className="modal" role="dialog" aria-modal="true" aria-label="Unlock Celebration">
-      <div className="card unlock-modal">
+      <div className={`card unlock-modal ${achClass}`.trim()}>
         <div className="unlock-prism" style={info.accentColor ? { boxShadow: `0 0 26px ${info.accentColor}66, var(--in)` } : undefined}>
           <span aria-hidden="true">{info.icon}</span>
         </div>

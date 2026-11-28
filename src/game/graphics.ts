@@ -30,6 +30,9 @@ export const GRAPHICS_PRESETS: Record<Exclude<GraphicsPresetId, 'custom'>, Graph
     bloom: false,
     motionBlur: false,
     adaptiveOptimization: true,
+    uiAnimationQuality: 'low',
+    reducedMotion: false,
+    uiEffectsEnabled: false,
   },
   medium: {
     preset: 'medium',
@@ -49,6 +52,9 @@ export const GRAPHICS_PRESETS: Record<Exclude<GraphicsPresetId, 'custom'>, Graph
     bloom: false,
     motionBlur: false,
     adaptiveOptimization: true,
+    uiAnimationQuality: 'medium',
+    reducedMotion: false,
+    uiEffectsEnabled: true,
   },
   high: {
     preset: 'high',
@@ -68,6 +74,9 @@ export const GRAPHICS_PRESETS: Record<Exclude<GraphicsPresetId, 'custom'>, Graph
     bloom: true,
     motionBlur: false,
     adaptiveOptimization: true,
+    uiAnimationQuality: 'high',
+    reducedMotion: false,
+    uiEffectsEnabled: true,
   },
   ultra: {
     preset: 'ultra',
@@ -87,6 +96,9 @@ export const GRAPHICS_PRESETS: Record<Exclude<GraphicsPresetId, 'custom'>, Graph
     bloom: true,
     motionBlur: true,
     adaptiveOptimization: false,
+    uiAnimationQuality: 'high',
+    reducedMotion: false,
+    uiEffectsEnabled: true,
   },
 };
 
@@ -117,6 +129,7 @@ const VALID_AA: ReadonlyArray<AntiAliasingMode> = ['off', 'fxaa', 'msaa'];
 const VALID_TEX: ReadonlyArray<TextureQuality> = ['low', 'medium', 'high'];
 const VALID_DENSITY: ReadonlyArray<DensityLevel> = ['off', 'low', 'medium', 'high'];
 const VALID_VIEW: ReadonlyArray<'near' | 'medium' | 'far'> = ['near', 'medium', 'far'];
+const VALID_UI_ANIM: ReadonlyArray<'low' | 'medium' | 'high'> = ['low', 'medium', 'high'];
 
 export function detectGraphicsPreset(settings: GraphicsSettings): GraphicsPresetId {
   for (const key of ['low', 'medium', 'high', 'ultra'] as const) {
@@ -197,6 +210,15 @@ export function normalizeGraphicsSettings(raw: unknown): GraphicsSettings {
       typeof src.adaptiveOptimization === 'boolean'
         ? src.adaptiveOptimization
         : DEFAULT_GRAPHICS_SETTINGS.adaptiveOptimization,
+    uiAnimationQuality: VALID_UI_ANIM.includes(src.uiAnimationQuality as 'low' | 'medium' | 'high')
+      ? src.uiAnimationQuality
+      : DEFAULT_GRAPHICS_SETTINGS.uiAnimationQuality,
+    reducedMotion:
+      typeof src.reducedMotion === 'boolean' ? src.reducedMotion : DEFAULT_GRAPHICS_SETTINGS.reducedMotion,
+    uiEffectsEnabled:
+      typeof src.uiEffectsEnabled === 'boolean'
+        ? src.uiEffectsEnabled
+        : DEFAULT_GRAPHICS_SETTINGS.uiEffectsEnabled,
   };
   normalized.preset = detectGraphicsPreset(normalized);
   return normalized;

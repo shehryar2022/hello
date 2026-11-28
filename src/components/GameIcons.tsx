@@ -2,11 +2,15 @@ import React, { memo, useId, useState } from 'react';
 import {
   Activity,
   Anchor,
+  Atom,
   Award,
   Banknote,
   BarChart3,
+  BatteryCharging,
   Bell,
   Bird,
+  Bot,
+  Brain,
   Briefcase,
   Building2,
   Bus,
@@ -21,7 +25,9 @@ import {
   Compass,
   Cpu,
   Crown,
+  Database,
   Dog,
+  Droplets,
   Eye,
   Factory,
   Feather,
@@ -48,6 +54,7 @@ import {
   Package,
   Palette,
   Plane,
+  PlaneTakeoff,
   Rabbit,
   Radio,
   RefreshCw,
@@ -57,19 +64,24 @@ import {
   Search,
   Server,
   Shield,
+  ShieldCheck,
+  Ship,
   ShoppingBag,
   ShoppingCart,
+  Siren,
   SlidersHorizontal,
   Smile,
   Smartphone,
   Sparkles,
   Sprout,
   Star,
+  Stethoscope,
   Store,
   Sun,
   Target,
   TrainFront,
   Trash2,
+  Trees,
   TrendingUp,
   Trophy,
   Truck,
@@ -77,6 +89,7 @@ import {
   Users,
   Volume2,
   Vote,
+  Warehouse,
   Waves,
   Wheat,
   Wind,
@@ -184,11 +197,19 @@ export const BuildingIcon: React.FC<{ id: string; size?: number; color?: string 
   switch (id) {
     // Agriculture
     case 'farms':
+    case 'grain_mega_complex':
       return <Wheat {...props} />;
     case 'greenhouses':
+    case 'commercial_greenhouse':
+    case 'agri_research_center':
       return <Sprout {...props} />;
     case 'food_plant':
+    case 'dairy_plant':
       return <Package {...props} />;
+    case 'automated_farm_complex':
+      return <Truck {...props} />;
+    case 'aquaculture_hub':
+      return <Fish {...props} />;
     // Industry
     case 'small_factory':
     case 'mfg_plant':
@@ -197,50 +218,89 @@ export const BuildingIcon: React.FC<{ id: string; size?: number; color?: string 
     case 'textile_mills':
       return <ShoppingBag {...props} />;
     case 'steel_plants':
+    case 'steel_complex':
     case 'heavy_industry':
       return <Hammer {...props} />;
     case 'auto_factory':
+    case 'auto_mfg_plant':
       return <Truck {...props} />;
     case 'electronics_factory':
+    case 'elec_mfg_plant':
       return <Cpu {...props} />;
+    case 'pharma_factory':
+      return <FlaskConical {...props} />;
+    case 'robotics_facility':
+      return <Bot {...props} />;
+    case 'aerospace_works':
+      return <PlaneTakeoff {...props} />;
     // Energy
     case 'solar_plants':
+    case 'adv_solar_station':
       return <Sun {...props} />;
     case 'wind_farms':
+    case 'offshore_wind':
       return <Wind {...props} />;
+    case 'hydro_plant':
+      return <Waves {...props} />;
+    case 'nuclear_research_power':
+      return <Atom {...props} />;
+    case 'battery_mega_facility':
+      return <BatteryCharging {...props} />;
+    case 'geothermal_plant':
+      return <Flame {...props} />;
     case 'power_stations':
       return <Zap {...props} />;
     // Infrastructure
     case 'roads':
     case 'highway_network':
+    case 'mega_highway_interchange':
       return <Compass {...props} />;
     case 'railways':
+    case 'hs_railway_station':
       return <TrainFront {...props} />;
     case 'ports':
+    case 'deep_sea_port':
       return <Anchor {...props} />;
     case 'airports':
+    case 'intl_airport_terminal':
       return <Plane {...props} />;
     case 'water_plant':
       return <Waves {...props} />;
     case 'logistics_center':
-      return <Truck {...props} />;
+      return <Warehouse {...props} />;
     case 'telecom_center':
       return <Radio {...props} />;
+    case 'smart_transit_hub':
+      return <Bus {...props} />;
     // Residential
     case 'small_housing':
     case 'luxury_residences':
+    case 'premium_housing':
+    case 'affordable_housing':
       return <Home {...props} />;
+    case 'eco_homes':
+    case 'senior_living':
+      return <Trees {...props} />;
     case 'apartments':
     case 'residential_towers':
     case 'smart_housing':
+    case 'smart_apartments':
+    case 'luxury_district':
       return <Building2 {...props} />;
     // Commercial
     case 'markets':
       return <Store {...props} />;
     case 'shopping_centers':
+    case 'intl_mall':
+    case 'luxury_boulevard':
       return <ShoppingCart {...props} />;
+    case 'trading_tower':
+      return <TrendingUp {...props} />;
+    case 'biz_convention':
+      return <Globe {...props} />;
     case 'business_districts':
     case 'corporate_tower':
+    case 'corporate_plaza':
     case 'trade_center':
     case 'financial_center':
     case 'intl_hotel':
@@ -248,26 +308,48 @@ export const BuildingIcon: React.FC<{ id: string; size?: number; color?: string 
     // Technology
     case 'research_centers':
     case 'central_lab':
+    case 'biotech_incubator':
       return <FlaskConical {...props} />;
     case 'tech_parks':
+    case 'semiconductor_fab':
       return <Cpu {...props} />;
     case 'data_centers':
-      return <Server {...props} />;
+    case 'national_data_center':
+      return <Database {...props} />;
+    case 'ai_research_campus':
+      return <Brain {...props} />;
+    case 'cybersec_ops_center':
+      return <ShieldCheck {...props} />;
+    case 'quantum_lab':
+      return <Orbit {...props} />;
     // Healthcare & Education
     case 'schools':
     case 'training_centers':
       return <BookIconFallback {...props} />;
     case 'hospitals':
     case 'adv_medical':
+    case 'cancer_research_hospital':
       return <HeartPulse {...props} />;
+    case 'specialist_healthcare':
+    case 'medtech_institute':
+      return <Stethoscope {...props} />;
     case 'universities':
+    case 'national_medical_univ':
+    case 'intl_edu_campus':
       return <GraduationCap {...props} />;
     // Public Services
     case 'police_hq':
+    case 'public_safety_hq':
       return <Shield {...props} />;
     case 'fire_dept':
       return <Flame {...props} />;
+    case 'emergency_response_center':
+      return <Siren {...props} />;
+    case 'water_management_facility':
+      return <Droplets {...props} />;
     case 'govt_admin':
+    case 'smart_govt_complex':
+    case 'civic_admin_center':
       return <Landmark {...props} />;
     case 'transit_hub':
       return <Bus {...props} />;
@@ -277,8 +359,16 @@ export const BuildingIcon: React.FC<{ id: string; size?: number; color?: string 
     case 'national_bank':
       return <Banknote {...props} />;
     case 'convention_center':
+    case 'intl_expo_complex':
+    case 'world_trade_pavilion':
       return <Globe {...props} />;
+    case 'grand_national_monument':
+    case 'mega_innovation_district':
+      return <Crown {...props} />;
+    case 'intel_research_facility':
+      return <Eye {...props} />;
     case 'space_center':
+    case 'national_space_center':
       return <Rocket {...props} />;
     default:
       return <Building2 {...props} />;
@@ -308,7 +398,18 @@ export const InfraIcon: React.FC<{ id: string; size?: number }> = ({ id, size = 
     case 'hway':
       return <Wrench {...props} />;
     case 'bridge':
+    case 'seawall_shield':
       return <Waves {...props} />;
+    case 'spaceport':
+      return <Rocket {...props} />;
+    case 'fusion_grid':
+      return <Atom {...props} />;
+    case 'metro_loop':
+      return <TrainFront {...props} />;
+    case 'ai_corridor':
+      return <Brain {...props} />;
+    case 'trade_canal':
+      return <Ship {...props} />;
     default:
       return <Landmark {...props} />;
   }
@@ -366,11 +467,30 @@ export const PolicyCategoryIcon: React.FC<{ id: PolicyCategoryId | string; size?
     case 'p_emp':
       return <Briefcase {...props} />;
     case 'p_trd':
+    case 'p_mar':
       return <Anchor {...props} />;
     case 'p_nrg':
       return <Sun {...props} />;
     case 'p_inf':
       return <TrainFront {...props} />;
+    case 'p_ai':
+      return <Brain {...props} />;
+    case 'p_fin':
+      return <Banknote {...props} />;
+    case 'p_def':
+    case 'p_dig':
+      return <ShieldCheck {...props} />;
+    case 'p_env':
+      return <Leaf {...props} />;
+    case 'p_urb':
+    case 'p_hou':
+      return <Building2 {...props} />;
+    case 'p_sci':
+      return <FlaskConical {...props} />;
+    case 'p_tou':
+      return <Globe {...props} />;
+    case 'p_res':
+      return <Warehouse {...props} />;
     default:
       return <SlidersHorizontal {...props} />;
   }
@@ -479,7 +599,7 @@ export const RankEmblem: React.FC<{ rank: number; size?: number; className?: str
           <path d="M16 10.5v10M11 15.5h10" stroke="#fff" strokeWidth="1.4" strokeLinecap="round" />
         </>
       )}
-      {safeRank >= 10 && (
+      {safeRank >= 10 && safeRank <= 16 && (
         <path
           d="M9.5 19.5l1.5-7 3.5 3 1.5-5 1.5 5 3.5-3 1.5 7h-13z"
           fill={color}
@@ -487,6 +607,19 @@ export const RankEmblem: React.FC<{ rank: number; size?: number; className?: str
           strokeWidth="1.2"
           strokeLinejoin="round"
         />
+      )}
+      {safeRank >= 17 && (
+        <>
+          <circle cx="16" cy="15.5" r="7.2" stroke={color} strokeOpacity="0.65" strokeWidth="1.1" strokeDasharray="2 2" />
+          <path
+            d="M9.5 19.5l1.5-7 3.5 3 1.5-5 1.5 5 3.5-3 1.5 7h-13z"
+            fill={color}
+            stroke="#fff"
+            strokeWidth="1.35"
+            strokeLinejoin="round"
+          />
+          <circle cx="16" cy="8.5" r="1.4" fill="#fff" />
+        </>
       )}
     </svg>
   );
@@ -556,7 +689,60 @@ function stickerIconElement(id: string, color: string, size: number) {
     case 'atlas':
       return <Globe {...props} />;
     case 'nebula':
+    case 'qubit':
       return <Orbit {...props} />;
+    case 'scepter':
+    case 'throne':
+    case 'tiara':
+      return <Crown {...props} />;
+    case 'sigil':
+    case 'aegis':
+      return <ShieldCheck {...props} />;
+    case 'bullion':
+    case 'ledger':
+      return <Coins {...props} />;
+    case 'vault_key':
+    case 'penthouse':
+      return <Building2 {...props} />;
+    case 'ticker':
+      return <Bell {...props} />;
+    case 'arch':
+    case 'torch':
+      return <Landmark {...props} />;
+    case 'olive':
+      return <Leaf {...props} />;
+    case 'chip':
+      return <Cpu {...props} />;
+    case 'neural':
+      return <Brain {...props} />;
+    case 'drone':
+    case 'shuttle':
+    case 'lunar_base':
+    case 'mars_rover':
+    case 'rx_rocket_launch':
+      return <Rocket {...props} />;
+    case 'wings':
+      return <PlaneTakeoff {...props} />;
+    case 'compass':
+    case 'comet':
+      return <Compass {...props} />;
+    case 'yacht':
+      return <Ship {...props} />;
+    case 'chronograph':
+      return <Clock {...props} />;
+    case 'champagne':
+    case 'rx_spark':
+    case 'rx_applause':
+      return <Sparkles {...props} />;
+    case 'laurel':
+      return <Trophy {...props} />;
+    case 'eternal_star':
+    case 'v2_horizon_seal':
+      return <Star {...props} />;
+    case 'rx_boom':
+      return <Flame {...props} />;
+    case 'v2_founder_prism':
+      return <Gem {...props} />;
     default:
       return <Star {...props} />;
   }

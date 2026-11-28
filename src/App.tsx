@@ -127,6 +127,7 @@ import {
   ACHIEVEMENTS,
   BOOSTERS,
   BUILDINGS,
+  CHALLENGES_2_0,
   COUNTRIES,
   DAILY_REWARDS,
   EXEC_DECISIONS,
@@ -144,6 +145,8 @@ import {
   SUBSCRIPTIONS,
   TAB_META,
   TECH_TREE,
+  TRADE_GOODS,
+  TRADE_MILESTONES,
   WEEKLY_MISSIONS,
 } from './game/constants';
 import {
@@ -159,10 +162,12 @@ import {
   applyBuyCosmeticBundle,
   applyBuyCosmeticItem,
   applyBuyRank,
+  applyBuyStickerWithDiamonds,
   applyBuySubscription,
   applyChangeGov,
   applyChangePolicyStance,
   applyClaimAchievement,
+  applyClaimDailyQuest,
   applyClaimDailySlot,
   applyClaimWeeklyMission,
   applyCollectTax,
@@ -174,16 +179,22 @@ import {
   applyOfflineEarnings,
   applySelectTheme,
   applySetBuildingPolicy,
+  applyStartBuildingUpgrade,
+  applyStartLocalMegaProject,
+  applyStartResearch,
+  applyStartTradeContract,
   applyUnlockTech,
-  applyUpgradeBuilding,
   buyStickerCrate,
   calculateGdp,
   calculateIncome,
   calculateOfflineRank,
   calculateOnlineRank,
   canBuySubscription,
+  claimChallenge,
+  claimLocalMegaProject,
   claimMilestone,
   claimSubscriptionDaily,
+  claimTradeMilestone,
   cleanStickersMap,
   computeDailyAndOfflineChecks,
   formatCoinsCompact,
@@ -209,6 +220,10 @@ import {
   shouldRunOfflineEntryCheck,
   targetHappiness,
   tickConstructionQueue,
+  tickIntlTradeContracts,
+  tickLocalMegaProjects,
+  tickResearchQueue,
+  tickUpgradeQueue,
   tierOfCompletedTrades,
   toggleItemInPreviewLoadout,
   weekKeyFor,
@@ -253,6 +268,7 @@ import type {
   ShopSubTab,
   SubscriptionTierId,
   TabId,
+  TradeGoodId,
   TradeOffer,
 } from './game/types';
 
@@ -696,10 +712,23 @@ export default function App() {
     };
   }, []);
 
-  // Keep body classes synced with animation preference and modal/gate/update state
+  // Keep body classes synced with animation preference, graphics UI FX settings, and modal/gate/update state
   useEffect(() => {
     document.body.classList.toggle('noanim', !state.set.anim);
   }, [state.set.anim]);
+
+  useEffect(() => {
+    document.body.classList.toggle('reduced-motion', Boolean(graphicsSettings.reducedMotion));
+    document.body.classList.toggle('ui-fx-off', graphicsSettings.uiEffectsEnabled === false);
+    document.body.classList.toggle(
+      'ui-fx-low',
+      graphicsSettings.uiEffectsEnabled !== false && graphicsSettings.uiAnimationQuality === 'low',
+    );
+  }, [
+    graphicsSettings.reducedMotion,
+    graphicsSettings.uiEffectsEnabled,
+    graphicsSettings.uiAnimationQuality,
+  ]);
 
   useEffect(() => {
     document.body.classList.toggle('modal-open', anyModalOpen);
@@ -2130,6 +2159,10 @@ export default function App() {
       let passiveEvent: { kind: 'bonus' | 'fine'; amt: number } | null = null;
       const curSnap = stateRef.current;
       const queueCompleted = tickConstructionQueue(curSnap, nowSrv).completed;
+      const upgradeCompleted = tickUpgradeQueue(curSnap, nowSrv).completed;
+      const researchCompleted = tickResearchQueue(curSnap, nowSrv).completedName;
+      const tradeSettled = tickIntlTradeContracts(curSnap, nowSrv).settled;
+      const megaCompleted = tickLocalMegaProjects(curSnap, nowSrv).finishedTypes;
       const expiredSubTier =
         curSnap.sub?.tier && curSnap.sub?.exp && curSnap.sub.exp <= nowSrv ? curSnap.sub : null;
       const expiredSubKey = expiredSubTier ? `${expiredSubTier.tier}_${expiredSubTier.exp}` : '';
@@ -2273,12 +2306,50 @@ export default function App() {
           t: now,
         };
 
-        return tickConstructionQueue(nextNational, nowSrv).state;
+        let nextSim = tickConstructionQueue(nextNational, nowSrv).state;
+        nextSim = tickUpgradeQueue(nextSim, nowSrv).state;
+        nextSim = tickResearchQueue(nextSim, nowSrv).state;
+        nextSim = tickIntlTradeContracts(nextSim, nowSrv).state;
+        nextSim = tickLocalMegaProjects(nextSim, nowSrv).state;
+        return nextSim;
       });
 
       if (queueCompleted.length > 0) {
         const label = queueCompleted.map((c) => (c.qty > 1 ? `${c.name} ×${c.qty}` : c.name)).join(', ');
         addToast(`Construction complete: ${label}!`);
+        playSfx('win', !!curSnap.set.sfx);
+        scheduleCloudSync(SYNC_COALESCE_DEBOUNCE_MS);
+      }
+
+      if (upgradeCompleted.length > 0) {
+        const label = upgradeCompleted.map((u) => `${u.name} Lv ${u.toLevel}`).join(', ');
+        addToast(`Upgrade complete: ${label}!`);
+        playSfx('win', !!curSnap.set.sfx);
+        scheduleCloudSync(SYNC_COALESCE_DEBOUNCE_MS);
+      }
+
+      if (researchCompleted) {
+        addToast(`Research completed: ${researchCompleted}!`);
+        playSfx('win', !!curSnap.set.sfx);
+        scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      }
+
+      if (tradeSettled.length > 0) {
+        const expTotal = tradeSettled
+          .filter((c) => c.direction === 'export')
+          .reduce((acc, c) => acc + c.totalValue, 0);
+        addToast(
+          expTotal > 0
+            ? `Trade shipment settled (+₨ ${formatNumber(expTotal)})!`
+            : `Import shipment arrived (+3m market supply boost)!`,
+        );
+        playSfx('coin', !!curSnap.set.sfx);
+        scheduleCloudSync(SYNC_COALESCE_DEBOUNCE_MS);
+      }
+
+      if (megaCompleted.length > 0) {
+        const label = megaCompleted.map((t) => GX_PROJECT_TYPES[t]?.n || t).join(', ');
+        addToast(`Mega Project ready to claim: ${label}!`);
         playSfx('win', !!curSnap.set.sfx);
         scheduleCloudSync(SYNC_COALESCE_DEBOUNCE_MS);
       }
@@ -2850,17 +2921,24 @@ export default function App() {
     (id: string) => {
       if (isGameplayBlocked()) return;
       const nowSrv = Date.now() + serverOffsetMsRef.current;
-      const res = applyUpgradeBuilding(stateRef.current, id, nowSrv);
-      if (!res.ok) return;
+      const def = BUILDINGS.find((b) => b.id === id);
+      const res = applyStartBuildingUpgrade(stateRef.current, id, nowSrv);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
       stateRef.current = res.state;
       saveLocal(res.state);
       playSfx('buy', !!res.state.set.sfx);
+      triggerBuzz(15, !!res.state.set.vib);
       setState((prev) => {
-        const recheck = applyUpgradeBuilding(prev, id, nowSrv);
+        const recheck = applyStartBuildingUpgrade(prev, id, nowSrv);
         return recheck.ok ? recheck.state : prev;
       });
       scheduleCloudSync(SYNC_COALESCE_DEBOUNCE_MS);
-      addToast('Building upgraded!');
+      const durText = res.slot ? `${res.slot.totalSec}s` : '';
+      const targetLvl = res.slot ? `Lv ${res.slot.toLevel}` : '';
+      addToast(`Upgrading ${def?.n || id} to ${targetLvl} (${durText})!`);
     },
     [isGameplayBlocked, addToast, saveLocal, scheduleCloudSync],
   );
@@ -2890,6 +2968,149 @@ export default function App() {
       addToast(`Researched ${tDef.n}!`);
     },
     [isGameplayBlocked, addToast, spawnFloat, saveLocal, scheduleCloudSync],
+  );
+
+  const handleStartResearch = useCallback(
+    (techId: string, e: React.MouseEvent<HTMLButtonElement>) => {
+      if (isGameplayBlocked()) return;
+      const tDef = TECH_TREE.find((x) => x.id === techId);
+      if (!tDef) return;
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const res = applyStartResearch(stateRef.current, techId, nowSrv);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('buy', !!res.state.set.sfx);
+      triggerBuzz(16, !!res.state.set.vib);
+      const rect = e.currentTarget.getBoundingClientRect();
+      spawnFloat(`${tDef.n} (${res.durSec}s)`, rect.left + rect.width / 2, rect.top, '#a88bff');
+      setState((prev) => {
+        const recheck = applyStartResearch(prev, techId, nowSrv);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      addToast(`Research started: ${tDef.n} (${res.durSec}s)`);
+    },
+    [isGameplayBlocked, addToast, spawnFloat, saveLocal, scheduleCloudSync],
+  );
+
+  const handleStartLocalMegaProject = useCallback(
+    (type: ProjectType) => {
+      if (isGameplayBlocked()) return;
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const def = GX_PROJECT_TYPES[type];
+      const res = applyStartLocalMegaProject(stateRef.current, type, nowSrv);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('buy', !!res.state.set.sfx);
+      triggerBuzz(18, !!res.state.set.vib);
+      setState((prev) => {
+        const recheck = applyStartLocalMegaProject(prev, type, nowSrv);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      addToast(`Mega Project launched: ${def?.n || type}!`);
+    },
+    [isGameplayBlocked, addToast, saveLocal, scheduleCloudSync],
+  );
+
+  const handleClaimLocalMegaProject = useCallback(
+    (projectId: string) => {
+      if (isGameplayBlocked()) return;
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const res = claimLocalMegaProject(stateRef.current, projectId, nowSrv);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(22, !!res.state.set.vib);
+      setState((prev) => {
+        const recheck = claimLocalMegaProject(prev, projectId, nowSrv);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      addToast(`Mega Project completed! +₨ ${formatNumber(res.coinsAdded)} & +${res.gemsAdded} Diamonds`);
+    },
+    [isGameplayBlocked, addToast, saveLocal, scheduleCloudSync],
+  );
+
+  const handleStartTradeContract = useCallback(
+    (goodId: TradeGoodId, partner: string, direction: 'export' | 'import', units: number) => {
+      if (isGameplayBlocked()) return;
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const res = applyStartTradeContract(stateRef.current, goodId, partner, direction, units, nowSrv);
+      if (!res.ok || !res.contract) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('buy', !!res.state.set.sfx);
+      triggerBuzz(14, !!res.state.set.vib);
+      setState((prev) => {
+        const recheck = applyStartTradeContract(prev, goodId, partner, direction, units, nowSrv);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_COALESCE_DEBOUNCE_MS);
+      const goodName = TRADE_GOODS.find((g) => g.id === goodId)?.name || goodId;
+      addToast(`${direction === 'export' ? 'Export' : 'Import'} dispatched: ${units}× ${goodName} (${res.contract.durSec}s)`);
+    },
+    [isGameplayBlocked, addToast, saveLocal, scheduleCloudSync],
+  );
+
+  const handleClaimTradeMilestone = useCallback(
+    (milestoneId: string) => {
+      if (isGameplayBlocked()) return;
+      const res = claimTradeMilestone(stateRef.current, milestoneId);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(18, !!res.state.set.vib);
+      setState((prev) => {
+        const recheck = claimTradeMilestone(prev, milestoneId);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      const label = TRADE_MILESTONES.find((m) => m.id === milestoneId)?.label || 'Trade Milestone';
+      addToast(`${label} claimed! +₨ ${formatNumber(res.rewardCoins)} & +${res.rewardGems} Diamonds`);
+    },
+    [isGameplayBlocked, addToast, saveLocal, scheduleCloudSync],
+  );
+
+  const handleBuyStickerWithDiamonds = useCallback(
+    (stickerId: string) => {
+      if (isGameplayBlocked()) return;
+      const res = applyBuyStickerWithDiamonds(stateRef.current, stickerId);
+      if (!res.ok || !res.sticker) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(18, !!res.state.set.vib);
+      setState((prev) => {
+        const recheck = applyBuyStickerWithDiamonds(prev, stickerId);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      addToast(`Unlocked ${res.sticker.n} Sticker (−${res.cost} Diamonds)!`);
+    },
+    [isGameplayBlocked, addToast, saveLocal, scheduleCloudSync],
   );
 
   const handleStartProject = useCallback(
@@ -3246,6 +3467,7 @@ export default function App() {
             cosNameFx: eq.nameEffect || '',
             cosBadge: eq.badge || '',
             cosAnim: eq.anim || '',
+            cosLbAnim: eq.lbAnim || '',
           }
         : prev,
     );
@@ -3800,6 +4022,64 @@ export default function App() {
       scheduleCloudSync,
       spawnFloat,
     ],
+  );
+
+  const handleClaimDailyQuest = useCallback(
+    (questId: string, e: React.MouseEvent<HTMLButtonElement>) => {
+      const lockKey = `dq_${questId}`;
+      if (isGameplayBlocked() || rewardClaimBusyRef.current.has(lockKey)) return;
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const activeDay = dayKeyFor(nowSrv);
+      const rankPos = rankPositionRef.current;
+      const res = applyClaimDailyQuest(stateRef.current, questId, activeDay, rankPos);
+      if (!res.ok || !res.quest) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      rewardClaimBusyRef.current.add(lockKey);
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(18, !!res.state.set.vib);
+      const rect = e.currentTarget.getBoundingClientRect();
+      spawnFloat(`+${res.diamondsAdded} Diamonds`, rect.left + rect.width / 2, rect.top, '#3fe0b0');
+      setState((prev) => {
+        const recheck = applyClaimDailyQuest(prev, questId, activeDay, rankPos);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      addToast(`Daily Quest claimed! +₨ ${formatNumber(res.coinsAdded)} & +${res.diamondsAdded} Diamonds`);
+      queueMicrotask(() => rewardClaimBusyRef.current.delete(lockKey));
+    },
+    [addToast, isGameplayBlocked, saveLocal, scheduleCloudSync, spawnFloat],
+  );
+
+  const handleClaimChallenge = useCallback(
+    (challengeId: string, e: React.MouseEvent<HTMLButtonElement>) => {
+      const lockKey = `chal_${challengeId}`;
+      if (isGameplayBlocked() || rewardClaimBusyRef.current.has(lockKey)) return;
+      const res = claimChallenge(stateRef.current, challengeId);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      rewardClaimBusyRef.current.add(lockKey);
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(20, !!res.state.set.vib);
+      const rect = e.currentTarget.getBoundingClientRect();
+      spawnFloat(`+${res.gemsAdded} Diamonds`, rect.left + rect.width / 2, rect.top, '#ffc23d');
+      setState((prev) => {
+        const recheck = claimChallenge(prev, challengeId);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      const chName = CHALLENGES_2_0.find((c) => c.id === challengeId)?.name || 'Challenge';
+      addToast(`${chName} claimed! +₨ ${formatNumber(res.coinsAdded)} & +${res.gemsAdded} Diamonds`);
+      queueMicrotask(() => rewardClaimBusyRef.current.delete(lockKey));
+    },
+    [addToast, isGameplayBlocked, saveLocal, scheduleCloudSync, spawnFloat],
   );
 
   const handleEnactDecision = useCallback(
@@ -4982,6 +5262,7 @@ export default function App() {
                 state={state}
                 serverOffsetMs={serverOffsetMs}
                 onBuyBuilding={handleBuyBuilding}
+                onUpgradeBuilding={handleUpgradeBuilding}
                 onDemolishBuilding={handleDemolishBuilding}
                 onFocusBuilding={handleFocusBuilding}
               />
@@ -5001,6 +5282,11 @@ export default function App() {
                 onStartProject={handleStartProjectCb}
                 onPayProjectStage={handlePayProjectStageCb}
                 onUnlockTech={handleUnlockTech}
+                onStartResearch={handleStartResearch}
+                onStartLocalMegaProject={handleStartLocalMegaProject}
+                onClaimLocalMegaProject={handleClaimLocalMegaProject}
+                onStartTradeContract={handleStartTradeContract}
+                onClaimTradeMilestone={handleClaimTradeMilestone}
                 onEnactDecision={handleEnactDecision}
               />
             )}
@@ -5046,6 +5332,7 @@ export default function App() {
                 serverOffsetMs={serverOffsetMs}
                 onFuseSticker={handleFuseSticker}
                 onBuyCrate={handleBuyStickerCrate}
+                onBuyStickerWithDiamonds={handleBuyStickerWithDiamonds}
               />
             )}
             {tab === 'trade' && (
@@ -5075,8 +5362,10 @@ export default function App() {
                 rankPosition={rankPosition}
                 serverOffsetMs={serverOffsetMs}
                 onClaimDailySlot={handleClaimDailySlot}
+                onClaimDailyQuest={handleClaimDailyQuest}
                 onClaimWeekly={handleClaimWeeklyMission}
                 onClaimAchievement={handleClaimAchievement}
+                onClaimChallenge={handleClaimChallenge}
                 onClaimMilestone={handleClaimMilestone}
               />
             )}

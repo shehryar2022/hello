@@ -191,6 +191,96 @@
   --cy: #7ee8ff;
 }
 
+[data-theme="imperial_obsidian"] {
+  --bg: #111217;
+  --bg-top: #1b1d26;
+  --bg-glow: rgba(212, 163, 89, 0.2);
+  --well: #151720;
+  --well-deep: #0d0e14;
+  --clay: #1d202b;
+  --clay2: #272b39;
+  --clay3: #32374a;
+  --hero-top: #2c2824;
+  --line: rgba(212, 163, 89, 0.22);
+  --tx: #f8f6f0;
+  --mu: #b5b2a8;
+  --blue: #b4833e;
+  --vio: #d4a359;
+  --gold: #ecc26c;
+}
+
+[data-theme="sapphire_monarch"] {
+  --bg: #08122b;
+  --bg-top: #0f2049;
+  --bg-glow: rgba(96, 165, 250, 0.24);
+  --well: #0b1939;
+  --well-deep: #060f24;
+  --clay: #10244e;
+  --clay2: #163166;
+  --clay3: #1e3f80;
+  --hero-top: #1a3a75;
+  --line: rgba(147, 197, 253, 0.22);
+  --tx: #f0f6ff;
+  --mu: #a3c0e8;
+  --blue: #2563eb;
+  --vio: #60a5fa;
+  --cy: #93c5fd;
+}
+
+[data-theme="jade_dynasty"] {
+  --bg: #071917;
+  --bg-top: #0d2b27;
+  --bg-glow: rgba(45, 212, 191, 0.22);
+  --well: #09201d;
+  --well-deep: #051412;
+  --clay: #0e2c28;
+  --clay2: #143a35;
+  --clay3: #1b4a44;
+  --hero-top: #15453d;
+  --line: rgba(94, 234, 212, 0.2);
+  --tx: #f0fdfa;
+  --mu: #9dd4cb;
+  --blue: #0d9488;
+  --vio: #2dd4bf;
+  --gold: #fcd34d;
+}
+
+[data-theme="solar_eclipse"] {
+  --bg: #150e12;
+  --bg-top: #26161d;
+  --bg-glow: rgba(251, 146, 60, 0.24);
+  --well: #1b1116;
+  --well-deep: #10090d;
+  --clay: #25171e;
+  --clay2: #33202a;
+  --clay3: #422937;
+  --hero-top: #45231b;
+  --line: rgba(253, 186, 116, 0.22);
+  --tx: #fff8f3;
+  --mu: #dab6b6;
+  --blue: #ea580c;
+  --vio: #fb923c;
+  --gold: #fde047;
+}
+
+[data-theme="platinum_vault"] {
+  --bg: #0e131c;
+  --bg-top: #18202e;
+  --bg-glow: rgba(226, 232, 240, 0.18);
+  --well: #121823;
+  --well-deep: #0a0e15;
+  --clay: #1a2332;
+  --clay2: #243044;
+  --clay3: #2f3e57;
+  --hero-top: #28364d;
+  --line: rgba(226, 232, 240, 0.2);
+  --tx: #f8fafc;
+  --mu: #b2c2d6;
+  --blue: #3b82f6;
+  --vio: #cbd5e1;
+  --cy: #7dd3fc;
+}
+
 * {
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
@@ -2935,74 +3025,58 @@ body.update-locked {
   opacity: 0;
 }
 
+/* Static profile borders only — zero profile frame or character animations */
 .cos-frame--frame_neon::before {
   opacity: 1;
   background: linear-gradient(135deg, #3fd2ff, #a855f7, #3fd2ff);
-  background-size: 200% 200%;
-  animation: cosGradShift 3s linear infinite;
-  box-shadow: 0 0 12px rgba(63, 210, 255, 0.65);
+  box-shadow: 0 0 10px rgba(63, 210, 255, 0.55);
 }
 .cos-frame--frame_rainbow::before {
   opacity: 1;
   background: conic-gradient(from 0deg, #ff5f9e, #ffc93c, #3fe0b0, #3fd2ff, #a855f7, #ff5f9e);
-  animation: cosSpinPulse 4s linear infinite;
 }
 .cos-frame--frame_galaxy::before {
   opacity: 1;
   background: linear-gradient(135deg, #4f46e5, #a855f7, #06b6d4, #6366f1);
-  background-size: 260% 260%;
-  animation: cosGradShift 4.5s ease-in-out infinite;
-  box-shadow: 0 0 12px rgba(155, 109, 255, 0.55);
+  box-shadow: 0 0 10px rgba(155, 109, 255, 0.5);
 }
 .cos-frame--frame_aurora::before {
   opacity: 1;
   background: linear-gradient(135deg, #37e6a0, #22d3ee, #818cf8, #37e6a0);
-  background-size: 240% 240%;
-  animation: cosGradShift 4s ease-in-out infinite;
-  box-shadow: 0 0 11px rgba(55, 230, 160, 0.52);
+  box-shadow: 0 0 10px rgba(55, 230, 160, 0.48);
 }
 .cos-frame--frame_lightning::before {
   opacity: 1;
   background: linear-gradient(135deg, #38bdf8, #fde047, #60a5fa, #facc15);
-  background-size: 240% 240%;
-  animation: cosLightning 1.9s linear infinite;
-  box-shadow: 0 0 14px rgba(96, 165, 250, 0.68);
+  box-shadow: 0 0 12px rgba(96, 165, 250, 0.58);
 }
 .cos-frame--frame_royal_gold::before {
   opacity: 1;
   background: linear-gradient(135deg, #fde047, #b45309, #ffd257, #f59e0b);
-  background-size: 220% 220%;
-  animation: cosGradShift 3.6s ease-in-out infinite;
-  box-shadow: 0 0 13px rgba(255, 201, 60, 0.62);
+  box-shadow: 0 0 12px rgba(255, 201, 60, 0.56);
 }
 .cos-frame--frame_holographic::before {
   opacity: 1;
   background: linear-gradient(135deg, #a5f3fc, #f9a8d4, #fde68a, #c4b5fd, #a5f3fc);
-  background-size: 300% 300%;
-  animation: cosGradShift 3.2s linear infinite;
-  box-shadow: 0 0 12px rgba(244, 114, 182, 0.5);
+  box-shadow: 0 0 11px rgba(244, 114, 182, 0.46);
 }
 .cos-frame--frame_diamond_crystal::before {
   opacity: 1;
   background: linear-gradient(135deg, #e0f2fe, #38bdf8, #ffffff, #67e8f9);
-  background-size: 240% 240%;
-  animation: cosGradShift 3s ease-in-out infinite;
-  box-shadow: 0 0 14px rgba(126, 232, 255, 0.72);
+  box-shadow: 0 0 12px rgba(126, 232, 255, 0.65);
 }
 .cos-frame--frame_legendary::before {
   opacity: 1;
   background: conic-gradient(from 0deg, #fbbf24, #c084fc, #38bdf8, #f472b6, #fbbf24);
-  animation: cosSpinPulse 3.5s linear infinite;
-  box-shadow: 0 0 16px rgba(251, 191, 36, 0.65);
+  box-shadow: 0 0 14px rgba(251, 191, 36, 0.6);
 }
 .cos-frame--frame_seasonal::before {
   opacity: 1;
   background: linear-gradient(135deg, #fb7185, #fde047, #f472b6, #fb7185);
-  background-size: 240% 240%;
-  animation: cosGradShift 3.4s ease-in-out infinite;
-  box-shadow: 0 0 13px rgba(251, 113, 133, 0.62);
+  box-shadow: 0 0 12px rgba(251, 113, 133, 0.56);
 }
 
+/* ==================== TYPOGRAPHY FX (22 STYLES) ==================== */
 .cos-nfx {
   display: inline-block;
   font-weight: 800;
@@ -3015,43 +3089,49 @@ body.update-locked {
 .cos-nfx--nfx_royal_gold,
 .cos-nfx--nfx_holographic,
 .cos-nfx--nfx_diamond,
-.cos-nfx--nfx_legendary {
+.cos-nfx--nfx_legendary,
+.cos-nfx--nfx_crimson_blaze,
+.cos-nfx--nfx_emerald_pulse,
+.cos-nfx--nfx_amber_ledger,
+.cos-nfx--nfx_frost_crystal,
+.cos-nfx--nfx_cobalt_laser,
+.cos-nfx--nfx_obsidian_silver,
+.cos-nfx--nfx_solar_flare,
+.cos-nfx--nfx_amethyst_royal,
+.cos-nfx--nfx_rose_velvet,
+.cos-nfx--nfx_titanium_chrome,
+.cos-nfx--nfx_cyber_glitch,
+.cos-nfx--nfx_plasma_wave,
+.cos-nfx--nfx_starlight_serif,
+.cos-nfx--nfx_imperial_prism {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
   background-size: 240% 100%;
   animation: cosTextFlow 3.6s linear infinite;
 }
-.cos-nfx--nfx_animated_grad {
-  background-image: linear-gradient(90deg, #5ccbff, #a58cff, #3fe0b0, #5ccbff);
-}
-.cos-nfx--nfx_rainbow {
-  background-image: linear-gradient(90deg, #ff79b0, #ffd457, #3fe0b0, #5ccbff, #c084fc, #ff79b0);
-  background-size: 300% 100%;
-}
-.cos-nfx--nfx_neon {
-  background-image: linear-gradient(90deg, #67e8f9, #818cf8, #22d3ee, #67e8f9);
-  filter: drop-shadow(0 0 6px rgba(34, 211, 238, 0.5));
-}
-.cos-nfx--nfx_electric {
-  background-image: linear-gradient(90deg, #60a5fa, #fde047, #93c5fd, #facc15);
-  filter: drop-shadow(0 0 5px rgba(250, 204, 21, 0.45));
-}
-.cos-nfx--nfx_royal_gold {
-  background-image: linear-gradient(90deg, #fde047, #f59e0b, #fff3b0, #d97706, #fde047);
-  filter: drop-shadow(0 0 6px rgba(255, 201, 60, 0.48));
-}
-.cos-nfx--nfx_holographic {
-  background-image: linear-gradient(90deg, #a5f3fc, #f9a8d4, #fef08a, #c4b5fd, #a5f3fc);
-}
-.cos-nfx--nfx_diamond {
-  background-image: linear-gradient(90deg, #ffffff, #7ee8ff, #bae6fd, #ffffff);
-  filter: drop-shadow(0 0 6px rgba(126, 232, 255, 0.58));
-}
-.cos-nfx--nfx_legendary {
-  background-image: linear-gradient(90deg, #fbbf24, #e879f9, #7ee8ff, #fbbf24);
-  filter: drop-shadow(0 0 8px rgba(232, 121, 249, 0.5));
-}
+.cos-nfx--nfx_animated_grad { background-image: linear-gradient(90deg, #5ccbff, #a58cff, #3fe0b0, #5ccbff); }
+.cos-nfx--nfx_rainbow { background-image: linear-gradient(90deg, #ff79b0, #ffd457, #3fe0b0, #5ccbff, #c084fc, #ff79b0); background-size: 300% 100%; }
+.cos-nfx--nfx_neon { background-image: linear-gradient(90deg, #67e8f9, #818cf8, #22d3ee, #67e8f9); filter: drop-shadow(0 0 6px rgba(34, 211, 238, 0.5)); }
+.cos-nfx--nfx_electric { background-image: linear-gradient(90deg, #60a5fa, #fde047, #93c5fd, #facc15); filter: drop-shadow(0 0 5px rgba(250, 204, 21, 0.45)); }
+.cos-nfx--nfx_royal_gold { background-image: linear-gradient(90deg, #fde047, #f59e0b, #fff3b0, #d97706, #fde047); filter: drop-shadow(0 0 6px rgba(255, 201, 60, 0.48)); }
+.cos-nfx--nfx_holographic { background-image: linear-gradient(90deg, #a5f3fc, #f9a8d4, #fef08a, #c4b5fd, #a5f3fc); }
+.cos-nfx--nfx_diamond { background-image: linear-gradient(90deg, #ffffff, #7ee8ff, #bae6fd, #ffffff); filter: drop-shadow(0 0 6px rgba(126, 232, 255, 0.58)); }
+.cos-nfx--nfx_legendary { background-image: linear-gradient(90deg, #fbbf24, #e879f9, #7ee8ff, #fbbf24); filter: drop-shadow(0 0 8px rgba(232, 121, 249, 0.5)); }
+.cos-nfx--nfx_crimson_blaze { background-image: linear-gradient(90deg, #fb7185, #f97316, #fda4af, #fb7185); }
+.cos-nfx--nfx_emerald_pulse { background-image: linear-gradient(90deg, #34d399, #2dd4bf, #a7f3d0, #34d399); }
+.cos-nfx--nfx_amber_ledger { background-image: linear-gradient(90deg, #f59e0b, #fde68a, #fbbf24, #f59e0b); }
+.cos-nfx--nfx_frost_crystal { background-image: linear-gradient(90deg, #e0f2fe, #38bdf8, #bae6fd, #e0f2fe); filter: drop-shadow(0 0 5px rgba(56, 189, 248, 0.4)); }
+.cos-nfx--nfx_cobalt_laser { background-image: linear-gradient(90deg, #3b82f6, #22d3ee, #93c5fd, #3b82f6); letter-spacing: 0.02em; }
+.cos-nfx--nfx_obsidian_silver { background-image: linear-gradient(90deg, #94a3b8, #f8fafc, #cbd5e1, #94a3b8); }
+.cos-nfx--nfx_solar_flare { background-image: linear-gradient(90deg, #fb923c, #fde047, #f97316, #fb923c); filter: drop-shadow(0 0 6px rgba(251, 146, 60, 0.46)); }
+.cos-nfx--nfx_amethyst_royal { background-image: linear-gradient(90deg, #c084fc, #e879f9, #f5d0fe, #c084fc); filter: drop-shadow(0 0 6px rgba(192, 132, 252, 0.45)); }
+.cos-nfx--nfx_rose_velvet { background-image: linear-gradient(90deg, #fda4af, #fcd34d, #ffe4e6, #fda4af); }
+.cos-nfx--nfx_titanium_chrome { background-image: linear-gradient(90deg, #cbd5e1, #38bdf8, #ffffff, #cbd5e1); letter-spacing: 0.03em; }
+.cos-nfx--nfx_cyber_glitch { background-image: linear-gradient(90deg, #00e5ff, #ff3dc8, #67e8f9, #00e5ff); filter: drop-shadow(0 0 7px rgba(0, 229, 255, 0.48)); }
+.cos-nfx--nfx_plasma_wave { background-image: linear-gradient(90deg, #818cf8, #34d399, #38bdf8, #e879f9, #818cf8); background-size: 300% 100%; }
+.cos-nfx--nfx_starlight_serif { background-image: linear-gradient(90deg, #fef08a, #7ee8ff, #ffffff, #fef08a); letter-spacing: 0.03em; filter: drop-shadow(0 0 7px rgba(254, 240, 138, 0.52)); }
+.cos-nfx--nfx_imperial_prism { background-image: linear-gradient(90deg, #fde047, #f472b6, #7ee8ff, #fde047); background-size: 300% 100%; letter-spacing: 0.04em; filter: drop-shadow(0 0 8px rgba(126, 232, 255, 0.55)); }
 
 .cos-badge {
   display: inline-flex;
@@ -3067,7 +3147,61 @@ body.update-locked {
   flex-shrink: 0;
 }
 
-/* Card cosmetic animations (progressive quality from Basic 55 to Ultra Exclusive 585) */
+/* ==================== LEADERBOARD ROW ANIMATIONS (16 GPU-COMPOSITED STYLES) ==================== */
+.lb-fx {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.lb-fx::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.35;
+  transform: translateX(-100%);
+  animation: lbSweep 4.8s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+.lb-fx > * {
+  position: relative;
+  z-index: 1;
+}
+.lb-fx--lb_silver_edge { box-shadow: 0 0 0 1.5px rgba(203, 213, 225, 0.55), var(--sm); }
+.lb-fx--lb_silver_edge::after { background: linear-gradient(105deg, transparent 25%, rgba(248, 250, 252, 0.18) 50%, transparent 75%); }
+.lb-fx--lb_jade_flow { box-shadow: 0 0 0 1.5px rgba(63, 224, 176, 0.55), var(--sm); }
+.lb-fx--lb_jade_flow::after { background: linear-gradient(105deg, transparent 20%, rgba(63, 224, 176, 0.22) 50%, transparent 80%); }
+.lb-fx--lb_amber_beacon { box-shadow: 0 0 0 1.5px rgba(245, 158, 11, 0.58), var(--sm); }
+.lb-fx--lb_amber_beacon::after { background: linear-gradient(105deg, transparent 20%, rgba(253, 230, 138, 0.22) 50%, transparent 80%); }
+.lb-fx--lb_cyan_scan { box-shadow: 0 0 0 1.5px rgba(56, 189, 248, 0.62), var(--sm); }
+.lb-fx--lb_cyan_scan::after { background: linear-gradient(105deg, transparent 30%, rgba(56, 189, 248, 0.28) 50%, transparent 70%); animation-duration: 3.8s; }
+.lb-fx--lb_emerald_glow { box-shadow: 0 0 0 1.5px rgba(52, 211, 153, 0.65), 0 0 16px rgba(52, 211, 153, 0.2), var(--sm); }
+.lb-fx--lb_emerald_glow::after { background: linear-gradient(105deg, transparent 25%, rgba(52, 211, 153, 0.26) 50%, transparent 75%); }
+.lb-fx--lb_indigo_wave { box-shadow: 0 0 0 1.5px rgba(129, 140, 248, 0.62), var(--sm); }
+.lb-fx--lb_indigo_wave::after { background: linear-gradient(105deg, transparent 20%, rgba(129, 140, 248, 0.28) 50%, transparent 80%); }
+.lb-fx--lb_ruby_pulse { box-shadow: 0 0 0 1.5px rgba(251, 113, 133, 0.68), 0 0 16px rgba(251, 113, 133, 0.22), var(--sm); }
+.lb-fx--lb_ruby_pulse::after { background: linear-gradient(105deg, transparent 22%, rgba(251, 113, 133, 0.28) 50%, transparent 78%); }
+.lb-fx--lb_royal_shimmer { box-shadow: 0 0 0 1.5px rgba(192, 132, 252, 0.68), var(--sm); }
+.lb-fx--lb_royal_shimmer::after { background: linear-gradient(105deg, transparent 20%, rgba(192, 132, 252, 0.28) 48%, rgba(251, 191, 36, 0.22) 60%, transparent 82%); }
+.lb-fx--lb_gold_sweep { box-shadow: 0 0 0 2px rgba(255, 201, 60, 0.72), 0 0 18px rgba(255, 201, 60, 0.24), var(--sm); }
+.lb-fx--lb_gold_sweep::after { background: linear-gradient(105deg, transparent 22%, rgba(255, 201, 60, 0.34) 50%, transparent 78%); animation-duration: 3.4s; }
+.lb-fx--lb_plasma_rail { box-shadow: 0 0 0 2px rgba(0, 229, 255, 0.68), 0 0 18px rgba(255, 61, 200, 0.24), var(--sm); }
+.lb-fx--lb_plasma_rail::after { background: linear-gradient(105deg, transparent 20%, rgba(0, 229, 255, 0.28) 45%, rgba(255, 61, 200, 0.24) 60%, transparent 82%); }
+.lb-fx--lb_aurora_ribbon { box-shadow: 0 0 0 2px rgba(45, 212, 191, 0.7), 0 0 18px rgba(168, 85, 247, 0.24), var(--sm); }
+.lb-fx--lb_aurora_ribbon::after { background: linear-gradient(105deg, transparent 18%, rgba(45, 212, 191, 0.3) 45%, rgba(168, 85, 247, 0.26) 62%, transparent 85%); }
+.lb-fx--lb_diamond_glint { box-shadow: 0 0 0 2px rgba(126, 232, 255, 0.78), 0 0 20px rgba(126, 232, 255, 0.3), var(--sm); }
+.lb-fx--lb_diamond_glint::after { background: linear-gradient(105deg, transparent 25%, rgba(224, 242, 254, 0.38) 50%, transparent 75%); animation-duration: 3.2s; }
+.lb-fx--lb_prism_border { box-shadow: 0 0 0 2px rgba(103, 232, 249, 0.74), 0 0 22px rgba(244, 114, 182, 0.28), var(--sm); }
+.lb-fx--lb_prism_border::after { background: linear-gradient(105deg, transparent 20%, rgba(103, 232, 249, 0.3) 42%, rgba(244, 114, 182, 0.28) 58%, transparent 82%); }
+.lb-fx--lb_starlight_trail { box-shadow: 0 0 0 2px rgba(253, 224, 71, 0.75), 0 0 22px rgba(129, 140, 248, 0.32), var(--sm); }
+.lb-fx--lb_starlight_trail::after { background: linear-gradient(105deg, transparent 18%, rgba(253, 224, 71, 0.32) 48%, rgba(129, 140, 248, 0.28) 62%, transparent 84%); }
+.lb-fx--lb_imperial_crest { box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.8), 0 0 24px rgba(192, 132, 252, 0.32), var(--sm); }
+.lb-fx--lb_imperial_crest::after { background: linear-gradient(105deg, transparent 20%, rgba(251, 191, 36, 0.35) 50%, rgba(192, 132, 252, 0.28) 64%, transparent 84%); }
+.lb-fx--lb_nova_aura { box-shadow: 0 0 0 2px rgba(253, 224, 71, 0.86), 0 0 26px rgba(126, 232, 255, 0.38), var(--sm); }
+.lb-fx--lb_nova_aura::after { background: linear-gradient(105deg, transparent 16%, rgba(253, 224, 71, 0.34) 40%, rgba(126, 232, 255, 0.34) 56%, rgba(244, 114, 182, 0.28) 70%, transparent 88%); animation-duration: 3s; }
+
+/* Card cosmetic UI animations (16 styles) */
 .cos-anim-card {
   position: relative;
   overflow: hidden;
@@ -3076,12 +3210,20 @@ body.update-locked {
   box-shadow: 0 0 18px rgba(148, 163, 184, 0.28), inset 0 0 18px rgba(56, 189, 248, 0.14), var(--out), var(--in) !important;
   animation: cosSoftPulse 3.6s ease-in-out infinite;
 }
+.cos-anim--anim_glass_sheen {
+  box-shadow: 0 0 0 1.5px rgba(226, 232, 240, 0.45), 0 0 18px rgba(56, 189, 248, 0.2), var(--out), var(--in) !important;
+  background: linear-gradient(130deg, rgba(255, 255, 255, 0.08) 0%, transparent 45%, rgba(56, 189, 248, 0.12) 100%), linear-gradient(175deg, var(--hero-top) 0%, var(--clay) 80%) !important;
+}
 .cos-anim--anim_ripple_veil {
   background:
     linear-gradient(120deg, rgba(56, 189, 248, 0.08) 0%, rgba(103, 232, 249, 0.22) 50%, rgba(56, 189, 248, 0.08) 100%),
     linear-gradient(175deg, var(--hero-top) 0%, var(--clay) 80%) !important;
   background-size: 200% 200%, 100% 100% !important;
   animation: cosGradShift 5s ease-in-out infinite;
+}
+.cos-anim--anim_horizon_scan {
+  box-shadow: 0 0 0 1.5px rgba(56, 189, 248, 0.55), 0 0 20px rgba(63, 224, 176, 0.22), var(--out), var(--in) !important;
+  animation: cosSoftPulse 3.8s ease-in-out infinite;
 }
 .cos-anim--anim_backdrop {
   background:
@@ -3101,11 +3243,22 @@ body.update-locked {
   box-shadow: 0 0 0 2px rgba(92, 203, 255, 0.72), 0 0 22px rgba(168, 85, 247, 0.42), var(--out), var(--in) !important;
   animation: cosBorderSweep 3.2s linear infinite;
 }
+.cos-anim--anim_gold_filigree {
+  box-shadow: 0 0 0 2px rgba(255, 201, 60, 0.68), 0 0 24px rgba(245, 158, 11, 0.32), var(--out), var(--in) !important;
+  background: radial-gradient(circle at 50% 0%, rgba(255, 201, 60, 0.16), transparent 60%), linear-gradient(175deg, var(--hero-top) 0%, var(--clay) 78%) !important;
+}
 .cos-anim--anim_sparkles {
   box-shadow: 0 0 0 1.5px rgba(126, 232, 255, 0.55), 0 0 22px rgba(253, 224, 71, 0.22), var(--out), var(--in) !important;
 }
 .cos-anim--anim_aurora_curtain {
   box-shadow: 0 0 0 1.5px rgba(45, 212, 191, 0.55), 0 0 24px rgba(168, 85, 247, 0.34), var(--out), var(--in) !important;
+}
+.cos-anim--anim_prism_lattice {
+  box-shadow: 0 0 0 2px rgba(103, 232, 249, 0.68), 0 0 26px rgba(192, 132, 252, 0.35), var(--out), var(--in) !important;
+  background-image:
+    linear-gradient(135deg, rgba(103, 232, 249, 0.08) 25%, transparent 25%),
+    linear-gradient(225deg, rgba(192, 132, 252, 0.08) 25%, transparent 25%) !important;
+  background-size: 28px 28px !important;
 }
 .cos-anim--anim_celebration {
   box-shadow: 0 0 0 2px rgba(255, 201, 60, 0.7), 0 0 26px rgba(244, 114, 182, 0.32), var(--out), var(--in) !important;
@@ -3119,13 +3272,36 @@ body.update-locked {
     radial-gradient(circle at 50% 25%, rgba(244, 114, 182, 0.22), transparent 60%),
     linear-gradient(175deg, var(--hero-top) 0%, var(--clay) 78%) !important;
 }
-.cos-anim--anim_sovereign_nova {
+.cos-anim--anim_quantum_ripple {
+  box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.78), 0 0 32px rgba(232, 121, 249, 0.38), var(--out), var(--in) !important;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(34, 211, 238, 0.2), transparent 55%),
+    radial-gradient(circle at 80% 80%, rgba(232, 121, 249, 0.2), transparent 55%),
+    linear-gradient(175deg, var(--hero-top) 0%, var(--clay) 76%) !important;
+}
+.cos-anim--anim_sovereign_nova,
+.cos-anim--anim_apex_crown {
   box-shadow: 0 0 0 2.5px rgba(253, 224, 71, 0.85), 0 0 36px rgba(251, 113, 133, 0.48), var(--out), var(--in) !important;
   background:
     radial-gradient(circle at 50% 10%, rgba(253, 224, 71, 0.26), transparent 55%),
     radial-gradient(circle at 80% 90%, rgba(251, 113, 133, 0.24), transparent 55%),
     linear-gradient(165deg, var(--hero-top) 0%, var(--clay) 75%) !important;
 }
+
+/* Achievement & Premium Visual FX classes */
+.ach-fx--achfx_emerald_ribbon { box-shadow: 0 0 0 1.5px rgba(63, 224, 176, 0.6), var(--sm); }
+.ach-fx--achfx_cyan_seal { box-shadow: 0 0 0 1.5px rgba(56, 189, 248, 0.65), 0 0 16px rgba(56, 189, 248, 0.2); }
+.ach-fx--achfx_gold_wreath { box-shadow: 0 0 0 2px rgba(255, 201, 60, 0.72), 0 0 20px rgba(255, 201, 60, 0.25); }
+.ach-fx--achfx_diamond_burst { box-shadow: 0 0 0 2px rgba(126, 232, 255, 0.78), 0 0 22px rgba(126, 232, 255, 0.32); }
+.ach-fx--achfx_aurora_banner { box-shadow: 0 0 0 2px rgba(45, 212, 191, 0.75), 0 0 24px rgba(192, 132, 252, 0.3); }
+.ach-fx--achfx_sovereign_crest { box-shadow: 0 0 0 2px rgba(253, 224, 71, 0.88), 0 0 28px rgba(251, 113, 133, 0.38); }
+
+.pvfx--pvfx_velvet_vignette { box-shadow: inset 0 0 24px rgba(167, 139, 250, 0.16), var(--out), var(--in); }
+.pvfx--pvfx_crystal_refraction { box-shadow: 0 0 0 1.5px rgba(103, 232, 249, 0.55), inset 0 0 20px rgba(103, 232, 249, 0.16), var(--out); }
+.pvfx--pvfx_telemetry_grid { background-image: linear-gradient(rgba(52, 211, 153, 0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(56, 189, 248, 0.05) 1px, transparent 1px); background-size: 20px 20px; }
+.pvfx--pvfx_imperial_amber { box-shadow: 0 0 0 1.5px rgba(255, 201, 60, 0.62), inset 0 0 24px rgba(251, 146, 60, 0.18), var(--out); }
+.pvfx--pvfx_nebula_depth { box-shadow: 0 0 0 1.5px rgba(192, 132, 252, 0.65), inset 0 0 28px rgba(34, 211, 238, 0.18), var(--out); }
+.pvfx--pvfx_sovereign_radiance { box-shadow: 0 0 0 2px rgba(253, 224, 71, 0.78), 0 0 28px rgba(126, 232, 255, 0.3), var(--out); }
 .cos-aurora-curtain {
   position: absolute;
   inset: -20% -30%;
@@ -4970,10 +5146,123 @@ body.update-locked {
   box-shadow: 0 0 24px rgba(126, 232, 255, 0.4), var(--in);
 }
 
+@keyframes lbSweep {
+  0% { transform: translateX(-110%); opacity: 0; }
+  20% { opacity: 0.45; }
+  60% { transform: translateX(110%); opacity: 0.45; }
+  100% { transform: translateX(110%); opacity: 0; }
+}
+
+.stk-collections {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.stk-col-card {
+  border: 0;
+  border-radius: 14px;
+  padding: 9px 10px;
+  text-align: left;
+  background: var(--well);
+  box-shadow: var(--dent);
+  color: var(--tx);
+  cursor: pointer;
+  display: grid;
+  gap: 4px;
+  transition: transform 0.14s, box-shadow 0.14s, background 0.14s;
+}
+.stk-col-card:hover { background: var(--clay2); }
+.stk-col-card.on {
+  background: linear-gradient(145deg, rgba(92, 203, 255, 0.18), var(--clay2));
+  box-shadow: 0 0 0 1.5px rgba(92, 203, 255, 0.72), var(--sm);
+}
+.stk-col-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font: 700 12px/1.2 var(--d);
+}
+.stk-col-bar {
+  height: 5px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.stk-col-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, var(--cy), var(--mint));
+}
+.stkcard--animated {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(126, 232, 255, 0.42);
+}
+.stkcard--animated::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(120deg, transparent 25%, rgba(126, 232, 255, 0.16) 50%, transparent 75%);
+  transform: translateX(-110%);
+  animation: lbSweep 4.2s ease-in-out infinite;
+}
+.stk-rx-pill {
+  font: 700 9.5px var(--d);
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(92, 203, 255, 0.18);
+  color: var(--cy);
+}
+
+/* Update 2.0 Building Details & Research/Trade Panels */
+.build-detail-card {
+  background: var(--well);
+  box-shadow: 0 0 0 1.5px rgba(92, 203, 255, 0.35), var(--dent);
+  border-radius: 18px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  display: grid;
+  gap: 10px;
+}
+.build-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
+  gap: 6px;
+}
+.build-detail-cell {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 6px 8px;
+  display: grid;
+  gap: 2px;
+}
+.build-detail-cell small { font-size: 10.5px; color: var(--mu); }
+.build-detail-cell b { font: 700 12.5px var(--d); }
+
+body.reduced-motion *,
+body.ui-fx-off * {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+}
+body.ui-fx-low .lb-fx::after,
+body.ui-fx-low .stkcard--animated::after,
+body.ui-fx-low .cos-sparkles-layer,
+body.ui-fx-low .cos-aurora-curtain,
+body.ui-fx-low .cos-nova-beams {
+  display: none !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .dx-hero::before,
   .cos-frame::before,
   .cos-nfx,
+  .lb-fx::after,
+  .stkcard--animated::after,
   .cos-sparkle-dot,
   .cos-aurora-curtain,
   .cos-orbit-ring,

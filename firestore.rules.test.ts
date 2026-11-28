@@ -85,11 +85,11 @@ test('Dirty Dozen security invariants are enforced in firestore.rules', () => {
   // 8. Legacy player updates, heartbeat-only updates, and atomic project completion/failure
   assert.match(rules, /'createdAt' in incoming\(\)/);
   assert.match(rules, /affectedOnly\(\['lastSeen'\]\)/);
-  assert.match(rules, /affectedOnly\(\['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim'\]\)/);
+  assert.match(rules, /affectedOnly\(\['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'cosLbAnim'\]\)/);
   assert.match(rules, /affectedOnly\(\['progressMs', 'lastTickAt', 'status', 'resolvedAt'\]\)[\s\S]*incoming\(\)\.status in \['done', 'failed'\]/);
   assert.match(rules, /\(!\('rev' in existing\(\)\) \|\| !\(existing\(\)\.rev is number\) \|\| incoming\(\)\.rev >= existing\(\)\.rev\)/);
 
-  // 9. Save balance/policy/building bounds, non-whitespace text guards, rank 0..15, and nullable trade resolvedAt
+  // 9. Save balance/policy/building bounds, non-whitespace text guards, rank 0..25, and nullable trade resolvedAt
   assert.match(rules, /data\.save\.cash >= 0/);
   assert.match(rules, /data\.save\.gems >= 0/);
   assert.match(rules, /data\.save\.tax >= 5 && data\.save\.tax <= 45/);
@@ -100,19 +100,22 @@ test('Dirty Dozen security invariants are enforced in firestore.rules', () => {
   assert.match(rules, /data\.save\.activeFx\.incomeBoostMult <= 1\.75/);
   assert.match(rules, /data\.save\.size\(\) <= 72/);
   assert.match(rules, /data\.save\.b\.size\(\) <= 60/);
-  assert.match(rules, /data\.save\.stk\.size\(\) <= 48/);
-  assert.match(rules, /data\.stk\.size\(\) <= 48/);
-  assert.match(rules, /data\.offerStk\.size\(\) <= 48/);
+  assert.match(rules, /data\.save\.stk\.size\(\) <= 75/);
+  assert.match(rules, /data\.stk\.size\(\) <= 75/);
+  assert.match(rules, /data\.offerStk\.size\(\) <= 75/);
   assert.match(rules, /data\.save\.wealth >= 0 && data\.save\.wealth <= 20/);
   assert.match(rules, /data\.save\.transitSub >= 0 && data\.save\.transitSub <= 25/);
   assert.match(rules, /data\.save\.milestones\.size\(\) <= 40/);
   assert.match(rules, /data\.save\.crateCd >= 0/);
-  assert.match(rules, /data\.save\.rank <= 15/);
-  assert.match(rules, /data\.rank <= 15/);
+  assert.match(rules, /data\.save\.rank <= 25/);
+  assert.match(rules, /data\.rank <= 25/);
+  assert.match(rules, /data\.save\.provBudgetLog\.size\(\) <= 50/);
+  assert.match(rules, /gx\.pb <= 0\.4/);
+  assert.match(rules, /gx\.ph <= 16/);
   assert.match(rules, /data\.save\.sub\.tier in \['daily', 'weekly', 'monthly'\]/);
   assert.match(rules, /data\.save\.subPromo\.tier in \['daily', 'weekly', 'monthly'\]/);
   assert.match(rules, /data\.save\.subPromo\.pct >= 5 && data\.save\.subPromo\.pct <= 40/);
-  assert.match(rules, /data\.progressMs <= 2400000/);
+  assert.match(rules, /data\.progressMs <= 3600000/);
   assert.match(rules, /data\.participants\[0\] == data\.from && data\.participants\[1\] == data\.to/);
   assert.match(rules, /uid != request\.auth\.uid[\s\S]*existsAfter\(\/databases\/\$\(database\)\/documents\/trades\/\$\(incoming\(\)\.tradeId\)\)/);
   assert.match(rules, /existing\(\)\.paid == 3/);
@@ -130,7 +133,7 @@ test('Dirty Dozen security invariants are enforced in firestore.rules', () => {
   assert.match(rules, /data\.save\.set is map\s+&&\s+data\.save\.set\.size\(\) <= 10/);
   assert.match(rules, /!existing\(\)\.keys\(\)\.hasOnly\(\['sid', 't'\]\)/);
   assert.match(rules, /\^' \+ request\.auth\.uid \+ '_\[A-Za-z0-9_\\\\-\]\+\$/);
-  assert.match(rules, /affectedOnly\(\['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim'\]\)[\s\S]*isValidPlayerProfile\(incoming\(\)\)/);
+  assert.match(rules, /affectedOnly\(\['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'cosLbAnim'\]\)[\s\S]*isValidPlayerProfile\(incoming\(\)\)/);
   assert.match(rules, /affectedOnly\(\['read'\]\)[\s\S]*existing\(\)\.read is bool[\s\S]*incoming\(\)\.read == true/);
 
   // 10. Strict nested key whitelists on save, gx, gx.exp, set, activeFx, sub, subPromo; no fragile `is int` checks on JS numbers
@@ -204,8 +207,8 @@ function isValidSaveGx(gx: unknown): boolean {
   if ('lvl' in gx && !(isObjMap(gx.lvl) && Object.keys(gx.lvl).length <= 60)) return false;
   if ('acc' in gx && !(isNum(gx.acc) && gx.acc >= 0 && gx.acc <= 300)) return false;
   if ('blk' in gx && !(isNum(gx.blk) && gx.blk >= 0 && gx.blk <= 1e6)) return false;
-  if ('pb' in gx && !(isNum(gx.pb) && gx.pb >= 0 && gx.pb <= 0.25)) return false;
-  if ('ph' in gx && !(isNum(gx.ph) && gx.ph >= 0 && gx.ph <= 10)) return false;
+  if ('pb' in gx && !(isNum(gx.pb) && gx.pb >= 0 && gx.pb <= 0.4)) return false;
+  if ('ph' in gx && !(isNum(gx.ph) && gx.ph >= 0 && gx.ph <= 16)) return false;
   if ('log' in gx && !(Array.isArray(gx.log) && gx.log.length <= 16)) return false;
   if ('exp' in gx && gx.exp !== null && !isValidGxExp(gx.exp)) return false;
   return true;
@@ -265,7 +268,7 @@ function isValidSave(data: unknown): boolean {
     !numRange('cash', 0, 1e13) ||
     !numRange('gems', 0, 1e9) ||
     !numRange('taxPool', 0, 1e13) ||
-    !numRange('rank', 0, 15) ||
+    !numRange('rank', 0, 25) ||
     !numRange('boost', 0, 30) ||
     !numRange('crateCd', 0, 1e13) ||
     !numRange('day', 0, 1e8) ||
@@ -300,7 +303,7 @@ function isValidSave(data: unknown): boolean {
 
   if ('gov' in s && !['rep', 'tech', 'wlf', 'ind'].includes(String(s.gov))) return false;
   if ('b' in s && !(isObjMap(s.b) && Object.keys(s.b).length <= 60)) return false;
-  if ('stk' in s && !(isObjMap(s.stk) && Object.keys(s.stk).length <= 48)) return false;
+  if ('stk' in s && !(isObjMap(s.stk) && Object.keys(s.stk).length <= 75)) return false;
   if ('milestones' in s && !(isObjMap(s.milestones) && Object.keys(s.milestones).length <= 40)) return false;
   if ('claimed' in s && !(isObjMap(s.claimed) && Object.keys(s.claimed).length <= 20)) return false;
   if ('boosterCd' in s && !(isObjMap(s.boosterCd) && Object.keys(s.boosterCd).length <= 20)) return false;
@@ -309,7 +312,7 @@ function isValidSave(data: unknown): boolean {
   if ('hist' in s && !(Array.isArray(s.hist) && s.hist.length <= 60)) return false;
   if ('questIds' in s && !(Array.isArray(s.questIds) && s.questIds.length <= 10)) return false;
   if ('questDay' in s && !(typeof s.questDay === 'string' && s.questDay.length <= 32)) return false;
-  if ('provBudgetLog' in s && !(Array.isArray(s.provBudgetLog) && s.provBudgetLog.length <= 30)) return false;
+  if ('provBudgetLog' in s && !(Array.isArray(s.provBudgetLog) && s.provBudgetLog.length <= 50)) return false;
   if ('provTxs' in s && !(Array.isArray(s.provTxs) && s.provTxs.length <= 30)) return false;
   if ('provinces' in s) {
     if (!Array.isArray(s.provinces) || s.provinces.length < 1 || s.provinces.length > 10) return false;
@@ -395,7 +398,7 @@ function isValidPlayerProfile(data: unknown): boolean {
     'username', 'usernameLower', 'countryCode', 'countryName',
     'gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats',
   ];
-  const allowed = [...req, 'createdAt', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim'];
+  const allowed = [...req, 'createdAt', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'cosLbAnim'];
   if (!hasAll(data, req) || !hasOnly(data, allowed)) return false;
   if (typeof data.username !== 'string' || !/^[A-Za-z0-9_]{3,16}$/.test(data.username)) return false;
   if (typeof data.usernameLower !== 'string' || !/^[a-z0-9_]{3,16}$/.test(data.usernameLower)) return false;
@@ -406,12 +409,12 @@ function isValidPlayerProfile(data: unknown): boolean {
   if (!(isNum(data.cash) && data.cash >= 0 && data.cash <= 1e13)) return false;
   if (!(isNum(data.gems) && data.gems >= 0 && data.gems <= 1e9)) return false;
   if (!(isNum(data.level) && data.level >= 1 && data.level <= 1e7)) return false;
-  if (!(isNum(data.rank) && data.rank >= 0 && data.rank <= 15)) return false;
+  if (!(isNum(data.rank) && data.rank >= 0 && data.rank <= 25)) return false;
   if (!isNum(data.lastSeen)) return false;
   if ('createdAt' in data && !isNum(data.createdAt)) return false;
   if ('subTier' in data && !['', 'daily', 'weekly', 'monthly'].includes(String(data.subTier))) return false;
   if ('subExp' in data && !(isNum(data.subExp) && data.subExp >= 0 && data.subExp <= 1e13)) return false;
-  for (const cosField of ['cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim'] as const) {
+  for (const cosField of ['cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'cosLbAnim'] as const) {
     if (cosField in data && (typeof data[cosField] !== 'string' || !/^[a-z0-9_]{0,36}$/.test(String(data[cosField])))) {
       return false;
     }
@@ -434,7 +437,7 @@ function evalPlayerUpdate(
   if (changed.every((k) => k === 'lastSeen')) return true;
   const allowedSync = [
     'gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp',
-    'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim',
+    'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'cosLbAnim',
   ];
   if (!changed.every((k) => allowedSync.includes(k))) return false;
   return isValidPlayerProfile(incoming);
@@ -769,7 +772,126 @@ test('Legacy province schema bounds in firestore.rules remain intact and block t
   assert.match(rules, /match \/provinceLeaderboard\/\{entryId\}[\s\S]*incoming\(\)\.ownerUid == request\.auth\.uid/);
 });
 
+test('Update 2.0 rules allow Rank 25, cosLbAnim, 70 stickers, pb<=0.4, ph<=16, 50 provBudgetLog chunks and reject overflows', () => {
+  const uid = 'u2-tester';
+  const reqOwner = { auth: { uid }, time: 1_700_000_000_000 };
+
+  // Profile: Rank 25 + valid cosLbAnim allowed; Rank 26 or bad cosLbAnim rejected
+  const profileBase = {
+    username: 'U2Nation',
+    usernameLower: 'u2nation',
+    countryCode: 'PK',
+    countryName: 'Pakistan',
+    rank: 25,
+    cosLbAnim: 'lb_nova_aura',
+    gdp: 500_000_000,
+    cash: 1_000_000,
+    gems: 200,
+    level: 707,
+    lastSeen: 1_700_000_000_000,
+    stats: {
+      buildings: 350,
+      completedTrades: 10,
+      tradesSent: 5,
+      tradesReceived: 5,
+      cashTraded: 50_000,
+      gemsTraded: 10,
+    },
+  };
+  assert.equal(
+    evalPlayerUpdate(reqOwner, uid, profileBase, { ...profileBase, rank: 24, lastSeen: 1_699_999_000_000 }),
+    true,
+  );
+  assert.equal(
+    evalPlayerUpdate(reqOwner, uid, { ...profileBase, rank: 26 }, { ...profileBase, rank: 24, lastSeen: 1_699_999_000_000 }),
+    false,
+  );
+  assert.equal(
+    evalPlayerUpdate(
+      reqOwner,
+      uid,
+      { ...profileBase, cosLbAnim: 'bad-anim!' },
+      { ...profileBase, cosLbAnim: 'lb_silver_edge', lastSeen: 1_699_999_000_000 },
+    ),
+    false,
+  );
+
+  // Save: 70 stickers, 50 provBudgetLog chunks, pb: 0.4, ph: 16, rank: 25 allowed
+  const stk70: Record<string, number> = {};
+  for (let i = 1; i <= 70; i += 1) {
+    stk70[`stk_${i}`] = 1;
+  }
+  const chunks50 = Array.from({ length: 50 }, (_, i) => `v2:chunk_${i}`);
+  const validU2Save = {
+    save: {
+      cash: 1_000_000,
+      gems: 200,
+      rank: 25,
+      stk: stk70,
+      provBudgetLog: chunks50,
+      gx: {
+        acc: 0,
+        blk: 0,
+        pb: 0.4,
+        ph: 16,
+      },
+    },
+  };
+  assert.equal(evalSavesAccess('create', reqOwner, uid, validU2Save), true);
+
+  // Overflows rejected: 76 stickers, 51 provBudgetLog chunks, pb: 0.41, ph: 17, rank: 26
+  const stk76: Record<string, number> = { ...stk70 };
+  for (let i = 71; i <= 76; i += 1) stk76[`stk_${i}`] = 1;
+  assert.equal(
+    evalSavesAccess('create', reqOwner, uid, { save: { ...validU2Save.save, stk: stk76 } }),
+    false,
+  );
+  assert.equal(
+    evalSavesAccess('create', reqOwner, uid, {
+      save: { ...validU2Save.save, provBudgetLog: [...chunks50, 'v2:51'] },
+    }),
+    false,
+  );
+  assert.equal(
+    evalSavesAccess('create', reqOwner, uid, {
+      save: { ...validU2Save.save, gx: { ...validU2Save.save.gx, pb: 0.41 } },
+    }),
+    false,
+  );
+  assert.equal(
+    evalSavesAccess('create', reqOwner, uid, {
+      save: { ...validU2Save.save, gx: { ...validU2Save.save.gx, ph: 17 } },
+    }),
+    false,
+  );
+  assert.equal(
+    evalSavesAccess('create', reqOwner, uid, {
+      save: { ...validU2Save.save, rank: 26 },
+    }),
+    false,
+  );
+
+  // Verify Mega Project types and 3600000ms cap in firestore.rules
+  for (const pType of [
+    'school',
+    'hospital',
+    'bridge',
+    'highway',
+    'spaceport',
+    'fusion_grid',
+    'metro_loop',
+    'ai_corridor',
+    'seawall_shield',
+    'trade_canal',
+  ]) {
+    assert.ok(rules.includes(`'${pType}'`), `Missing project type ${pType} in firestore.rules`);
+  }
+  assert.match(rules, /data\.progressMs <= 3600000/);
+});
+
 void SERVER_TIME;
+
+
 
 
 

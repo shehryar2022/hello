@@ -12,17 +12,21 @@ export type PlayersSubTab = 'lb' | 'chat' | 'dm';
 export type GiftsSubTab = 'in' | 'out' | 'hist' | 'find';
 export type ShopSubTab = 'rank' | 'sub' | 'boost' | 'diamond';
 export type ShopWing = 'regular' | 'exclusives';
-export type GovtSubTab = 'infra' | 'projects' | 'decisions' | 'research' | 'stats';
+export type GovtSubTab = 'infra' | 'projects' | 'decisions' | 'research' | 'intl_trade' | 'stats';
 
 export type CosmeticCategory =
   | 'profile_effect'
   | 'name_effect'
-  | 'theme'
+  | 'leaderboard_anim'
   | 'animation'
+  | 'theme'
   | 'badge'
+  | 'achievement_fx'
+  | 'premium_vfx'
   | 'diamond_asset';
 
 export type CosmeticRarity =
+  | 'Common'
   | 'Basic'
   | 'Uncommon'
   | 'Rare'
@@ -42,7 +46,12 @@ export type GameThemeId =
   | 'ocean_blue'
   | 'crimson_empire'
   | 'emerald_kingdom'
-  | 'sunset_paradise';
+  | 'sunset_paradise'
+  | 'imperial_obsidian'
+  | 'sapphire_monarch'
+  | 'solar_eclipse'
+  | 'jade_dynasty'
+  | 'platinum_vault';
 
 export interface CosmeticItemDef {
   id: string;
@@ -87,6 +96,9 @@ export interface EquippedCosmetics {
   nameEffect?: string;
   badge?: string;
   anim?: string;
+  lbAnim?: string;
+  achFx?: string;
+  premiumVfx?: string;
 }
 
 export interface RewardHistoryEntry {
@@ -134,6 +146,24 @@ export interface BuildingDef {
   capacity?: number; // Housing beds / civic service capacity
   demolishRefundPct?: number;
   d: string;
+}
+
+export interface UpgradeQueueSlot {
+  buildingId: string;
+  fromLevel: number;
+  toLevel: number;
+  finishAt: number;
+  totalSec: number;
+  costPaid: number;
+}
+
+export interface UpgradeHistoryEntry {
+  buildingId: string;
+  name: string;
+  fromLevel: number;
+  toLevel: number;
+  cost: number;
+  atMs: number;
 }
 
 export type BuildingPolicyId =
@@ -225,7 +255,18 @@ export type PolicyCategoryId =
   | 'p_emp'
   | 'p_trd'
   | 'p_nrg'
-  | 'p_inf';
+  | 'p_inf'
+  | 'p_ai'
+  | 'p_fin'
+  | 'p_def'
+  | 'p_env'
+  | 'p_urb'
+  | 'p_sci'
+  | 'p_mar'
+  | 'p_dig'
+  | 'p_tou'
+  | 'p_hou'
+  | 'p_res';
 
 export interface PolicyOptionDef {
   stance: 0 | 1 | 2;
@@ -281,7 +322,17 @@ export interface EconomySnapshot {
   sectorIncome: Record<ExcludeAllBuildingCategory, number>;
 }
 
-export type TechCategory = 'economy' | 'civic' | 'infra';
+export type TechCategory =
+  | 'ai'
+  | 'robotics'
+  | 'manufacturing'
+  | 'energy'
+  | 'healthcare'
+  | 'education'
+  | 'agriculture'
+  | 'space'
+  | 'fintech'
+  | 'cybersecurity';
 
 export interface TechDef {
   id: string;
@@ -289,8 +340,25 @@ export interface TechDef {
   cat: TechCategory;
   cost: number;
   reqBuildings: number;
+  reqRank?: number;
+  durSec: number;
+  prereq?: string[];
+  unlocksBuildings?: string[];
+  incomeBonusPct?: number;
+  maintReductionPct?: number;
+  buildSpeedPct?: number;
+  researchSpeedPct?: number;
+  energyBonusPct?: number;
+  hapBonus?: number;
+  tradeBonusPct?: number;
   d: string;
   effectLabel: string;
+}
+
+export interface ResearchQueueSlot {
+  techId: string;
+  finishAt: number;
+  totalSec: number;
 }
 
 export interface ExecDecisionOption {
@@ -306,11 +374,27 @@ export interface ExecDecisionDef {
   options: [ExecDecisionOption, ExecDecisionOption];
 }
 
+export type StickerCollectionId =
+  | 'Royal'
+  | 'Billionaire'
+  | 'National Pride'
+  | 'Technology'
+  | 'Military Prestige'
+  | 'Luxury Lifestyle'
+  | 'Space Explorer'
+  | 'Legendary Achievement'
+  | 'Animated Reactions'
+  | 'Limited Edition';
+
 export interface StickerDef {
   id: string;
   n: string;
   e: string;
   r: 1 | 2 | 3;
+  collection?: StickerCollectionId;
+  animated?: boolean;
+  diamondPrice?: number;
+  desc?: string;
 }
 
 export interface GovDef {
@@ -399,6 +483,7 @@ export type ShadowQuality = 'off' | 'low' | 'medium' | 'high';
 export type AntiAliasingMode = 'off' | 'fxaa' | 'msaa';
 export type TextureQuality = 'low' | 'medium' | 'high';
 export type DensityLevel = 'off' | 'low' | 'medium' | 'high';
+export type UiAnimationQuality = 'low' | 'medium' | 'high';
 
 export interface GraphicsSettings {
   preset: GraphicsPresetId;
@@ -418,6 +503,9 @@ export interface GraphicsSettings {
   bloom: boolean;
   motionBlur: boolean;
   adaptiveOptimization: boolean;
+  uiAnimationQuality?: UiAnimationQuality;
+  reducedMotion?: boolean;
+  uiEffectsEnabled?: boolean;
 }
 
 export interface RuntimePerfStats {
@@ -434,6 +522,74 @@ export interface RuntimePerfStats {
   adaptiveStepDown: number;
   drawCalls: number;
   triangles: number;
+}
+
+export type TradeGoodId =
+  | 'grain'
+  | 'steel'
+  | 'electronics'
+  | 'pharmaceuticals'
+  | 'clean_energy'
+  | 'ai_chips'
+  | 'machinery'
+  | 'textiles';
+
+export interface TradeGoodDef {
+  id: TradeGoodId;
+  name: string;
+  icon: string;
+  baseExportPrice: number;
+  baseImportPrice: number;
+  unitLabel: string;
+  sectorHint: ExcludeAllBuildingCategory;
+  minRank: number;
+  effectLabel: string;
+}
+
+export interface ActiveTradeContract {
+  id: string;
+  partner: string;
+  goodId: TradeGoodId;
+  direction: 'export' | 'import';
+  units: number;
+  unitPrice: number;
+  totalValue: number;
+  finishAt: number;
+  durSec: number;
+  completed?: boolean;
+}
+
+export interface IntlTradeState {
+  contracts: ActiveTradeContract[];
+  completedCount: number;
+  exportRevenue: number;
+  importSpend: number;
+  importBuffUntil?: number;
+  milestonesClaimed: Record<string, number>;
+  lastDayKey?: string;
+  dailyVolumeUsed?: number;
+}
+
+export interface ChallengeDef {
+  id: string;
+  name: string;
+  desc: string;
+  tier: 'Standard' | 'Elite' | 'Grand';
+  f: (s: GameState) => number;
+  goal: number;
+  rewardCoins: number;
+  rewardGems: number;
+}
+
+export interface LocalMegaProjectSlot {
+  id: string;
+  type: ProjectType;
+  paid: number;
+  startedAt: number;
+  finishAt: number;
+  totalSec: number;
+  status: 'active' | 'done';
+  claimed: boolean;
 }
 
 export interface GameState {
@@ -493,7 +649,7 @@ export interface GameState {
   decisionsCd?: Record<string, number>;
   cityTimeMode?: CityTimeMode;
   cityWeather?: CityWeatherMode;
-  // Mega Master Update: Diamond Exclusives Cosmetics & Rewards Dashboard (v2 cloud pack compatible)
+  // Diamond Exclusives Cosmetics & Rewards Dashboard (v2 cloud pack compatible)
   cos?: string[];
   cosEq?: EquippedCosmetics;
   theme?: GameThemeId;
@@ -504,6 +660,15 @@ export interface GameState {
   wMilClaim?: Record<string, number>;
   wHist?: RewardHistoryEntry[];
   qHist?: RewardHistoryEntry[];
+  // Update 2.0 fields (persisted cleanly in localStorage & v2 cloud pack)
+  pol?: Record<string, 0 | 1 | 2>;
+  upgQueue?: UpgradeQueueSlot[];
+  upgHist?: UpgradeHistoryEntry[];
+  resQueue?: ResearchQueueSlot | null;
+  intlTrade?: IntlTradeState;
+  challenges?: Record<string, number>;
+  megaProjects?: LocalMegaProjectSlot[];
+  mig?: Record<string, number>;
 }
 
 export interface PlayerStats {
@@ -532,6 +697,7 @@ export interface PlayerProfile {
   cosNameFx?: string;
   cosBadge?: string;
   cosAnim?: string;
+  cosLbAnim?: string;
   lastSeen?: unknown;
   seen?: number;
   stats: PlayerStats;
@@ -592,7 +758,17 @@ export interface NotificationItem {
   ms: number;
 }
 
-export type ProjectType = 'school' | 'hospital' | 'bridge' | 'highway';
+export type ProjectType =
+  | 'school'
+  | 'hospital'
+  | 'bridge'
+  | 'highway'
+  | 'spaceport'
+  | 'fusion_grid'
+  | 'metro_loop'
+  | 'ai_corridor'
+  | 'seawall_shield'
+  | 'trade_canal';
 
 export interface ProjectTypeDef {
   n: string;
@@ -602,6 +778,12 @@ export interface ProjectTypeDef {
   dl: number;
   pb: number;
   ph: number;
+  reqRank?: number;
+  minJobs?: number;
+  minEnergySupply?: number;
+  rewardCoins?: number;
+  rewardGems?: number;
+  desc?: string;
 }
 
 export interface GovProject {

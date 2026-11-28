@@ -98,6 +98,7 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
   onSaveCloudNow,
 }) => {
   const [selectedBldgId, setSelectedBldgId] = useState<string>('');
+  const [polQuery, setPolQuery] = useState<string>('');
   const [draft, setDraft] = useState<Record<string, number>>(() => extractFiscalDraft(state));
   const committedSig = useMemo(() => JSON.stringify(extractFiscalDraft(state)), [state]);
   const prevCommittedSigRef = useRef<string>(committedSig);
@@ -172,14 +173,33 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
     <div>
       <div className="gxh" style={{ marginTop: 0 }}>
         <Landmark size={15} color="#a58cff" />
-        <span>National Policy Directives (9 Categories)</span>
+        <span>National Policy Directives ({NATIONAL_POLICIES.length} Categories)</span>
       </div>
-      <p className="dim" style={{ marginBottom: 10 }}>
-        Each national policy sets permanent sector rules with clear trade-offs and a <b>5-minute cooldown</b> per category to prevent rapid bonus flipping.
-      </p>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}>
+        <p className="dim" style={{ margin: 0, flex: '1 1 260px' }}>
+          Each national policy sets permanent sector rules with clear trade-offs and a <b>5-minute cooldown</b> per category to prevent rapid bonus flipping.
+        </p>
+        <input
+          type="search"
+          className="inp"
+          value={polQuery}
+          onChange={(e) => setPolQuery(e.target.value)}
+          placeholder="Filter 20 policy directives…"
+          aria-label="Filter policy directives"
+          style={{ width: 220, margin: 0, padding: '6px 10px', fontSize: 12.5 }}
+        />
+      </div>
 
       <div className="pol-grid">
-        {NATIONAL_POLICIES.map((cat) => {
+        {NATIONAL_POLICIES.filter((cat) => {
+          const q = polQuery.trim().toLowerCase();
+          if (!q) return true;
+          return (
+            cat.name.toLowerCase().includes(q) ||
+            cat.desc.toLowerCase().includes(q) ||
+            cat.options.some((o) => o.label.toLowerCase().includes(q))
+          );
+        }).map((cat) => {
           const activeStance = getPolicyStance(state, cat.id);
           const cdMs = getPolicyCooldownLeftMs(state, cat.id, nowSrv);
           const cdSec = Math.ceil(cdMs / 1000);
@@ -537,6 +557,8 @@ export const PolicyTab: React.FC<PolicyTabProps> = memo(({
     p.bPolicies !== n.bPolicies ||
     p.stk !== n.stk ||
     p.tech !== n.tech ||
+    p.pol !== n.pol ||
+    p.decisionsCd !== n.decisionsCd ||
     p.milestones !== n.milestones ||
     p.boosterCd !== n.boosterCd ||
     (p.gx.blk > 0) !== (n.gx.blk > 0) ||

@@ -111,7 +111,8 @@ export const HeroPanel: React.FC<HeroPanelProps> = memo(({
     >
       <CosmeticCardWrap
         animId={heroAnimId}
-        animationsEnabled={state.set?.anim !== 0}
+        premiumVfxId={equipped.premiumVfx}
+        animationsEnabled={state.set?.anim !== 0 && !graphics.reducedMotion && graphics.uiEffectsEnabled !== false}
         className="card hero"
       >
         <div className="inc">

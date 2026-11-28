@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { BUILDINGS } from '../game/constants';
 import { DEFAULT_PERF_STATS, resolveNumericFpsCap } from '../game/graphics';
-import { getConstructionQueue } from '../game/rules';
+import { getConstructionQueue, getUpgradeQueue } from '../game/rules';
 import type {
   CityTimeMode,
   CityWeatherMode,
@@ -205,7 +205,7 @@ export class CityEngine {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.target.set(0, 2, -6);
     this.controls.minDistance = 14;
-    this.controls.maxDistance = 175;
+    this.controls.maxDistance = 220;
     this.controls.maxPolarAngle = Math.PI * 0.46;
     this.controls.minPolarAngle = 0.14;
     this.controls.enableDamping = !this.isSoftwareGl;
@@ -232,12 +232,12 @@ export class CityEngine {
 
     this.sunLight = new THREE.DirectionalLight(0xfff1d6, 2.1);
     this.sunLight.position.set(58, 76, 44);
-    this.sunLight.shadow.camera.left = -88;
-    this.sunLight.shadow.camera.right = 88;
-    this.sunLight.shadow.camera.top = 80;
-    this.sunLight.shadow.camera.bottom = -80;
+    this.sunLight.shadow.camera.left = -112;
+    this.sunLight.shadow.camera.right = 112;
+    this.sunLight.shadow.camera.top = 105;
+    this.sunLight.shadow.camera.bottom = -105;
     this.sunLight.shadow.camera.near = 10;
-    this.sunLight.shadow.camera.far = 230;
+    this.sunLight.shadow.camera.far = 260;
     this.sunLight.shadow.bias = -0.0005;
     this.sunLight.shadow.normalBias = 0.02;
     this.scene.add(this.sunLight);
@@ -394,7 +394,7 @@ export class CityEngine {
 
   private buildStaticTerrainAndInfrastructure(): void {
     // Expansive grass / urban ground plane + outer rolling hills
-    const groundGeo = new THREE.PlaneGeometry(420, 420);
+    const groundGeo = new THREE.PlaneGeometry(520, 520);
     groundGeo.rotateX(-Math.PI * 0.5);
     const groundMat = new THREE.MeshStandardMaterial({
       color: 0x355c47,
@@ -407,8 +407,8 @@ export class CityEngine {
     ground.receiveShadow = true;
     this.scene.add(ground);
 
-    // Urban concrete district slab under main city grid (y=0.01)
-    const citySlabGeo = new THREE.PlaneGeometry(164, 122);
+    // Urban concrete district slab under main 107-plot city grid (y=0.01)
+    const citySlabGeo = new THREE.PlaneGeometry(218, 150);
     citySlabGeo.rotateX(-Math.PI * 0.5);
     const citySlabMat = new THREE.MeshStandardMaterial({
       color: 0x2c2748,
@@ -420,20 +420,20 @@ export class CityEngine {
     });
     this.lib.materials.push(citySlabMat);
     const citySlab = new THREE.Mesh(citySlabGeo, citySlabMat);
-    citySlab.position.set(0, 0.01, -12);
+    citySlab.position.set(0, 0.01, -24);
     citySlab.receiveShadow = true;
     this.scene.add(citySlab);
 
-    // Waterfront sea bay (South z = 47..200)
-    const seaGeo = new THREE.PlaneGeometry(420, 160);
+    // Waterfront sea bay (South z = 47..240)
+    const seaGeo = new THREE.PlaneGeometry(520, 200);
     seaGeo.rotateX(-Math.PI * 0.5);
     const sea = new THREE.Mesh(seaGeo, this.lib.waterMat);
-    sea.position.set(0, -0.08, 127);
+    sea.position.set(0, -0.08, 147);
     sea.receiveShadow = true;
     this.scene.add(sea);
 
     // Concrete harbor seawall promenade
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(164, 0.9, 2.0), this.lib.concreteBase);
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(218, 0.9, 2.0), this.lib.concreteBase);
     wall.position.set(0, 0.35, 47.2);
     wall.receiveShadow = true;
     this.scene.add(wall);
@@ -465,11 +465,11 @@ export class CityEngine {
     }
 
     // Elevated Railway Viaduct along North corridor (z = -30)
-    const viaduct = new THREE.Mesh(new THREE.BoxGeometry(148, 0.45, 1.8), this.lib.darkSteel);
+    const viaduct = new THREE.Mesh(new THREE.BoxGeometry(200, 0.45, 1.8), this.lib.darkSteel);
     viaduct.position.set(0, 2.35, -30);
     viaduct.castShadow = true;
     this.scene.add(viaduct);
-    for (let px = -68; px <= 68; px += 14) {
+    for (let px = -96; px <= 96; px += 16) {
       const pier = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.42, 2.35, 6), this.lib.concreteBase);
       pier.position.set(px, 1.17, -30);
       this.scene.add(pier);
@@ -495,15 +495,15 @@ export class CityEngine {
         tz = 21 + Math.floor(i / 4) * 2.5;
         if (Math.hypot(tx - 30, tz - 25) < 2.8) continue;
       } else if (i < 54) {
-        // Perimeter green hills (North, West, East)
+        // Perimeter green hills (North, West, East outside 218x150 slab)
         const angle = ((i - 16) / 38) * Math.PI * 1.45 + Math.PI * 0.78;
-        const rad = 86 + (i % 5) * 6.5;
+        const rad = 118 + (i % 5) * 7.5;
         tx = Math.cos(angle) * rad;
-        tz = Math.sin(angle) * rad * 0.78 - 10;
+        tz = Math.sin(angle) * rad * 0.78 - 22;
       } else {
         // Boulevard avenue medians
-        tx = -68 + ((i - 54) % 19) * 7.5;
-        tz = Math.floor((i - 54) / 19) * 24 - 22;
+        tx = -92 + ((i - 54) % 19) * 10;
+        tz = Math.floor((i - 54) / 19) * 28 - 44;
       }
       treePositions.push([tx, tz, 0.85 + (i % 5) * 0.11]);
     }
@@ -541,10 +541,10 @@ export class CityEngine {
     this.lib.materials.push(hillMat);
     for (let h = 0; h < 14; h++) {
       const a = (h / 13) * Math.PI * 1.28 + Math.PI * 0.86;
-      const dist = 128 + (h % 3) * 14;
-      const rad = 24 + (h % 4) * 8;
-      const mound = new THREE.Mesh(new THREE.ConeGeometry(rad, 14 + (h % 3) * 7, 10), hillMat);
-      mound.position.set(Math.cos(a) * dist, 5.5, Math.sin(a) * dist * 0.82 - 12);
+      const dist = 158 + (h % 3) * 16;
+      const rad = 26 + (h % 4) * 8;
+      const mound = new THREE.Mesh(new THREE.ConeGeometry(rad, 15 + (h % 3) * 7, 10), hillMat);
+      mound.position.set(Math.cos(a) * dist, 5.5, Math.sin(a) * dist * 0.84 - 24);
       this.scene.add(mound);
     }
   }
@@ -557,11 +557,14 @@ export class CityEngine {
 
     let rebuiltAny = false;
     const now = Date.now() + serverOffsetMs;
-    const queuedIds = new Set(getConstructionQueue(state, now).map((q) => q.buildingId));
+    const queuedIds = new Set([
+      ...getConstructionQueue(state, now).map((q) => q.buildingId),
+      ...getUpgradeQueue(state).map((u) => u.buildingId),
+    ]);
 
     for (const plot of CITY_PLOTS) {
       const count = Math.max(0, Math.floor(state.b?.[plot.id] || 0));
-      const level = Math.max(1, Math.min(5, Math.floor(state.gx?.lvl?.[plot.id] || 1)));
+      const level = Math.max(1, Math.min(50, Math.floor(state.gx?.lvl?.[plot.id] || 1)));
       const underConstruction = queuedIds.has(plot.id);
       const tierBucket = count === 0 ? 0 : count < 4 ? 1 : count < 10 ? 2 : 3;
       const sig = `${tierBucket}:${level}:${underConstruction ? 1 : 0}`;
@@ -912,8 +915,8 @@ export class CityEngine {
       this.camGoalTarget = null;
       this.camera.position.add(_v3);
       this.controls.target.add(_v3);
-      this.controls.target.x = THREE.MathUtils.clamp(this.controls.target.x, -75, 75);
-      this.controls.target.z = THREE.MathUtils.clamp(this.controls.target.z, -65, 55);
+      this.controls.target.x = THREE.MathUtils.clamp(this.controls.target.x, -104, 104);
+      this.controls.target.z = THREE.MathUtils.clamp(this.controls.target.z, -94, 55);
     }
 
     if (this.keysPressed.has('KeyQ') || this.keysPressed.has('KeyE')) {

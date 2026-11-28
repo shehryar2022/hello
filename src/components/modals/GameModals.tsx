@@ -79,6 +79,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = memo(({
     <div className="modal" role="dialog" aria-modal="true" aria-label="Player Profile" onClick={onClose}>
       <CosmeticCardWrap
         animId={animId}
+        premiumVfxId={isMe ? ownCosmetics?.premiumVfx : undefined}
         animationsEnabled={animationsEnabled}
         className={`card ${subTier ? `sub-card sub-card--${subTier}` : ''}`}
       >

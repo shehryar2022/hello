@@ -305,6 +305,7 @@ export async function createPlayerProfile(
         cosNameFx: sanitizeCosmeticIdField(eqCos.nameEffect),
         cosBadge: sanitizeCosmeticIdField(eqCos.badge),
         cosAnim: sanitizeCosmeticIdField(eqCos.anim),
+        cosLbAnim: sanitizeCosmeticIdField(eqCos.lbAnim),
         lastSeen: serverTimestamp(),
         stats: sanitizeStats(undefined, { buildings: totalBuildings(baseState) }),
         createdAt: serverTimestamp(),
@@ -409,6 +410,7 @@ export async function syncSaveToCloud(params: {
             cosNameFx: sanitizeCosmeticIdField(eqCos.nameEffect),
             cosBadge: sanitizeCosmeticIdField(eqCos.badge),
             cosAnim: sanitizeCosmeticIdField(eqCos.anim),
+            cosLbAnim: sanitizeCosmeticIdField(eqCos.lbAnim),
             lastSeen: serverTimestamp(),
             stats: mergedStats,
           });
@@ -547,6 +549,7 @@ export async function syncSaveToCloud(params: {
       cosNameFx: sanitizeCosmeticIdField(eqCos.nameEffect),
       cosBadge: sanitizeCosmeticIdField(eqCos.badge),
       cosAnim: sanitizeCosmeticIdField(eqCos.anim),
+      cosLbAnim: sanitizeCosmeticIdField(eqCos.lbAnim),
       lastSeen: serverTimestamp(),
       stats: mergedStats,
     };
@@ -1138,6 +1141,7 @@ export async function syncPublicProfileMetrics(params: {
     cosNameFx: sanitizeCosmeticIdField(eqCos.nameEffect),
     cosBadge: sanitizeCosmeticIdField(eqCos.badge),
     cosAnim: sanitizeCosmeticIdField(eqCos.anim),
+    cosLbAnim: sanitizeCosmeticIdField(eqCos.lbAnim),
     lastSeen: serverTimestamp(),
   };
   const bTotal = totalBuildings(state);
@@ -1193,7 +1197,7 @@ export async function tickGovProject(
 ): Promise<void> {
   const activeUid = requireUid(uid);
   const ref = doc(db, 'players', activeUid, 'projects', projectId);
-  const clamped = Math.max(0, Math.min(2_400_000, Math.floor(nextProgressMs)));
+  const clamped = Math.max(0, Math.min(3_600_000, Math.floor(nextProgressMs)));
   await runTransaction(db, async (tx) => {
     requireUid(activeUid);
     const snap = await tx.get(ref);
@@ -1224,7 +1228,7 @@ export async function finishGovProject(
     if (status === 'done' && Number(data.paid || 0) < PROJECT_STAGES) return;
     if (status === 'done' && typeof finalProgressMs === 'number') {
       const prev = Math.floor(Number(data.progressMs) || 0);
-      const clamped = Math.max(prev, Math.min(2_400_000, Math.floor(finalProgressMs)));
+      const clamped = Math.max(prev, Math.min(3_600_000, Math.floor(finalProgressMs)));
       tx.update(ref, {
         progressMs: clamped,
         lastTickAt: serverTimestamp(),

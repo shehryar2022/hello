@@ -204,3 +204,171 @@ export function computeReadyAchievementCount(s: GameState): number {
   }
   return count;
 }
+
+// ==================== 20-QUEST DAILY ROTATION POOL ====================
+export interface DailyQuestDef {
+  id: string;
+  t: string;
+  cat: 'build' | 'economy' | 'civic' | 'research' | 'trade';
+  f: (s: GameState, ctx?: { rank: number }) => number;
+  g: number;
+  r: number; // Diamonds
+  coins: number;
+}
+
+const totalOwnedBuildings = (s: GameState) =>
+  Object.values(s.b || {}).reduce((acc, v) => acc + Math.max(0, Math.floor(Number(v) || 0)), 0);
+
+const totalUpgradeLevels = (s: GameState) =>
+  Object.values(s.gx?.lvl || {}).reduce((acc, v) => acc + Math.max(0, Math.floor(Number(v) || 1) - 1), 0);
+
+const totalResearchedTechs = (s: GameState) =>
+  Object.values(s.tech || {}).filter((v) => Number(v) > 0).length;
+
+const totalStickersOwned = (s: GameState) =>
+  Object.values(s.stk || {}).reduce((acc, v) => acc + Math.max(0, Math.floor(Number(v) || 0)), 0);
+
+const totalPoliciesActive = (s: GameState) =>
+  Object.values(s.pol || {}).filter((v) => Number(v) > 0).length;
+
+export const DAILY_QUEST_POOL: readonly DailyQuestDef[] = [
+  { id: 'dq_bld_20', t: 'Urban Planner: Maintain 20+ buildings', cat: 'build', f: totalOwnedBuildings, g: 20, r: 1, coins: 2_500 },
+  { id: 'dq_bld_60', t: 'Civic Architect: Own 60+ total buildings', cat: 'build', f: totalOwnedBuildings, g: 60, r: 2, coins: 12_000 },
+  { id: 'dq_bld_140', t: 'Metropolitan Drive: Own 140+ total buildings', cat: 'build', f: totalOwnedBuildings, g: 140, r: 2, coins: 45_000 },
+  { id: 'dq_upg_10', t: 'Structural Upgrade: Hold 10+ total upgrade levels', cat: 'build', f: totalUpgradeLevels, g: 10, r: 1, coins: 6_000 },
+  { id: 'dq_upg_35', t: 'Modern District: Hold 35+ total upgrade levels', cat: 'build', f: totalUpgradeLevels, g: 35, r: 2, coins: 25_000 },
+  { id: 'dq_res_3', t: 'Lab Director: Unlock 3+ Research Upgrades', cat: 'research', f: totalResearchedTechs, g: 3, r: 1, coins: 8_000 },
+  { id: 'dq_res_10', t: 'R&D Initiative: Unlock 10+ Research Upgrades', cat: 'research', f: totalResearchedTechs, g: 10, r: 2, coins: 35_000 },
+  { id: 'dq_hap_75', t: 'Citizen Harmony: Reach 75% Happiness', cat: 'civic', f: (s) => Math.floor(s.hap || 0), g: 75, r: 1, coins: 5_000 },
+  { id: 'dq_hap_88', t: 'Golden Morale: Sustain 88% Happiness', cat: 'civic', f: (s) => Math.floor(s.hap || 0), g: 88, r: 2, coins: 20_000 },
+  { id: 'dq_appr_72', t: 'Public Mandate: Maintain 72% Approval', cat: 'civic', f: (s) => Math.floor(s.appr || 0), g: 72, r: 1, coins: 7_500 },
+  { id: 'dq_pol_3', t: 'Cabinet Agenda: Enact 3+ National Policies', cat: 'civic', f: totalPoliciesActive, g: 3, r: 1, coins: 8_500 },
+  { id: 'dq_pol_8', t: 'Policy Suite: Enact 8+ National Policies', cat: 'civic', f: totalPoliciesActive, g: 8, r: 2, coins: 30_000 },
+  { id: 'dq_trd_1', t: 'Port Clearance: Complete 1+ Trade Contract', cat: 'trade', f: (s) => Math.floor(s.intlTrade?.completedCount || 0), g: 1, r: 1, coins: 9_000 },
+  { id: 'dq_trd_5', t: 'Maritime Envoy: Complete 5+ Trade Contracts', cat: 'trade', f: (s) => Math.floor(s.intlTrade?.completedCount || 0), g: 5, r: 2, coins: 32_000 },
+  { id: 'dq_stk_8', t: 'Sticker Collector: Own 8+ Stickers', cat: 'economy', f: totalStickersOwned, g: 8, r: 1, coins: 4_500 },
+  { id: 'dq_fuse_2', t: 'Sticker Synthesis: Fuse 2+ Stickers', cat: 'economy', f: (s) => Math.floor(s.fused || 0), g: 2, r: 2, coins: 15_000 },
+  { id: 'dq_pop_65', t: 'Growing Nation: Reach 65M Population', cat: 'civic', f: (s) => Math.floor(s.pop || 0), g: 65, r: 1, coins: 10_000 },
+  { id: 'dq_cash_50k', t: 'Liquidity Reserve: Hold ₨ 50,000 Coins', cat: 'economy', f: (s) => Math.floor(s.cash || 0), g: 50_000, r: 1, coins: 7_500 },
+  { id: 'dq_cash_5m', t: 'Treasury Surplus: Hold ₨ 5,000,000 Coins', cat: 'economy', f: (s) => Math.floor(s.cash || 0), g: 5_000_000, r: 2, coins: 60_000 },
+  { id: 'dq_rank_5', t: 'Rising Republic: Reach National Rank 5', cat: 'economy', f: (s) => Math.floor(s.rank || 1), g: 5, r: 2, coins: 25_000 },
+];
+
+export interface DailyQuestViewItem {
+  index: number;
+  def: DailyQuestDef;
+  progress: number;
+  goal: number;
+  ready: boolean;
+  claimed: boolean;
+}
+
+export interface DailyQuestsView {
+  dayKey: string;
+  quests: DailyQuestViewItem[];
+  readyCount: number;
+  claimedCount: number;
+  history: RewardHistoryEntry[];
+}
+
+export function selectDailyQuestIds(dayStr: string): number[] {
+  let seed = 2166136261;
+  for (let i = 0; i < dayStr.length; i += 1) {
+    seed ^= dayStr.charCodeAt(i);
+    seed = Math.imul(seed, 16777619) >>> 0;
+  }
+  const idx = Array.from({ length: DAILY_QUEST_POOL.length }, (_, i) => i);
+  for (let i = idx.length - 1; i > 0; i -= 1) {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    const j = Math.floor((seed / 4294967296) * (i + 1));
+    const tmp = idx[i];
+    idx[i] = idx[j];
+    idx[j] = tmp;
+  }
+  return idx.slice(0, 5);
+}
+
+export function getDailyQuestsView(
+  s: GameState,
+  dayKey: string,
+  rankPos = 999,
+): DailyQuestsView {
+  const activeIndices = selectDailyQuestIds(dayKey);
+  const claimedSet = new Set<number>(
+    s.questDay === dayKey && Array.isArray(s.questIds) ? s.questIds : [],
+  );
+  let readyCount = 0;
+  let claimedCount = 0;
+  const quests: DailyQuestViewItem[] = activeIndices.map((idx) => {
+    const def = DAILY_QUEST_POOL[idx] || DAILY_QUEST_POOL[0];
+    const progress = Math.max(0, Math.floor(def.f(s, { rank: rankPos })));
+    const claimed = claimedSet.has(idx);
+    const ready = !claimed && progress >= def.g;
+    if (claimed) claimedCount += 1;
+    if (ready) readyCount += 1;
+    return { index: idx, def, progress, goal: def.g, ready, claimed };
+  });
+  return {
+    dayKey,
+    quests,
+    readyCount,
+    claimedCount,
+    history: Array.isArray(s.qHist) ? s.qHist : [],
+  };
+}
+
+export function applyClaimDailyQuest(
+  s: GameState,
+  questId: string,
+  dayKey: string,
+  rankPos = 999,
+): {
+  ok: boolean;
+  state: GameState;
+  coinsAdded: number;
+  diamondsAdded: number;
+  quest?: DailyQuestDef;
+  reason?: string;
+} {
+  const qIdx = DAILY_QUEST_POOL.findIndex((q) => q.id === questId);
+  if (qIdx < 0) {
+    return { ok: false, state: s, coinsAdded: 0, diamondsAdded: 0, reason: 'Unknown daily quest' };
+  }
+  const activeIndices = selectDailyQuestIds(dayKey);
+  if (!activeIndices.includes(qIdx)) {
+    return { ok: false, state: s, coinsAdded: 0, diamondsAdded: 0, reason: 'Quest is not in today’s rotation' };
+  }
+  const prevIds = s.questDay === dayKey && Array.isArray(s.questIds) ? s.questIds : [];
+  if (prevIds.includes(qIdx)) {
+    return { ok: false, state: s, coinsAdded: 0, diamondsAdded: 0, reason: 'Daily quest already claimed today' };
+  }
+  const def = DAILY_QUEST_POOL[qIdx];
+  const progress = def.f(s, { rank: rankPos });
+  if (progress < def.g) {
+    return { ok: false, state: s, coinsAdded: 0, diamondsAdded: 0, reason: 'Daily quest goal not yet reached' };
+  }
+  const safeCash = Number.isFinite(s.cash) ? Math.max(0, s.cash) : 0;
+  const safeGems = Number.isFinite(s.gems) ? Math.max(0, Math.floor(s.gems)) : 0;
+  const entry: RewardHistoryEntry = {
+    day: dayKey,
+    label: def.t.slice(0, 48),
+    coins: def.coins,
+    diamonds: def.r,
+  };
+  const nextHist = [entry, ...(Array.isArray(s.qHist) ? s.qHist : [])].slice(0, 8);
+  return {
+    ok: true,
+    quest: def,
+    coinsAdded: def.coins,
+    diamondsAdded: def.r,
+    state: {
+      ...s,
+      cash: Math.min(1e13, safeCash + def.coins),
+      gems: Math.min(1e9, safeGems + def.r),
+      questDay: dayKey,
+      questIds: [...prevIds, qIdx].slice(0, 10),
+      qHist: nextHist,
+    },
+  };
+}
+

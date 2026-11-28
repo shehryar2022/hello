@@ -9,8 +9,10 @@ interface QuestsTabProps {
   rankPosition: number;
   serverOffsetMs?: number;
   onClaimDailySlot?: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  onClaimDailyQuest?: (questId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
   onClaimWeekly?: (missionId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
   onClaimAchievement?: (achievementId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
+  onClaimChallenge?: (challengeId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
   onClaimMilestone: (milestoneId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
 }
 
@@ -21,8 +23,10 @@ export const QuestsTab: React.FC<QuestsTabProps> = memo(({
   rankPosition,
   serverOffsetMs = 0,
   onClaimDailySlot,
+  onClaimDailyQuest,
   onClaimWeekly,
   onClaimAchievement,
+  onClaimChallenge,
   onClaimMilestone,
 }) => {
   return (
@@ -33,8 +37,10 @@ export const QuestsTab: React.FC<QuestsTabProps> = memo(({
       rankPosition={rankPosition}
       serverOffsetMs={serverOffsetMs}
       onClaimDailySlot={onClaimDailySlot}
+      onClaimDailyQuest={onClaimDailyQuest}
       onClaimWeekly={onClaimWeekly}
       onClaimAchievement={onClaimAchievement}
+      onClaimChallenge={onClaimChallenge}
       onClaimMilestone={onClaimMilestone}
     />
   );
@@ -45,8 +51,10 @@ export const QuestsTab: React.FC<QuestsTabProps> = memo(({
     prev.rankPosition !== next.rankPosition ||
     prev.serverOffsetMs !== next.serverOffsetMs ||
     prev.onClaimDailySlot !== next.onClaimDailySlot ||
+    prev.onClaimDailyQuest !== next.onClaimDailyQuest ||
     prev.onClaimWeekly !== next.onClaimWeekly ||
     prev.onClaimAchievement !== next.onClaimAchievement ||
+    prev.onClaimChallenge !== next.onClaimChallenge ||
     prev.onClaimMilestone !== next.onClaimMilestone
   ) {
     return false;
@@ -57,9 +65,13 @@ export const QuestsTab: React.FC<QuestsTabProps> = memo(({
     p.dSlot === n.dSlot &&
     p.dLastDay === n.dLastDay &&
     p.dHist === n.dHist &&
+    p.questDay === n.questDay &&
+    p.questIds === n.questIds &&
+    p.qHist === n.qHist &&
     p.weeklyDay === n.weeklyDay &&
     p.weeklyClaimed === n.weeklyClaimed &&
     p.achievements === n.achievements &&
+    p.challenges === n.challenges &&
     p.milestones === n.milestones &&
     p.cash === n.cash &&
     p.gems === n.gems &&
@@ -89,8 +101,12 @@ export const QuestsTab: React.FC<QuestsTabProps> = memo(({
     p.transitSub === n.transitSub &&
     p.b === n.b &&
     p.bPolicies === n.bPolicies &&
+    p.pol === n.pol &&
     p.stk === n.stk &&
     p.tech === n.tech &&
+    p.intlTrade === n.intlTrade &&
+    p.upgHist === n.upgHist &&
+    p.megaProjects === n.megaProjects &&
     p.gx?.lvl === n.gx?.lvl &&
     p.gx?.blk === n.gx?.blk &&
     p.gx?.pb === n.gx?.pb &&
