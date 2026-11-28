@@ -2356,8 +2356,8 @@ body.doc-hidden .cos-sparkle-dot {
 }
 
 @media (max-width: 520px) {
-  .subtabs { max-width: 100%; }
-  .subtabs button { flex: 0 0 auto; padding: 8px 10px; font-size: 12px; min-height: 44px; }
+  .subtabs { max-width: 100%; flex-wrap: wrap; overflow-x: visible; border-radius: 14px; }
+  .subtabs button { flex: 1 1 auto; min-width: 0; padding: 6px 9px; font-size: 11.5px; min-height: 36px; border-radius: 10px; }
   .fchip { min-height: 38px; padding: 6px 10px; }
   .hero-macro { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 7px 8px; }
 }

@@ -63,6 +63,12 @@ const LB_MODES: Array<{ id: LeaderboardMode; label: string; unit: string }> = [
   { id: 'buildingDev', label: 'City Dev', unit: 'Dev Pts' },
   { id: 'production', label: 'Production', unit: 'Output/s' },
   { id: 'contribution', label: 'Contribution', unit: 'Contrib' },
+  { id: 'natDev', label: 'Nat Dev', unit: 'NDI' },
+  { id: 'population', label: 'Population', unit: 'Pop' },
+  { id: 'researchProg', label: 'Research', unit: 'Techs' },
+  { id: 'megaProjects', label: 'Mega Projects', unit: 'Megas' },
+  { id: 'tradePerf', label: 'Intl Trade', unit: 'Trade Vol' },
+  { id: 'stability', label: 'Stability', unit: 'Stab' },
   { id: 'weekly', label: 'Weekly', unit: 'Wk Score' },
   { id: 'monthly', label: 'Monthly', unit: 'Mo Score' },
 ];
@@ -153,9 +159,18 @@ const LeaderboardRow: React.FC<LeaderboardRowProps> = memo(({
         </h2>
         <p>
           {p.countryName} · {unitLabel}{' '}
-          {lbMode === 'buildingDev' || lbMode === 'production' || lbMode === 'contribution'
-            ? formatNumber(metricVal)
-            : `₨ ${formatNumber(metricVal)}`}
+          {lbMode === 'population'
+            ? `${formatNumber(metricVal)}M`
+            : lbMode === 'stability'
+              ? `${Math.round(metricVal)}%`
+              : lbMode === 'buildingDev' ||
+                  lbMode === 'production' ||
+                  lbMode === 'contribution' ||
+                  lbMode === 'natDev' ||
+                  lbMode === 'researchProg' ||
+                  lbMode === 'megaProjects'
+                ? formatNumber(metricVal)
+                : `₨ ${formatNumber(metricVal)}`}
           {me ? ' · you' : ''}
         </p>
       </div>
@@ -601,6 +616,13 @@ export const PlayersTab: React.FC<PlayersTabProps> = memo(({
     p.rank !== n.rank ||
     p.b !== n.b ||
     p.tech !== n.tech ||
+    p.techLvls !== n.techLvls ||
+    p.megaProjects !== n.megaProjects ||
+    p.diplomacy !== n.diplomacy ||
+    p.finance !== n.finance ||
+    p.intlTrade !== n.intlTrade ||
+    Math.round(p.pop) !== Math.round(n.pop) ||
+    Math.round(p.hap) !== Math.round(n.hap) ||
     p.gx?.lvl !== n.gx?.lvl ||
     p.sub !== n.sub ||
     p.eqStk !== n.eqStk

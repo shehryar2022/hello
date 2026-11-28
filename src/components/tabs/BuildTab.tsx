@@ -1,10 +1,12 @@
 import React, { memo, useMemo, useState } from 'react';
 import {
   BUILDING_CATEGORIES,
+  BUILDING_META_OVERRIDES_16,
   BUILDINGS,
   MAX_BUILDING_LEVEL,
   MAX_CONSTRUCTION_QUEUE,
   MAX_UPGRADE_QUEUE,
+  RESOURCE_CATALOG_16,
   TECH_TREE,
   getBuildingLevelMultiplier,
 } from '../../game/constants';
@@ -27,7 +29,7 @@ import {
   hasTech,
   totalBuildings,
 } from '../../game/rules';
-import type { BuildingCategory, GameState } from '../../game/types';
+import type { BuildingCategory, BuildingDef, BuildingTier, GameState } from '../../game/types';
 import {
   Briefcase,
   BuildingIcon,
@@ -68,6 +70,38 @@ function formatRate(val: number): string {
   return val.toFixed(2);
 }
 
+const TIER_FILTERS: Array<{ id: 'all' | BuildingTier; label: string; color: string }> = [
+  { id: 'all', label: 'All Tiers', color: '#9ee7ff' },
+  { id: 'basic', label: 'Basic', color: '#8fd4b6' },
+  { id: 'advanced', label: 'Advanced', color: '#5ccbff' },
+  { id: 'premium', label: 'Premium', color: '#a58cff' },
+  { id: 'elite', label: 'Elite', color: '#ffc23d' },
+  { id: 'national_wonder', label: 'National Wonder', color: '#ff7bb0' },
+];
+
+const RES_NAME_MAP = Object.fromEntries(RESOURCE_CATALOG_16.map((r) => [r.id, `${r.icon} ${r.name}`]));
+
+function resolveBuildingEcoMeta(d: BuildingDef) {
+  const ov = BUILDING_META_OVERRIDES_16[d.id];
+  const tier: BuildingTier = d.tier || ov?.tier || 'basic';
+  return {
+    tier,
+    skilledShare: d.skilledShare ?? ov?.skilledShare ?? 0.25,
+    produces: d.produces || ov?.produces,
+    consumes: d.consumes || ov?.consumes,
+    dependsOn: d.dependsOn || ov?.dependsOn,
+    drawback: d.drawback || ov?.drawback,
+  };
+}
+
+function formatResourceList(map?: Partial<Record<string, number>>): string {
+  if (!map) return '';
+  return Object.entries(map)
+    .filter(([, v]) => (v || 0) > 0)
+    .map(([k, v]) => `${RES_NAME_MAP[k] || k} ${Number(v).toFixed(1)}`)
+    .join(', ');
+}
+
 export const BuildTab: React.FC<BuildTabProps> = memo(({
   state,
   serverOffsetMs = 0,
@@ -77,6 +111,7 @@ export const BuildTab: React.FC<BuildTabProps> = memo(({
   onFocusBuilding,
 }) => {
   const [cat, setCat] = useState<'all' | BuildingCategory>('all');
+  const [tierFilter, setTierFilter] = useState<'all' | BuildingTier>('all');
   const [qty, setQty] = useState<1 | 5>(1);
   const [searchText, setSearchText] = useState('');
   const [sortBy, setSortBy] = useState<'default' | 'cost' | 'roi'>('default');
@@ -95,6 +130,7 @@ export const BuildTab: React.FC<BuildTabProps> = memo(({
     const q = searchText.trim().toLowerCase();
     const list = BUILDINGS.filter((b) => {
       if (cat !== 'all' && b.cat !== cat) return false;
+      if (tierFilter !== 'all' && resolveBuildingEcoMeta(b).tier !== tierFilter) return false;
       if (q && !b.n.toLowerCase().includes(q) && !b.d.toLowerCase().includes(q)) return false;
       return true;
     });
@@ -115,7 +151,7 @@ export const BuildTab: React.FC<BuildTabProps> = memo(({
       });
     }
     return list;
-  }, [cat, searchText, sortBy, state.b, state.gx?.lvl, qty, disc]);
+  }, [cat, tierFilter, searchText, sortBy, state.b, state.gx?.lvl, qty, disc]);
 
   const inspectedQuote = useMemo(
     () => (inspectId ? getBuildingUpgradeQuote(state, inspectId, nowSrv) : null),
@@ -334,6 +370,32 @@ export const BuildTab: React.FC<BuildTabProps> = memo(({
             </div>
           </div>
 
+          {(() => {
+            const ecoMeta = resolveBuildingEcoMeta(inspectedQuote.def);
+            const tierMeta = TIER_FILTERS.find((tf) => tf.id === ecoMeta.tier) || TIER_FILTERS[1];
+            const prodText = formatResourceList(ecoMeta.produces);
+            const consText = formatResourceList(ecoMeta.consumes);
+            const deps = (ecoMeta.dependsOn || []).map((depId) => ({
+              id: depId,
+              name: BUILDINGS.find((x) => x.id === depId)?.n || depId,
+              met: (state.b[depId] || 0) > 0,
+            }));
+            return (
+              <div className="bmeta" style={{ marginBottom: 10 }}>
+                <span style={{ color: tierMeta.color, fontWeight: 700 }}>Class: {tierMeta.label}</span>
+                <span>Skilled Workforce: {Math.round(ecoMeta.skilledShare * 100)}%</span>
+                {prodText && <span style={{ color: 'var(--mint)' }}>Produces: {prodText}/s</span>}
+                {consText && <span style={{ color: 'var(--cy)' }}>Consumes: {consText}/s</span>}
+                {deps.length > 0 && (
+                  <span style={{ color: deps.every((dp) => dp.met) ? 'var(--mint)' : '#ffc23d' }}>
+                    Chain Dep: {deps.map((dp) => `${dp.name}${dp.met ? ' ✓' : ' (Missing)'}`).join(', ')}
+                  </span>
+                )}
+                {ecoMeta.drawback && <span style={{ color: '#ff9cb8' }}>Drawback: {ecoMeta.drawback}</span>}
+              </div>
+            );
+          })()}
+
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
             <div className="dim" style={{ fontSize: 12 }}>
               {inspectedQuote.isMax
@@ -434,6 +496,19 @@ export const BuildTab: React.FC<BuildTabProps> = memo(({
             </button>
           ))}
         </div>
+        <div className="fchips" role="group" aria-label="Filter buildings by tier" style={{ marginTop: 2 }}>
+          {TIER_FILTERS.map((tf) => (
+            <button
+              key={tf.id}
+              type="button"
+              className={`fchip ${tierFilter === tf.id ? 'on' : ''}`}
+              onClick={() => setTierFilter(tf.id)}
+              style={tierFilter !== tf.id && tf.id !== 'all' ? { color: tf.color } : undefined}
+            >
+              {tf.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {visibleBuildings.length === 0 ? (
@@ -465,6 +540,12 @@ export const BuildTab: React.FC<BuildTabProps> = memo(({
             const rate = d.inc * upgMult * polDef.incomeMult;
             const rateLabel = rate >= 1000 ? formatNumber(rate) : rate >= 100 ? Math.round(rate) : rate.toFixed(2);
             const durLabel = check.durationSec > 0 ? formatBuildSec(check.durationSec) : formatBuildSec(Math.ceil(d.buildSec / speedMult));
+            const ecoMeta = resolveBuildingEcoMeta(d);
+            const tierMeta = TIER_FILTERS.find((tf) => tf.id === ecoMeta.tier) || TIER_FILTERS[1];
+            const prodText = formatResourceList(ecoMeta.produces);
+            const consText = formatResourceList(ecoMeta.consumes);
+            const missingDep = ecoMeta.dependsOn?.find((depId) => (state.b[depId] || 0) <= 0);
+            const missingDepName = missingDep ? BUILDINGS.find((x) => x.id === missingDep)?.n || missingDep : '';
 
             return (
               <div
@@ -480,6 +561,9 @@ export const BuildTab: React.FC<BuildTabProps> = memo(({
                     <span>{d.n}</span>
                     <span className="lv">
                       Owned {count} · Lv {upgLvl}/{MAX_BUILDING_LEVEL}
+                    </span>
+                    <span className="lv" style={{ borderColor: `${tierMeta.color}55`, color: tierMeta.color }}>
+                      {tierMeta.label === 'National Wonder' ? 'Wonder' : tierMeta.label}
                     </span>
                     {polId !== 'standard' && (
                       <span className="rec-badge" style={{ borderColor: 'rgba(165, 140, 255, 0.45)', background: 'rgba(165, 140, 255, 0.16)', color: '#d7cbff' }}>
@@ -507,7 +591,7 @@ export const BuildTab: React.FC<BuildTabProps> = memo(({
                     </span>
                     <span>
                       <Briefcase size={11} />
-                      +{Math.round(d.jobs * (1 + (upgLvl - 1) * 0.04) * polDef.jobsMult)} jobs
+                      +{Math.round(d.jobs * (1 + (upgLvl - 1) * 0.04) * polDef.jobsMult)} jobs ({Math.round(ecoMeta.skilledShare * 100)}% skilled)
                     </span>
                     <span style={{ color: d.energy >= 0 ? 'var(--mint)' : 'var(--mu)' }}>
                       <Zap size={11} />
@@ -522,6 +606,14 @@ export const BuildTab: React.FC<BuildTabProps> = memo(({
                         <Smile size={11} />
                         {d.hapDelta > 0 ? `+${d.hapDelta}` : d.hapDelta} hap
                       </span>
+                    )}
+                    {prodText && <span style={{ color: 'var(--mint)' }}>Out: {prodText}</span>}
+                    {consText && <span style={{ color: 'var(--cy)' }}>In: {consText}</span>}
+                    {missingDepName && (
+                      <span style={{ color: '#ffc23d' }}>Chain needs {missingDepName}</span>
+                    )}
+                    {ecoMeta.drawback && (
+                      <span style={{ color: '#ff9cb8' }}>Note: {ecoMeta.drawback}</span>
                     )}
                     {isLocked && (
                       <span style={{ color: 'var(--pink)', fontWeight: 700 }}>

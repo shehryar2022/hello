@@ -127,9 +127,10 @@ import {
   ACHIEVEMENTS,
   BOOSTERS,
   BUILDINGS,
-  CHALLENGES_2_0,
+  CHALLENGES_ALL,
   COUNTRIES,
   DAILY_REWARDS,
+  DYNAMIC_EVENTS_16,
   EXEC_DECISIONS,
   GOV_CHANGE_CD_MS,
   GOV_DAY_SEC,
@@ -158,6 +159,7 @@ import {
 import {
   applyActivateGemBoost,
   applyAdvanceLocalMegaProjectStage,
+  applyBorrowBond,
   applyBuyBooster,
   applyBuyBuilding,
   applyBuyCosmeticBundle,
@@ -174,11 +176,15 @@ import {
   applyCollectTax,
   applyCommitFiscalReform,
   applyDemolishBuilding,
+  applyDiplomacyEnvoy,
+  applyDiplomacyTreaty,
   applyEnactNationalDecision,
   applyEquipCosmetic,
   applyEquipSticker,
   applyFixInfra,
   applyOfflineEarnings,
+  applyRepayBond,
+  applyResolveDynamicEvent,
   applySelectTheme,
   applySetBuildingPolicy,
   applyStartBuildingUpgrade,
@@ -200,6 +206,7 @@ import {
   claimTradeMilestone,
   cleanStickersMap,
   computeDailyAndOfflineChecks,
+  computeEconomySnapshot,
   formatCoinsCompact,
   formatNumber,
   freshState,
@@ -218,6 +225,7 @@ import {
   playerLevel,
   resolveEffectiveCosmeticPreview,
   resolveExecutiveDecision,
+  rollDynamicEventIfDue,
   rollWeeklySubPromo,
   sanitizeCosmeticIdField,
   shouldRunOfflineEntryCheck,
@@ -227,6 +235,7 @@ import {
   tickIntlTradeContracts,
   tickLocalMegaProjects,
   tickResearchQueue,
+  tickResourceStockpiles,
   tickUpgradeQueue,
   tierOfCompletedTrades,
   toggleItemInPreviewLoadout,
@@ -2169,6 +2178,11 @@ export default function App() {
       const researchCompleted = tickResearchQueue(curSnap, nowSrv).completedName;
       const tradeSettled = tickIntlTradeContracts(curSnap, nowSrv).settled;
       const megaCompleted = tickLocalMegaProjects(curSnap, nowSrv).finishedTypes;
+      const preRolledDyn = tickCountRef.current % 15 === 0 ? rollDynamicEventIfDue(curSnap, nowSrv) : curSnap;
+      const newDynEvent =
+        preRolledDyn.dynEvent?.id && preRolledDyn.dynEvent.id !== curSnap.dynEvent?.id
+          ? DYNAMIC_EVENTS_16.find((e) => e.id === preRolledDyn.dynEvent?.id) || null
+          : null;
       const expiredSubTier =
         curSnap.sub?.tier && curSnap.sub?.exp && curSnap.sub.exp <= nowSrv ? curSnap.sub : null;
       const expiredSubKey = expiredSubTier ? `${expiredSubTier.tier}_${expiredSubTier.exp}` : '';
@@ -2295,6 +2309,16 @@ export default function App() {
         const clearedSub =
           prev.sub?.tier && prev.sub?.exp && prev.sub.exp <= nowSrv ? {} : prev.sub;
 
+        const bondInterestTick = inc.snapshot?.bondInterestCost || 0;
+        const nextFinance =
+          (prev.finance?.debt || 0) > 0 && bondInterestTick > 0
+            ? {
+                debt: prev.finance?.debt || 0,
+                borrowedTotal: prev.finance?.borrowedTotal || 0,
+                interestPaid: Math.round(((prev.finance?.interestPaid || 0) + bondInterestTick) * 100) / 100,
+              }
+            : prev.finance;
+
         const nextNational: GameState = {
           ...prev,
           cash: nextCash,
@@ -2310,6 +2334,7 @@ export default function App() {
           gx: nextGx,
           sub: clearedSub,
           subPromo: nextSubPromo,
+          finance: nextFinance,
           t: now,
         };
 
@@ -2318,6 +2343,10 @@ export default function App() {
         nextSim = tickResearchQueue(nextSim, nowSrv).state;
         nextSim = tickIntlTradeContracts(nextSim, nowSrv).state;
         nextSim = tickLocalMegaProjects(nextSim, nowSrv).state;
+        nextSim = tickResourceStockpiles(nextSim, 1);
+        if (tickCountRef.current % 15 === 0) {
+          nextSim = rollDynamicEventIfDue(nextSim, nowSrv);
+        }
         return nextSim;
       });
 
@@ -2359,6 +2388,10 @@ export default function App() {
         addToast(`Mega Project ready to claim: ${label}!`);
         playSfx('win', !!curSnap.set.sfx);
         scheduleCloudSync(SYNC_COALESCE_DEBOUNCE_MS);
+      }
+
+      if (newDynEvent) {
+        addToast(`National Event: ${newDynEvent.e} ${newDynEvent.title} (Gov → Ecosystem)`);
       }
 
       if (shouldNotifyExpiredSub && expiredSubTier) {
@@ -3140,6 +3173,105 @@ export default function App() {
       scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
       const label = TRADE_MILESTONES.find((m) => m.id === milestoneId)?.label || 'Trade Milestone';
       addToast(`${label} claimed! +₨ ${formatNumber(res.rewardCoins)} & +${res.rewardGems} Diamonds`);
+    },
+    [isGameplayBlocked, addToast, saveLocal, scheduleCloudSync],
+  );
+
+  const handleBorrowBond = useCallback(
+    (amount: number) => {
+      if (isGameplayBlocked()) return;
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const snap = computeEconomySnapshot(stateRef.current, { nowMs: nowSrv });
+      const res = applyBorrowBond(stateRef.current, amount, snap.realGdp, snap.stabilityScore ?? 65);
+      addToast(res.msg);
+      if (!res.ok) return;
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('coin', !!res.state.set.sfx);
+      triggerBuzz(16, !!res.state.set.vib);
+      setState((prev) => {
+        const pSnap = computeEconomySnapshot(prev, { nowMs: nowSrv });
+        const recheck = applyBorrowBond(prev, amount, pSnap.realGdp, pSnap.stabilityScore ?? 65);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+    },
+    [isGameplayBlocked, addToast, saveLocal, scheduleCloudSync],
+  );
+
+  const handleRepayBond = useCallback(
+    (amount: number) => {
+      if (isGameplayBlocked()) return;
+      const res = applyRepayBond(stateRef.current, amount);
+      addToast(res.msg);
+      if (!res.ok) return;
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('buy', !!res.state.set.sfx);
+      triggerBuzz(16, !!res.state.set.vib);
+      setState((prev) => {
+        const recheck = applyRepayBond(prev, amount);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+    },
+    [isGameplayBlocked, addToast, saveLocal, scheduleCloudSync],
+  );
+
+  const handleSendEnvoy = useCallback(
+    (partnerCode: string) => {
+      if (isGameplayBlocked()) return;
+      const res = applyDiplomacyEnvoy(stateRef.current, partnerCode);
+      addToast(res.msg);
+      if (!res.ok) return;
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('buy', !!res.state.set.sfx);
+      triggerBuzz(14, !!res.state.set.vib);
+      setState((prev) => {
+        const recheck = applyDiplomacyEnvoy(prev, partnerCode);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+    },
+    [isGameplayBlocked, addToast, saveLocal, scheduleCloudSync],
+  );
+
+  const handleSignTreaty = useCallback(
+    (treatyId: string) => {
+      if (isGameplayBlocked()) return;
+      const res = applyDiplomacyTreaty(stateRef.current, treatyId);
+      addToast(res.msg);
+      if (!res.ok) return;
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(18, !!res.state.set.vib);
+      setState((prev) => {
+        const recheck = applyDiplomacyTreaty(prev, treatyId);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+    },
+    [isGameplayBlocked, addToast, saveLocal, scheduleCloudSync],
+  );
+
+  const handleResolveDynamicEvent = useCallback(
+    (choiceIdx: 0 | 1) => {
+      if (isGameplayBlocked()) return;
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const res = applyResolveDynamicEvent(stateRef.current, choiceIdx, nowSrv);
+      addToast(res.msg);
+      if (!res.ok) return;
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('win', !!res.state.set.sfx);
+      triggerBuzz(18, !!res.state.set.vib);
+      setState((prev) => {
+        const recheck = applyResolveDynamicEvent(prev, choiceIdx, nowSrv);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
     },
     [isGameplayBlocked, addToast, saveLocal, scheduleCloudSync],
   );
@@ -4156,7 +4288,7 @@ export default function App() {
         return recheck.ok ? recheck.state : prev;
       });
       scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
-      const chName = CHALLENGES_2_0.find((c) => c.id === challengeId)?.name || 'Challenge';
+      const chName = CHALLENGES_ALL.find((c) => c.id === challengeId)?.name || 'Challenge';
       addToast(`${chName} claimed! +₨ ${formatNumber(res.coinsAdded)} & +${res.gemsAdded} Diamonds`);
       queueMicrotask(() => rewardClaimBusyRef.current.delete(lockKey));
     },
@@ -5384,6 +5516,11 @@ export default function App() {
                 onStartTradeContract={handleStartTradeContract}
                 onClaimTradeMilestone={handleClaimTradeMilestone}
                 onEnactDecision={handleEnactDecision}
+                onBorrowBond={handleBorrowBond}
+                onRepayBond={handleRepayBond}
+                onSendEnvoy={handleSendEnvoy}
+                onSignTreaty={handleSignTreaty}
+                onResolveDynamicEvent={handleResolveDynamicEvent}
               />
             )}
             {tab === 'policy' && (

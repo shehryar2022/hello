@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { BUILDINGS } from '../game/constants';
+import { BUILDINGS, GX_PROJECT_TYPES } from '../game/constants';
 import { DEFAULT_PERF_STATS, resolveNumericFpsCap } from '../game/graphics';
 import { getConstructionQueue, getUpgradeQueue } from '../game/rules';
 import type {
@@ -9,18 +9,20 @@ import type {
   CityWeatherMode,
   GameState,
   GraphicsSettings,
+  ProjectType,
   RuntimePerfStats,
 } from '../game/types';
 import { getDiamondAssetBonuses } from '../game/cosmetics';
 import {
   buildDiamondLandmarkGroup,
+  buildMegaProjectMonumentGroup,
   buildPlotGroup,
   createCityMaterialLibrary,
   DIAMOND_LANDMARK_SLOTS,
   type AnimatedCityPart,
   type CityMaterialLibrary,
 } from './buildingModels';
-import { CITY_PLOTS, CITY_ROADS, PLOT_BY_ID, VEHICLE_LANES } from './cityLayout';
+import { CITY_PLOTS, CITY_ROADS, MEGA_PROJECT_SLOTS, PLOT_BY_ID, VEHICLE_LANES } from './cityLayout';
 
 export type CameraPresetMode = 'overview' | 'aerial' | 'closeup' | 'harbor';
 
@@ -99,6 +101,8 @@ export class CityEngine {
   private plotSignatures = new Map<string, string>();
   private diamondLandmarkGroups = new Map<string, THREE.Group>();
   private diamondAssetSig = '';
+  private megaProjectGroups = new Map<string, THREE.Group>();
+  private megaProjectSig = '';
   private hitMeshes: THREE.Object3D[] = [];
   private animatedParts: AnimatedCityPart[] = [];
 
@@ -199,18 +203,18 @@ export class CityEngine {
     this.fog = new THREE.FogExp2(0x88b4e6, 0.0028);
     this.scene.fog = this.fog;
 
-    this.camera = new THREE.PerspectiveCamera(45, width / height, 0.8, 520);
+    this.camera = new THREE.PerspectiveCamera(45, width / height, 0.8, 650);
     this.camera.position.set(56, 48, 72);
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.target.set(0, 2, -6);
     this.controls.minDistance = 14;
-    this.controls.maxDistance = 220;
+    this.controls.maxDistance = 310;
     this.controls.maxPolarAngle = Math.PI * 0.46;
     this.controls.minPolarAngle = 0.14;
     this.controls.enableDamping = !this.isSoftwareGl;
     this.controls.dampingFactor = 0.075;
-    this.controls.panSpeed = 0.9;
+    this.controls.panSpeed = 0.95;
     this.controls.rotateSpeed = 0.85;
     this.controls.zoomSpeed = 0.95;
     this.controls.addEventListener('start', () => {
@@ -232,12 +236,12 @@ export class CityEngine {
 
     this.sunLight = new THREE.DirectionalLight(0xfff1d6, 2.1);
     this.sunLight.position.set(58, 76, 44);
-    this.sunLight.shadow.camera.left = -112;
-    this.sunLight.shadow.camera.right = 112;
-    this.sunLight.shadow.camera.top = 105;
-    this.sunLight.shadow.camera.bottom = -105;
+    this.sunLight.shadow.camera.left = -175;
+    this.sunLight.shadow.camera.right = 175;
+    this.sunLight.shadow.camera.top = 170;
+    this.sunLight.shadow.camera.bottom = -170;
     this.sunLight.shadow.camera.near = 10;
-    this.sunLight.shadow.camera.far = 260;
+    this.sunLight.shadow.camera.far = 360;
     this.sunLight.shadow.bias = -0.0005;
     this.sunLight.shadow.normalBias = 0.02;
     this.scene.add(this.sunLight);
@@ -394,7 +398,7 @@ export class CityEngine {
 
   private buildStaticTerrainAndInfrastructure(): void {
     // Expansive grass / urban ground plane + outer rolling hills
-    const groundGeo = new THREE.PlaneGeometry(520, 520);
+    const groundGeo = new THREE.PlaneGeometry(760, 760);
     groundGeo.rotateX(-Math.PI * 0.5);
     const groundMat = new THREE.MeshStandardMaterial({
       color: 0x355c47,
@@ -407,8 +411,8 @@ export class CityEngine {
     ground.receiveShadow = true;
     this.scene.add(ground);
 
-    // Urban concrete district slab under main 107-plot city grid (y=0.01)
-    const citySlabGeo = new THREE.PlaneGeometry(218, 150);
+    // Urban concrete district slab under main 227-plot metropolis grid (y=0.01)
+    const citySlabGeo = new THREE.PlaneGeometry(348, 212);
     citySlabGeo.rotateX(-Math.PI * 0.5);
     const citySlabMat = new THREE.MeshStandardMaterial({
       color: 0x2c2748,
@@ -420,20 +424,20 @@ export class CityEngine {
     });
     this.lib.materials.push(citySlabMat);
     const citySlab = new THREE.Mesh(citySlabGeo, citySlabMat);
-    citySlab.position.set(0, 0.01, -24);
+    citySlab.position.set(0, 0.01, -58);
     citySlab.receiveShadow = true;
     this.scene.add(citySlab);
 
-    // Waterfront sea bay (South z = 47..240)
-    const seaGeo = new THREE.PlaneGeometry(520, 200);
+    // Waterfront sea bay (South z = 47..280)
+    const seaGeo = new THREE.PlaneGeometry(760, 260);
     seaGeo.rotateX(-Math.PI * 0.5);
     const sea = new THREE.Mesh(seaGeo, this.lib.waterMat);
-    sea.position.set(0, -0.08, 147);
+    sea.position.set(0, -0.08, 177);
     sea.receiveShadow = true;
     this.scene.add(sea);
 
     // Concrete harbor seawall promenade
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(218, 0.9, 2.0), this.lib.concreteBase);
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(348, 0.9, 2.0), this.lib.concreteBase);
     wall.position.set(0, 0.35, 47.2);
     wall.receiveShadow = true;
     this.scene.add(wall);
@@ -465,11 +469,11 @@ export class CityEngine {
     }
 
     // Elevated Railway Viaduct along North corridor (z = -30)
-    const viaduct = new THREE.Mesh(new THREE.BoxGeometry(200, 0.45, 1.8), this.lib.darkSteel);
+    const viaduct = new THREE.Mesh(new THREE.BoxGeometry(330, 0.45, 1.8), this.lib.darkSteel);
     viaduct.position.set(0, 2.35, -30);
     viaduct.castShadow = true;
     this.scene.add(viaduct);
-    for (let px = -96; px <= 96; px += 16) {
+    for (let px = -160; px <= 160; px += 16) {
       const pier = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.42, 2.35, 6), this.lib.concreteBase);
       pier.position.set(px, 1.17, -30);
       this.scene.add(pier);
@@ -495,15 +499,15 @@ export class CityEngine {
         tz = 21 + Math.floor(i / 4) * 2.5;
         if (Math.hypot(tx - 30, tz - 25) < 2.8) continue;
       } else if (i < 54) {
-        // Perimeter green hills (North, West, East outside 218x150 slab)
+        // Perimeter green hills (North, West, East outside 348x212 slab)
         const angle = ((i - 16) / 38) * Math.PI * 1.45 + Math.PI * 0.78;
-        const rad = 118 + (i % 5) * 7.5;
+        const rad = 192 + (i % 5) * 9.5;
         tx = Math.cos(angle) * rad;
-        tz = Math.sin(angle) * rad * 0.78 - 22;
+        tz = Math.sin(angle) * rad * 0.85 - 52;
       } else {
         // Boulevard avenue medians
-        tx = -92 + ((i - 54) % 19) * 10;
-        tz = Math.floor((i - 54) / 19) * 28 - 44;
+        tx = -152 + ((i - 54) % 24) * 13;
+        tz = Math.floor((i - 54) / 24) * 36 - 68;
       }
       treePositions.push([tx, tz, 0.85 + (i % 5) * 0.11]);
     }
@@ -539,12 +543,12 @@ export class CityEngine {
     // Horizon Perimeter Hills (North, West, East)
     const hillMat = new THREE.MeshStandardMaterial({ color: 0x2a4b3c, roughness: 0.96, metalness: 0 });
     this.lib.materials.push(hillMat);
-    for (let h = 0; h < 14; h++) {
-      const a = (h / 13) * Math.PI * 1.28 + Math.PI * 0.86;
-      const dist = 158 + (h % 3) * 16;
-      const rad = 26 + (h % 4) * 8;
-      const mound = new THREE.Mesh(new THREE.ConeGeometry(rad, 15 + (h % 3) * 7, 10), hillMat);
-      mound.position.set(Math.cos(a) * dist, 5.5, Math.sin(a) * dist * 0.84 - 24);
+    for (let h = 0; h < 16; h++) {
+      const a = (h / 15) * Math.PI * 1.28 + Math.PI * 0.86;
+      const dist = 235 + (h % 3) * 18;
+      const rad = 28 + (h % 4) * 9;
+      const mound = new THREE.Mesh(new THREE.ConeGeometry(rad, 16 + (h % 3) * 8, 10), hillMat);
+      mound.position.set(Math.cos(a) * dist, 6.0, Math.sin(a) * dist * 0.86 - 52);
       this.scene.add(mound);
     }
   }
@@ -627,6 +631,45 @@ export class CityEngine {
       }
     }
 
+    // Sync National Mega Projects (21 monumental sites along south islands & northern ridge)
+    const activeMegas = (state.megaProjects || []).filter((p) => p && MEGA_PROJECT_SLOTS[p.type as ProjectType]);
+    const nextMegaSig = activeMegas
+      .map((p) => `${p.type}:${p.stage}:${p.claimed ? 1 : 0}`)
+      .sort()
+      .join('|');
+    if (nextMegaSig !== this.megaProjectSig) {
+      this.megaProjectSig = nextMegaSig;
+      rebuiltAny = true;
+      for (const grp of this.megaProjectGroups.values()) {
+        this.scene.remove(grp);
+        this.disposeObjectChildren(grp, true);
+      }
+      this.megaProjectGroups.clear();
+
+      const bestByType = new Map<ProjectType, (typeof activeMegas)[number]>();
+      for (const proj of activeMegas) {
+        const pt = proj.type as ProjectType;
+        const prev = bestByType.get(pt);
+        if (!prev || (proj.claimed && !prev.claimed) || (proj.stage ?? 1) > (prev.stage ?? 1)) {
+          bestByType.set(pt, proj);
+        }
+      }
+      for (const [pt, proj] of bestByType.entries()) {
+        const slot = MEGA_PROJECT_SLOTS[pt];
+        const def = GX_PROJECT_TYPES[pt];
+        if (!slot || !def) continue;
+        const grp = buildMegaProjectMonumentGroup({
+          slot,
+          proj,
+          def,
+          lib: this.lib,
+          animatedParts: this.animatedParts,
+        });
+        this.scene.add(grp);
+        this.megaProjectGroups.set(pt, grp);
+      }
+    }
+
     if (rebuiltAny) {
       // Refresh raycast hitMeshes & animatedParts cleanly without stale references
       const freshHits: THREE.Object3D[] = [];
@@ -694,10 +737,10 @@ export class CityEngine {
     }
 
     // View distance & fog
-    const farDist = next.viewDistance === 'near' ? 220 : next.viewDistance === 'medium' ? 340 : 520;
+    const farDist = next.viewDistance === 'near' ? 280 : next.viewDistance === 'medium' ? 440 : 650;
     this.camera.far = farDist;
     this.camera.updateProjectionMatrix();
-    this.fog.density = next.viewDistance === 'near' ? 0.0052 : next.viewDistance === 'medium' ? 0.0034 : 0.0022;
+    this.fog.density = next.viewDistance === 'near' ? 0.0042 : next.viewDistance === 'medium' ? 0.0028 : 0.0018;
 
     // Texture anisotropy & Reflections & Ambient Fill
     const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
@@ -915,8 +958,8 @@ export class CityEngine {
       this.camGoalTarget = null;
       this.camera.position.add(_v3);
       this.controls.target.add(_v3);
-      this.controls.target.x = THREE.MathUtils.clamp(this.controls.target.x, -104, 104);
-      this.controls.target.z = THREE.MathUtils.clamp(this.controls.target.z, -94, 55);
+      this.controls.target.x = THREE.MathUtils.clamp(this.controls.target.x, -168, 168);
+      this.controls.target.z = THREE.MathUtils.clamp(this.controls.target.z, -156, 72);
     }
 
     if (this.keysPressed.has('KeyQ') || this.keysPressed.has('KeyE')) {
@@ -1242,6 +1285,10 @@ export class CityEngine {
       this.disposeObjectChildren(grp, true);
     }
     this.diamondLandmarkGroups.clear();
+    for (const grp of this.megaProjectGroups.values()) {
+      this.disposeObjectChildren(grp, true);
+    }
+    this.megaProjectGroups.clear();
 
     this.carMesh.geometry.dispose();
     (this.carMesh.material as THREE.Material).dispose();

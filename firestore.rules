@@ -71,7 +71,8 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'username', 'usernameLower', 'countryCode', 'countryName',
           'gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'createdAt',
-          'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim'
+          'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'cosLbAnim', 'eqStk',
+          'natDev', 'pop', 'techCount', 'megaCount', 'tradeScore', 'stability'
         ])
         && data.username is string && data.username.size() >= 3 && data.username.size() <= 16
         && data.username.matches('^[A-Za-z0-9_]{3,16}$')
@@ -85,7 +86,7 @@ service cloud.firestore {
         && data.cash is number && data.cash >= 0 && data.cash <= 10000000000000
         && data.gems is number && data.gems >= 0 && data.gems <= 1000000000
         && data.level is number && data.level >= 1 && data.level <= 10000000
-        && data.rank is number && data.rank >= 0 && data.rank <= 15
+        && data.rank is number && data.rank >= 0 && data.rank <= 25
         && (!('createdAt' in data) || data.createdAt is timestamp)
         && data.lastSeen is timestamp
         && (!('subTier' in data) || data.subTier in ['', 'daily', 'weekly', 'monthly'])
@@ -94,6 +95,14 @@ service cloud.firestore {
         && (!('cosNameFx' in data) || (data.cosNameFx is string && data.cosNameFx.matches('^[a-z0-9_]{0,36}$')))
         && (!('cosBadge' in data) || (data.cosBadge is string && data.cosBadge.matches('^[a-z0-9_]{0,36}$')))
         && (!('cosAnim' in data) || (data.cosAnim is string && data.cosAnim.matches('^[a-z0-9_]{0,36}$')))
+        && (!('cosLbAnim' in data) || (data.cosLbAnim is string && data.cosLbAnim.matches('^[a-z0-9_]{0,36}$')))
+        && (!('eqStk' in data) || (data.eqStk is string && data.eqStk.matches('^[a-z0-9_]{0,36}$')))
+        && (!('natDev' in data) || (data.natDev is number && data.natDev >= 0 && data.natDev <= 1000000))
+        && (!('pop' in data) || (data.pop is number && data.pop >= 0 && data.pop <= 1000000))
+        && (!('techCount' in data) || (data.techCount is number && data.techCount >= 0 && data.techCount <= 1000))
+        && (!('megaCount' in data) || (data.megaCount is number && data.megaCount >= 0 && data.megaCount <= 1000))
+        && (!('tradeScore' in data) || (data.tradeScore is number && data.tradeScore >= 0 && data.tradeScore <= 100000000000000))
+        && (!('stability' in data) || (data.stability is number && data.stability >= 0 && data.stability <= 100))
         && isValidPlayerStats(data.stats);
     }
 
@@ -102,7 +111,7 @@ service cloud.firestore {
         && data.keys().hasOnly(['cash', 'gems', 'stk', 'rev', 'sid', 't', 'tradeId'])
         && data.cash is number && data.cash >= 0 && data.cash <= 10000000000000
         && data.gems is number && data.gems >= 0 && data.gems <= 1000000000
-        && data.stk is map && data.stk.size() <= 48
+        && data.stk is map && data.stk.size() <= 75
         && data.rev is number && data.rev >= 1 && data.rev <= 1000000000
         && data.sid is string && data.sid.size() >= 1 && data.sid.size() <= 128
         && data.t is timestamp
@@ -137,8 +146,8 @@ service cloud.firestore {
         && (!('lvl' in gx) || (gx.lvl is map && gx.lvl.size() <= 60))
         && (!('acc' in gx) || (gx.acc is number && gx.acc >= 0 && gx.acc <= 300))
         && (!('blk' in gx) || (gx.blk is number && gx.blk >= 0 && gx.blk <= 1000000))
-        && (!('pb' in gx) || (gx.pb is number && gx.pb >= 0 && gx.pb <= 0.25))
-        && (!('ph' in gx) || (gx.ph is number && gx.ph >= 0 && gx.ph <= 10))
+        && (!('pb' in gx) || (gx.pb is number && gx.pb >= 0 && gx.pb <= 0.4))
+        && (!('ph' in gx) || (gx.ph is number && gx.ph >= 0 && gx.ph <= 16))
         && (!('log' in gx) || (gx.log is list && gx.log.size() <= 16))
         && (!('exp' in gx) || gx.exp == null || isValidGxExp(gx.exp));
     }
@@ -200,33 +209,88 @@ service cloud.firestore {
           'questIds', 'rank', 'activeFx', 'boosterCd', 'fused', 'gov', 'govT', 'gx',
           'sub', 'subPromo', 'tech', 'provinces', 'provBudgetLog', 'provTxs'
         ])
-        // Core balances and progression remain bounded.
         && (!('cash' in data.save) || (data.save.cash is number && data.save.cash >= 0 && data.save.cash <= 10000000000000))
         && (!('gems' in data.save) || (data.save.gems is number && data.save.gems >= 0 && data.save.gems <= 1000000000))
         && (!('taxPool' in data.save) || (data.save.taxPool is number && data.save.taxPool >= 0 && data.save.taxPool <= 10000000000000))
-        && (!('rank' in data.save) || (data.save.rank is number && data.save.rank >= 0 && data.save.rank <= 15))
+        && (!('rank' in data.save) || (data.save.rank is number && data.save.rank >= 0 && data.save.rank <= 25))
+        && (!('boost' in data.save) || (data.save.boost is number && data.save.boost >= 0 && data.save.boost <= 30))
+        && (!('crateCd' in data.save) || (data.save.crateCd is number && data.save.crateCd >= 0 && data.save.crateCd <= 10000000000000))
         && (!('day' in data.save) || (data.save.day is number && data.save.day >= 0 && data.save.day <= 100000000))
+        && (!('ev' in data.save) || (data.save.ev is number && data.save.ev >= 0 && data.save.ev <= 1000))
+        && (!('t' in data.save) || (data.save.t is number && data.save.t >= 0 && data.save.t <= 10000000000000))
+        && (!('lastDaily' in data.save) || (data.save.lastDaily is number && data.save.lastDaily >= 0 && data.save.lastDaily <= 10000000000000))
+        && (!('govT' in data.save) || (data.save.govT is number && data.save.govT >= 0 && data.save.govT <= 10000000000000))
         && (!('hap' in data.save) || (data.save.hap is number && data.save.hap >= 0 && data.save.hap <= 100))
         && (!('appr' in data.save) || (data.save.appr is number && data.save.appr >= 0 && data.save.appr <= 100))
-        && (!('pop' in data.save) || (data.save.pop is number && data.save.pop >= 0 && data.save.pop <= 100000))
-        // Keep known containers typed and bounded without stale nested schemas.
+        && (!('pop' in data.save) || (data.save.pop is number && data.save.pop >= 1 && data.save.pop <= 100000))
+        && (!('fused' in data.save) || (data.save.fused is number && data.save.fused >= 0 && data.save.fused <= 1000000))
+        && (!('streak' in data.save) || (data.save.streak is number && data.save.streak >= 0 && data.save.streak <= 10000))
+        // Policy sliders remain bounded.
+        && (!('tax' in data.save) || (data.save.tax is number && data.save.tax >= 5 && data.save.tax <= 45))
+        && (!('wel' in data.save) || (data.save.wel is number && data.save.wel >= 0 && data.save.wel <= 50))
+        && (!('edu' in data.save) || (data.save.edu is number && data.save.edu >= 0 && data.save.edu <= 30))
+        && (!('fuel' in data.save) || (data.save.fuel is number && data.save.fuel >= 0 && data.save.fuel <= 50))
+        && (!('carbon' in data.save) || (data.save.carbon is number && data.save.carbon >= 0 && data.save.carbon <= 30))
+        && (!('luxury' in data.save) || (data.save.luxury is number && data.save.luxury >= 0 && data.save.luxury <= 25))
+        && (!('corp' in data.save) || (data.save.corp is number && data.save.corp >= 0 && data.save.corp <= 30))
+        && (!('gst' in data.save) || (data.save.gst is number && data.save.gst >= 0 && data.save.gst <= 25))
+        && (!('prop' in data.save) || (data.save.prop is number && data.save.prop >= 0 && data.save.prop <= 15))
+        && (!('duty' in data.save) || (data.save.duty is number && data.save.duty >= 0 && data.save.duty <= 30))
+        && (!('tourism' in data.save) || (data.save.tourism is number && data.save.tourism >= 0 && data.save.tourism <= 20))
+        && (!('digital' in data.save) || (data.save.digital is number && data.save.digital >= 0 && data.save.digital <= 20))
+        && (!('rd' in data.save) || (data.save.rd is number && data.save.rd >= 0 && data.save.rd <= 25))
+        && (!('green' in data.save) || (data.save.green is number && data.save.green >= 0 && data.save.green <= 25))
+        && (!('wealth' in data.save) || (data.save.wealth is number && data.save.wealth >= 0 && data.save.wealth <= 20))
+        && (!('transitSub' in data.save) || (data.save.transitSub is number && data.save.transitSub >= 0 && data.save.transitSub <= 25))
+        && (!('gov' in data.save) || data.save.gov in ['rep', 'tech', 'wlf', 'ind'])
+        // Keep known containers typed and bounded with v2Pack chunked overflow.
         && (!('b' in data.save) || (data.save.b is map && data.save.b.size() <= 60))
-        && (!('stk' in data.save) || (data.save.stk is map && data.save.stk.size() <= 48))
+        && (!('stk' in data.save) || (data.save.stk is map && data.save.stk.size() <= 75))
         && (!('milestones' in data.save) || (data.save.milestones is map && data.save.milestones.size() <= 40))
         && (!('claimed' in data.save) || (data.save.claimed is map && data.save.claimed.size() <= 40))
         && (!('boosterCd' in data.save) || (data.save.boosterCd is map && data.save.boosterCd.size() <= 40))
-        && (!('tech' in data.save) || (data.save.tech is map && data.save.tech.size() <= 40))
-        && (!('gx' in data.save) || (data.save.gx is map && data.save.gx.size() <= 16))
+        && (!('tech' in data.save) || (data.save.tech is map && data.save.tech.size() <= 16))
+        && (!('gx' in data.save) || isValidSaveGx(data.save.gx))
         && (!('hist' in data.save) || (data.save.hist is list && data.save.hist.size() <= 60))
         && (!('questIds' in data.save) || (data.save.questIds is list && data.save.questIds.size() <= 10))
         && (!('questDay' in data.save) || (data.save.questDay is string && data.save.questDay.size() <= 32))
-        && (!('provBudgetLog' in data.save) || (data.save.provBudgetLog is list && data.save.provBudgetLog.size() <= 20))
+        && (!('provBudgetLog' in data.save) || (data.save.provBudgetLog is list && data.save.provBudgetLog.size() <= 50))
         && (!('provTxs' in data.save) || (data.save.provTxs is list && data.save.provTxs.size() <= 30))
-        && (!('provinces' in data.save) || (data.save.provinces is list && data.save.provinces.size() <= 10))
-        && (!('set' in data.save) || (data.save.set is map && data.save.set.size() <= 10))
-        && (!('activeFx' in data.save) || (data.save.activeFx is map && data.save.activeFx.size() <= 16))
-        && (!('sub' in data.save) || (data.save.sub is map && data.save.sub.size() <= 8))
-        && (!('subPromo' in data.save) || (data.save.subPromo is map && data.save.subPromo.size() <= 8));
+        && (!('provinces' in data.save) || (data.save.provinces is list && data.save.provinces.size() >= 1 && data.save.provinces.size() <= 10))
+        && (!('set' in data.save) || (
+          data.save.set is map
+          && data.save.set.size() <= 10
+          && data.save.set.keys().hasOnly(['sfx', 'vib', 'anim'])
+          && (!('sfx' in data.save.set) || (data.save.set.sfx is number && data.save.set.sfx >= 0 && data.save.set.sfx <= 1))
+          && (!('vib' in data.save.set) || (data.save.set.vib is number && data.save.set.vib >= 0 && data.save.set.vib <= 1))
+          && (!('anim' in data.save.set) || (data.save.set.anim is number && data.save.set.anim >= 0 && data.save.set.anim <= 1))
+        ))
+        && (!('activeFx' in data.save) || (
+          data.save.activeFx is map
+          && data.save.activeFx.size() <= 16
+          && data.save.activeFx.keys().hasOnly(['incomeBoostEnd', 'incomeBoostMult', 'incomeBoostId', 'taxSurge'])
+          && (!('incomeBoostEnd' in data.save.activeFx) || (data.save.activeFx.incomeBoostEnd is number && data.save.activeFx.incomeBoostEnd >= 0 && data.save.activeFx.incomeBoostEnd <= 10000000000000))
+          && (!('incomeBoostMult' in data.save.activeFx) || (data.save.activeFx.incomeBoostMult is number && data.save.activeFx.incomeBoostMult >= 1 && data.save.activeFx.incomeBoostMult <= 1.75))
+          && (!('incomeBoostId' in data.save.activeFx) || (data.save.activeFx.incomeBoostId is string && data.save.activeFx.incomeBoostId.size() <= 32))
+          && (!('taxSurge' in data.save.activeFx) || (data.save.activeFx.taxSurge is number && data.save.activeFx.taxSurge >= 0 && data.save.activeFx.taxSurge <= 1))
+        ))
+        && (!('sub' in data.save) || (
+          data.save.sub is map
+          && data.save.sub.size() <= 8
+          && data.save.sub.keys().hasOnly(['tier', 'exp', 'lastClaimDay'])
+          && (!('tier' in data.save.sub) || data.save.sub.tier in ['daily', 'weekly', 'monthly'])
+          && (!('exp' in data.save.sub) || (data.save.sub.exp is number && data.save.sub.exp >= 0 && data.save.sub.exp <= 10000000000000))
+          && (!('lastClaimDay' in data.save.sub) || (data.save.sub.lastClaimDay is string && data.save.sub.lastClaimDay.size() <= 16))
+        ))
+        && (!('subPromo' in data.save) || (
+          data.save.subPromo is map
+          && data.save.subPromo.size() <= 8
+          && data.save.subPromo.keys().hasOnly(['weekKey', 'tier', 'pct', 'exp'])
+          && (!('weekKey' in data.save.subPromo) || (data.save.subPromo.weekKey is string && data.save.subPromo.weekKey.size() <= 16))
+          && (!('tier' in data.save.subPromo) || data.save.subPromo.tier in ['daily', 'weekly', 'monthly'])
+          && (!('pct' in data.save.subPromo) || (data.save.subPromo.pct is number && data.save.subPromo.pct >= 5 && data.save.subPromo.pct <= 40))
+          && (!('exp' in data.save.subPromo) || (data.save.subPromo.exp is number && data.save.subPromo.exp >= 0 && data.save.subPromo.exp <= 10000000000000))
+        ));
     }
 
     function isValidNotification(data) {
@@ -247,9 +311,15 @@ service cloud.firestore {
       return data.keys().hasAll(['uid', 'type', 'paid', 'progressMs', 'status', 'claimed', 'startedAt', 'lastTickAt'])
         && data.keys().hasOnly(['uid', 'type', 'paid', 'progressMs', 'status', 'claimed', 'startedAt', 'lastTickAt', 'resolvedAt'])
         && isValidId(data.uid)
-        && data.type in ['school', 'hospital', 'bridge', 'highway']
+        && data.type in [
+          'school', 'hospital', 'bridge', 'highway', 'spaceport', 'fusion_grid',
+          'metro_loop', 'ai_corridor', 'seawall_shield', 'trade_canal',
+          'smart_city', 'intl_trade_corridor', 'hsr_network', 'mega_hydro',
+          'intl_fin_district', 'industrial_rev', 'semicon_program',
+          'health_transform', 'edu_revolution', 'agri_modernization', 'tourism_dev'
+        ]
         && data.paid is number && data.paid >= 1 && data.paid <= 3
-        && data.progressMs is number && data.progressMs >= 0 && data.progressMs <= 2400000
+        && data.progressMs is number && data.progressMs >= 0 && data.progressMs <= 3600000
         && data.status in ['active', 'done', 'failed']
         && data.claimed is bool
         && data.startedAt is timestamp
@@ -279,7 +349,7 @@ service cloud.firestore {
         && data.participants[0] == data.from && data.participants[1] == data.to
         && data.offerCash is number && data.offerCash >= 0 && data.offerCash <= 1000000000000
         && data.offerGems is number && data.offerGems >= 0 && data.offerGems <= 1000000000
-        && data.offerStk is map && data.offerStk.size() <= 48
+        && data.offerStk is map && data.offerStk.size() <= 75
         && data.reqCash is number && data.reqCash == 0
         && data.reqGems is number && data.reqGems == 0
         && data.reqStk is map && data.reqStk.size() == 0
@@ -300,17 +370,18 @@ service cloud.firestore {
 
     function isValidGlobalChat(data) {
       return data.keys().hasAll(['uid', 'name', 'cc', 'rank', 'text', 'createdAt'])
-        && data.keys().hasOnly(['uid', 'name', 'cc', 'rank', 'text', 'createdAt', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim'])
+        && data.keys().hasOnly(['uid', 'name', 'cc', 'rank', 'text', 'createdAt', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'eqStk'])
         && isValidId(data.uid)
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 16
         && data.cc is string && data.cc.size() <= 3
-        && data.rank is number && data.rank >= 0 && data.rank <= 15
+        && data.rank is number && data.rank >= 0 && data.rank <= 25
         && data.text is string && data.text.size() >= 1 && data.text.size() <= 200
         && data.text.matches('(?s).*\\S.*')
         && (!('cosFrame' in data) || (data.cosFrame is string && data.cosFrame.matches('^[a-z0-9_]{0,36}$')))
         && (!('cosNameFx' in data) || (data.cosNameFx is string && data.cosNameFx.matches('^[a-z0-9_]{0,36}$')))
         && (!('cosBadge' in data) || (data.cosBadge is string && data.cosBadge.matches('^[a-z0-9_]{0,36}$')))
         && (!('cosAnim' in data) || (data.cosAnim is string && data.cosAnim.matches('^[a-z0-9_]{0,36}$')))
+        && (!('eqStk' in data) || (data.eqStk is string && data.eqStk.matches('^[a-z0-9_]{0,36}$')))
         && data.createdAt is timestamp;
     }
 
@@ -386,29 +457,44 @@ service cloud.firestore {
         && incoming().lastSeen == request.time
         && existsAfter(/databases/$(database)/documents/usernames/$(incoming().usernameLower))
         && existsAfter(/databases/$(database)/documents/players/$(uid)/private/wallet);
-      // Leaderboard metrics are partial updates to an existing public profile.
-      // Validate only fields actually changed by this write. Do NOT revalidate the
-      // entire legacy profile document: older profiles may contain harmless fields
-      // or older optional shapes that are unrelated to this metrics update.
+      // Heartbeat-only update, strict full-schema metrics sync, OR legacy-compatible partial metrics update.
+      // Validate only fields actually changed on legacy profiles so older harmless fields never cause PERMISSION_DENIED.
       allow update: if isOwner(uid)
         && isValidId(uid)
         && (!('username' in existing()) || incoming().username == existing().username)
         && (!('usernameLower' in existing()) || incoming().usernameLower == existing().usernameLower)
         && (!('createdAt' in existing()) || ('createdAt' in incoming() && incoming().createdAt == existing().createdAt))
         && incoming().lastSeen == request.time
-        && affectedOnly(['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim'])
-        && (!incoming().diff(existing()).affectedKeys().hasAny(['gdp']) || (incoming().gdp is number && incoming().gdp >= 0 && incoming().gdp <= 10000000000000))
-        && (!incoming().diff(existing()).affectedKeys().hasAny(['cash']) || (incoming().cash is number && incoming().cash >= 0 && incoming().cash <= 10000000000000))
-        && (!incoming().diff(existing()).affectedKeys().hasAny(['gems']) || (incoming().gems is number && incoming().gems >= 0 && incoming().gems <= 1000000000))
-        && (!incoming().diff(existing()).affectedKeys().hasAny(['level']) || (incoming().level is number && incoming().level >= 1 && incoming().level <= 10000000))
-        && (!incoming().diff(existing()).affectedKeys().hasAny(['rank']) || (incoming().rank is number && incoming().rank >= 0 && incoming().rank <= 15))
-        && (!incoming().diff(existing()).affectedKeys().hasAny(['subTier']) || incoming().subTier in ['', 'daily', 'weekly', 'monthly'])
-        && (!incoming().diff(existing()).affectedKeys().hasAny(['subExp']) || (incoming().subExp is number && incoming().subExp >= 0 && incoming().subExp <= 10000000000000))
-        && (!incoming().diff(existing()).affectedKeys().hasAny(['cosFrame']) || (incoming().cosFrame is string && incoming().cosFrame.matches('^[a-z0-9_]{0,36}$')))
-        && (!incoming().diff(existing()).affectedKeys().hasAny(['cosNameFx']) || (incoming().cosNameFx is string && incoming().cosNameFx.matches('^[a-z0-9_]{0,36}$')))
-        && (!incoming().diff(existing()).affectedKeys().hasAny(['cosBadge']) || (incoming().cosBadge is string && incoming().cosBadge.matches('^[a-z0-9_]{0,36}$')))
-        && (!incoming().diff(existing()).affectedKeys().hasAny(['cosAnim']) || (incoming().cosAnim is string && incoming().cosAnim.matches('^[a-z0-9_]{0,36}$')))
-        && (!incoming().diff(existing()).affectedKeys().hasAny(['stats']) || isValidPlayerStats(incoming().stats));
+        && (
+          affectedOnly(['lastSeen'])
+          || (
+            affectedOnly(['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'cosLbAnim', 'eqStk'])
+            && isValidPlayerProfile(incoming())
+          )
+          || (
+            affectedOnly(['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'cosLbAnim', 'eqStk', 'natDev', 'pop', 'techCount', 'megaCount', 'tradeScore', 'stability'])
+            && (!incoming().diff(existing()).affectedKeys().hasAny(['gdp']) || (incoming().gdp is number && incoming().gdp >= 0 && incoming().gdp <= 10000000000000))
+            && (!incoming().diff(existing()).affectedKeys().hasAny(['cash']) || (incoming().cash is number && incoming().cash >= 0 && incoming().cash <= 10000000000000))
+            && (!incoming().diff(existing()).affectedKeys().hasAny(['gems']) || (incoming().gems is number && incoming().gems >= 0 && incoming().gems <= 1000000000))
+            && (!incoming().diff(existing()).affectedKeys().hasAny(['level']) || (incoming().level is number && incoming().level >= 1 && incoming().level <= 10000000))
+            && (!incoming().diff(existing()).affectedKeys().hasAny(['rank']) || (incoming().rank is number && incoming().rank >= 0 && incoming().rank <= 25))
+            && (!incoming().diff(existing()).affectedKeys().hasAny(['subTier']) || incoming().subTier in ['', 'daily', 'weekly', 'monthly'])
+            && (!incoming().diff(existing()).affectedKeys().hasAny(['subExp']) || (incoming().subExp is number && incoming().subExp >= 0 && incoming().subExp <= 10000000000000))
+            && (!incoming().diff(existing()).affectedKeys().hasAny(['cosFrame']) || (incoming().cosFrame is string && incoming().cosFrame.matches('^[a-z0-9_]{0,36}$')))
+            && (!incoming().diff(existing()).affectedKeys().hasAny(['cosNameFx']) || (incoming().cosNameFx is string && incoming().cosNameFx.matches('^[a-z0-9_]{0,36}$')))
+            && (!incoming().diff(existing()).affectedKeys().hasAny(['cosBadge']) || (incoming().cosBadge is string && incoming().cosBadge.matches('^[a-z0-9_]{0,36}$')))
+            && (!incoming().diff(existing()).affectedKeys().hasAny(['cosAnim']) || (incoming().cosAnim is string && incoming().cosAnim.matches('^[a-z0-9_]{0,36}$')))
+            && (!incoming().diff(existing()).affectedKeys().hasAny(['cosLbAnim']) || (incoming().cosLbAnim is string && incoming().cosLbAnim.matches('^[a-z0-9_]{0,36}$')))
+            && (!incoming().diff(existing()).affectedKeys().hasAny(['eqStk']) || (incoming().eqStk is string && incoming().eqStk.matches('^[a-z0-9_]{0,36}$')))
+            && (!incoming().diff(existing()).affectedKeys().hasAny(['natDev']) || (incoming().natDev is number && incoming().natDev >= 0 && incoming().natDev <= 1000000))
+            && (!incoming().diff(existing()).affectedKeys().hasAny(['pop']) || (incoming().pop is number && incoming().pop >= 0 && incoming().pop <= 1000000))
+            && (!incoming().diff(existing()).affectedKeys().hasAny(['techCount']) || (incoming().techCount is number && incoming().techCount >= 0 && incoming().techCount <= 1000))
+            && (!incoming().diff(existing()).affectedKeys().hasAny(['megaCount']) || (incoming().megaCount is number && incoming().megaCount >= 0 && incoming().megaCount <= 1000))
+            && (!incoming().diff(existing()).affectedKeys().hasAny(['tradeScore']) || (incoming().tradeScore is number && incoming().tradeScore >= 0 && incoming().tradeScore <= 100000000000000))
+            && (!incoming().diff(existing()).affectedKeys().hasAny(['stability']) || (incoming().stability is number && incoming().stability >= 0 && incoming().stability <= 100))
+            && (!incoming().diff(existing()).affectedKeys().hasAny(['stats']) || isValidPlayerStats(incoming().stats))
+          )
+        );
       allow delete: if false;
 
       match /private/wallet {

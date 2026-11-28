@@ -175,8 +175,11 @@ const City3DInner: React.FC<City3DProps> = ({
       .filter((id) => id.startsWith('asset_'))
       .sort()
       .join(',');
-    return `${bEntries}|${lvlEntries}|${queueIds}|${upgIds}|${ownedAssets}|${previewLandmarkId || ''}|${state.cityTimeMode || 'auto'}|${state.cityWeather || 'clear'}`;
-  }, [state.b, state.gx?.lvl, state.milestones, state.upgQueue, state.cos, previewLandmarkId, state.cityTimeMode, state.cityWeather]);
+    const megaSig = (state.megaProjects || [])
+      .map((p) => `${p.type}:${p.stage ?? 1}:${p.status}:${p.claimed ? 1 : 0}`)
+      .join(',');
+    return `${bEntries}|${lvlEntries}|${queueIds}|${upgIds}|${ownedAssets}|${megaSig}|${previewLandmarkId || ''}|${state.cityTimeMode || 'auto'}|${state.cityWeather || 'clear'}`;
+  }, [state.b, state.gx?.lvl, state.milestones, state.upgQueue, state.cos, state.megaProjects, previewLandmarkId, state.cityTimeMode, state.cityWeather]);
 
   const latestStateRef = useRef(state);
   latestStateRef.current = state;

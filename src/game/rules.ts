@@ -1,15 +1,21 @@
 import {
   ACHIEVEMENTS,
   BOOSTERS,
+  BUILDING_META_OVERRIDES_16,
   BUILDING_POLICIES,
   BUILDINGS,
+  CHALLENGES_16,
   CHALLENGES_2_0,
+  CHALLENGES_ALL,
   CLOUD_MAX_RANK,
   COUNTRIES,
   CRATE_CD_MS,
   CRATE_COST_CASH,
   CRATE_COST_GEMS,
   DAILY_REWARDS,
+  DIPLOMACY_PARTNERS_16,
+  DIPLOMACY_TREATIES_16,
+  DYNAMIC_EVENTS_16,
   EXEC_DECISIONS,
   GOV_CHANGE_CD_MS,
   GOV_DAY_SEC,
@@ -26,10 +32,13 @@ import {
   NATIONAL_POLICIES,
   OFFLINE_CAP_SEC,
   OFFLINE_RATE,
+  PRODUCTION_CHAINS_16,
   RANKS,
   REAL_GDP_SCALED,
+  RESOURCE_CATALOG_16,
   STICKERS,
   SUBSCRIPTIONS,
+  TECH_CATEGORY_META,
   TECH_TREE,
   TRADE_GOODS,
   TRADE_MILESTONES,
@@ -142,6 +151,7 @@ import {
   getTechEnergyBonus,
   getTechHapBonus,
   getTechIncomeMult,
+  getTechLevel,
   getTechMaintReduction,
   getTechResearchSpeedBonus,
   getTechTradeBonus,
@@ -180,6 +190,7 @@ import {
 } from './economy';
 
 export * from './economy';
+export * from './ecosystem16';
 
 export function formatNumber(n: number): string {
   const v = Math.floor(Number.isFinite(n) ? n : 0);
@@ -311,12 +322,21 @@ export function freshState(): GameState {
     challenges: {},
     megaProjects: [],
     mig: { [RANK_V2_MIGRATION_KEY]: 1 },
+    resources: { stock: {}, cap: 1500 },
+    finance: { debt: 0, interestPaid: 0, borrowedTotal: 0 },
+    diplomacy: { relations: {}, treaties: [], rep: 52 },
+    dynEvent: null,
+    techLvls: {},
   };
 }
 
 const VALID_STICKER_ID_SET = new Set(STICKERS.map((s) => s.id));
 const VALID_TECH_ID_SET = new Set(TECH_TREE.map((t) => t.id));
 const VALID_POLICY_ID_SET = new Set<string>(NATIONAL_POLICIES.map((p) => p.id));
+const VALID_RESOURCE_ID_SET = new Set<string>(RESOURCE_CATALOG_16.map((r) => r.id));
+const VALID_PARTNER_CODE_SET = new Set<string>(DIPLOMACY_PARTNERS_16.map((p) => p.code));
+const VALID_TREATY_ID_SET = new Set<string>(DIPLOMACY_TREATIES_16.map((t) => t.id));
+const VALID_DYNAMIC_EVENT_ID_SET = new Set<string>(DYNAMIC_EVENTS_16.map((e) => e.id));
 
 export function cleanStickersMap(raw: unknown): Record<string, number> {
   const out: Record<string, number> = {};
@@ -438,6 +458,12 @@ interface PackedV2Extension {
   ch?: Record<string, number>;
   mp?: LocalMegaProjectSlot[];
   mg?: Record<string, number>;
+  // Part 16 v2 packed state
+  tl?: Record<string, number>;
+  rs?: { s: Record<string, number>; c?: number };
+  fn?: { d: number; i: number; b: number };
+  dp?: { r: Record<string, number>; t: string[]; rep: number; j?: string[]; s?: string };
+  ev16?: { id: string; exp: number; res?: boolean };
 }
 
 function unpackV2FromProvBudgetLog(rawLog: unknown): PackedV2Extension | null {
@@ -561,7 +587,7 @@ export function migrateState(
   }
   s.milestones = cleanMilestonesMap(raw?.milestones ?? s.milestones);
 
-  // Merge top-level tech & v2Pack.ot overflow techs
+  // Merge top-level tech & v2Pack.ot overflow techs + v2Pack.tl multi-level techs
   const rawTechMerged: Record<string, unknown> =
     s.tech && typeof s.tech === 'object' ? { ...(s.tech as Record<string, unknown>) } : {};
   if (Array.isArray(v2Pack?.ot)) {
@@ -569,7 +595,22 @@ export function migrateState(
       if (typeof tid === 'string') rawTechMerged[tid] = 1;
     }
   }
-  s.tech = cleanTechMap(rawTechMerged, 80);
+  const rawTechLvls = (raw?.techLvls && typeof raw.techLvls === 'object' ? raw.techLvls : v2Pack?.tl) as
+    | Record<string, unknown>
+    | undefined;
+  const cleanTechLvls: Record<string, number> = {};
+  if (rawTechLvls && typeof rawTechLvls === 'object') {
+    for (const tDef of TECH_TREE) {
+      const lv = Math.floor(Number(rawTechLvls[tDef.id]));
+      if (Number.isFinite(lv) && lv >= 1) {
+        const clamped = Math.min(Math.max(1, tDef.maxLevel ?? 1), lv);
+        cleanTechLvls[tDef.id] = clamped;
+        rawTechMerged[tDef.id] = 1;
+      }
+    }
+  }
+  s.tech = cleanTechMap(rawTechMerged, 160);
+  s.techLvls = cleanTechLvls;
 
   // Policies map (raw.pol or v2Pack.pol or legacy tech p_ entries)
   const rawPolSource = (raw?.pol && typeof raw.pol === 'object' ? raw.pol : v2Pack?.pol) as Record<string, unknown> | undefined;
@@ -966,7 +1007,7 @@ export function migrateState(
   const rawCh = (raw?.challenges && typeof raw.challenges === 'object' ? raw.challenges : v2Pack?.ch) as Record<string, unknown> | undefined;
   const cleanCh: Record<string, number> = {};
   if (rawCh && typeof rawCh === 'object') {
-    for (const c of CHALLENGES_2_0) {
+    for (const c of CHALLENGES_ALL) {
       if (Number(rawCh[c.id]) > 0) cleanCh[c.id] = 1;
     }
   }
@@ -975,7 +1016,7 @@ export function migrateState(
   const rawMp = Array.isArray(raw?.megaProjects) ? raw.megaProjects : (Array.isArray(v2Pack?.mp) ? v2Pack.mp : []);
   s.megaProjects = rawMp
     .filter((p): p is LocalMegaProjectSlot => Boolean(p && typeof p === 'object' && p.type in GX_PROJECT_TYPES))
-    .slice(0, 12)
+    .slice(0, 21)
     .map((p) => {
       const totalStages = Number.isFinite(Number(p.totalStages)) && Number(p.totalStages) >= 1
         ? Math.max(1, Math.min(PROJECT_STAGES, Math.floor(Number(p.totalStages))))
@@ -1014,6 +1055,79 @@ export function migrateState(
     }
   }
   s.mig = cleanMig;
+
+  // Part 16 resources, finance, diplomacy & dynamic events sanitization
+  const rawRs = raw?.resources && typeof raw.resources === 'object'
+    ? (raw.resources as { stock?: unknown; cap?: unknown })
+    : (v2Pack?.rs ? { stock: v2Pack.rs.s, cap: v2Pack.rs.c } : undefined);
+  const cleanStock: Record<string, number> = {};
+  if (rawRs?.stock && typeof rawRs.stock === 'object') {
+    for (const [rk, rv] of Object.entries(rawRs.stock as Record<string, unknown>)) {
+      const n = Number(rv);
+      if (VALID_RESOURCE_ID_SET.has(rk) && Number.isFinite(n) && n > 0.005) {
+        cleanStock[rk] = Math.round(Math.min(1_000_000_000, n) * 100) / 100;
+      }
+    }
+  }
+  const rawCap = Math.floor(Number(rawRs?.cap));
+  s.resources = {
+    stock: cleanStock,
+    cap: Number.isFinite(rawCap) && rawCap > 0 ? Math.min(10_000_000, rawCap) : 1500,
+  };
+
+  const rawFn = raw?.finance && typeof raw.finance === 'object'
+    ? (raw.finance as { debt?: unknown; interestPaid?: unknown; borrowedTotal?: unknown })
+    : (v2Pack?.fn ? { debt: v2Pack.fn.d, interestPaid: v2Pack.fn.i, borrowedTotal: v2Pack.fn.b } : undefined);
+  s.finance = {
+    debt: Math.max(0, Math.min(1e13, Math.round(Number(rawFn?.debt) || 0))),
+    interestPaid: Math.max(0, Math.min(1e13, Math.round(Number(rawFn?.interestPaid) || 0))),
+    borrowedTotal: Math.max(0, Math.min(1e13, Math.round(Number(rawFn?.borrowedTotal) || 0))),
+  };
+
+  const rawDp = raw?.diplomacy && typeof raw.diplomacy === 'object'
+    ? (raw.diplomacy as { relations?: unknown; treaties?: unknown; rep?: unknown; jointVentures?: unknown; sanctionTarget?: unknown })
+    : (v2Pack?.dp ? { relations: v2Pack.dp.r, treaties: v2Pack.dp.t, rep: v2Pack.dp.rep, jointVentures: v2Pack.dp.j, sanctionTarget: v2Pack.dp.s } : undefined);
+  const cleanRel: Record<string, number> = {};
+  if (rawDp?.relations && typeof rawDp.relations === 'object') {
+    for (const [pk, pv] of Object.entries(rawDp.relations as Record<string, unknown>)) {
+      const n = Math.round(Number(pv));
+      if (VALID_PARTNER_CODE_SET.has(pk) && Number.isFinite(n)) {
+        cleanRel[pk] = Math.max(0, Math.min(100, n));
+      }
+    }
+  }
+  const cleanTreaties: string[] = [];
+  if (Array.isArray(rawDp?.treaties)) {
+    for (const tid of rawDp.treaties) {
+      if (typeof tid === 'string' && VALID_TREATY_ID_SET.has(tid) && !cleanTreaties.includes(tid)) {
+        cleanTreaties.push(tid);
+      }
+    }
+  }
+  const rawRep = Number(rawDp?.rep);
+  s.diplomacy = {
+    relations: cleanRel,
+    treaties: cleanTreaties.slice(0, 12),
+    rep: Number.isFinite(rawRep) ? Math.max(0, Math.min(100, Math.round(rawRep))) : 52,
+    ...(Array.isArray(rawDp?.jointVentures) && rawDp.jointVentures.length > 0
+      ? { jointVentures: rawDp.jointVentures.filter((x): x is string => typeof x === 'string').slice(0, 12) }
+      : {}),
+    ...(typeof rawDp?.sanctionTarget === 'string' && VALID_PARTNER_CODE_SET.has(rawDp.sanctionTarget)
+      ? { sanctionTarget: rawDp.sanctionTarget }
+      : {}),
+  };
+
+  const rawEv16 = raw?.dynEvent !== undefined ? raw.dynEvent : (v2Pack?.ev16 ? { id: v2Pack.ev16.id, expiresAt: v2Pack.ev16.exp, resolved: Boolean(v2Pack.ev16.res) } : null);
+  if (rawEv16 && typeof rawEv16 === 'object' && typeof rawEv16.id === 'string' && VALID_DYNAMIC_EVENT_ID_SET.has(rawEv16.id)) {
+    const exp = Math.floor(Number(rawEv16.expiresAt) || 0);
+    s.dynEvent = {
+      id: rawEv16.id,
+      expiresAt: Math.max(0, Math.min(1e13, exp)),
+      resolved: Boolean(rawEv16.resolved),
+    };
+  } else {
+    s.dynEvent = null;
+  }
 
   const migrated = migrateLegacySaveToNational(raw || {}, s);
   delete (migrated as unknown as Record<string, unknown>).provinces;
@@ -1191,6 +1305,53 @@ export function cleanSavePayload(s: GameState, nowMs = Date.now()): Record<strin
   if (normalized.megaProjects && normalized.megaProjects.length > 0) pack.mp = normalized.megaProjects;
   if (normalized.mig && Object.keys(normalized.mig).length > 0) pack.mg = normalized.mig;
 
+  if (normalized.techLvls && Object.keys(normalized.techLvls).length > 0) {
+    const compactTl: Record<string, number> = {};
+    for (const [k, v] of Object.entries(normalized.techLvls)) {
+      if (v > 1) compactTl[k] = v;
+    }
+    if (Object.keys(compactTl).length > 0) pack.tl = compactTl;
+  }
+  if (normalized.resources && Object.keys(normalized.resources.stock || {}).length > 0) {
+    pack.rs = {
+      s: normalized.resources.stock,
+      c: normalized.resources.cap,
+    };
+  }
+  if (
+    normalized.finance &&
+    (normalized.finance.debt > 0 || normalized.finance.interestPaid > 0 || normalized.finance.borrowedTotal > 0)
+  ) {
+    pack.fn = {
+      d: normalized.finance.debt,
+      i: normalized.finance.interestPaid,
+      b: normalized.finance.borrowedTotal,
+    };
+  }
+  if (
+    normalized.diplomacy &&
+    (Object.keys(normalized.diplomacy.relations || {}).length > 0 ||
+      (normalized.diplomacy.treaties?.length || 0) > 0 ||
+      normalized.diplomacy.rep !== 52 ||
+      (normalized.diplomacy.jointVentures?.length || 0) > 0 ||
+      Boolean(normalized.diplomacy.sanctionTarget))
+  ) {
+    pack.dp = {
+      r: normalized.diplomacy.relations,
+      t: normalized.diplomacy.treaties,
+      rep: normalized.diplomacy.rep,
+      ...(normalized.diplomacy.jointVentures?.length ? { j: normalized.diplomacy.jointVentures } : {}),
+      ...(normalized.diplomacy.sanctionTarget ? { s: normalized.diplomacy.sanctionTarget } : {}),
+    };
+  }
+  if (normalized.dynEvent) {
+    pack.ev16 = {
+      id: normalized.dynEvent.id,
+      exp: normalized.dynEvent.expiresAt,
+      ...(normalized.dynEvent.resolved ? { res: true } : {}),
+    };
+  }
+
   normalized.b = primaryB;
   normalized.tech = primaryTech;
   normalized.stk = primaryStk;
@@ -1205,7 +1366,7 @@ export function cleanSavePayload(s: GameState, nowMs = Date.now()): Record<strin
   }
 
   if (Object.keys(pack).length > 0) {
-    const CHUNK_SIZE = 800;
+    const CHUNK_SIZE = 1500;
     const MAX_CHUNKS = 50;
     let json = JSON.stringify(pack);
     if (json.length > CHUNK_SIZE * MAX_CHUNKS) {
@@ -1229,10 +1390,18 @@ export function cleanSavePayload(s: GameState, nowMs = Date.now()): Record<strin
 export function canUnlockTech(s: GameState, techId: string, nowMs = Date.now()): { ok: boolean; reason?: string; cost: number } {
   const def = TECH_TREE.find((t) => t.id === techId);
   if (!def) return { ok: false, reason: 'Unknown research', cost: 0 };
-  if (hasTech(s, techId)) return { ok: false, reason: 'Already researched', cost: def.cost };
+  const curLvl = getTechLevel(s, techId);
+  const maxLvl = Math.max(1, def.maxLevel ?? 1);
+  if (curLvl >= maxLvl) {
+    return { ok: false, reason: maxLvl > 1 ? `Max Level ${maxLvl} mastered` : 'Already researched', cost: def.cost };
+  }
   const curRank = Math.max(MIN_RANK, Math.floor(Number(s.rank) || MIN_RANK));
   if (def.reqRank && curRank < def.reqRank) {
     return { ok: false, reason: `Requires Rank ${def.reqRank}`, cost: def.cost };
+  }
+  if (def.reqLabBuilding && (s.b?.[def.reqLabBuilding] || 0) <= 0) {
+    const labDef = BUILDINGS.find((b) => b.id === def.reqLabBuilding);
+    return { ok: false, reason: `Requires ${labDef?.n || def.reqLabBuilding} facility`, cost: def.cost };
   }
   if (def.prereq?.length) {
     const missing = def.prereq.find((pid) => !hasTech(s, pid));
@@ -1242,7 +1411,8 @@ export function canUnlockTech(s: GameState, techId: string, nowMs = Date.now()):
     }
   }
   const ownedBldgs = totalBuildings(s);
-  const cost = Math.max(1, Math.ceil(def.cost * getResearchCostMult(s, nowMs)));
+  const lvlScale = Math.pow(1.65, curLvl);
+  const cost = Math.max(1, Math.ceil(def.cost * lvlScale * getResearchCostMult(s, nowMs)));
   if (ownedBldgs < def.reqBuildings) {
     return { ok: false, reason: `Requires ${def.reqBuildings} total buildings (${ownedBldgs}/${def.reqBuildings})`, cost };
   }
@@ -1259,6 +1429,8 @@ export function applyUnlockTech(
 ): { ok: boolean; state: GameState; cost: number; reason?: string } {
   const check = canUnlockTech(s, techId, nowMs);
   if (!check.ok) return { ok: false, state: s, cost: check.cost, reason: check.reason };
+  const def = TECH_TREE.find((t) => t.id === techId);
+  const nextLvl = Math.min(Math.max(1, def?.maxLevel ?? 1), getTechLevel(s, techId) + 1);
   return {
     ok: true,
     cost: check.cost,
@@ -1266,6 +1438,7 @@ export function applyUnlockTech(
       ...s,
       cash: Math.max(0, s.cash - check.cost),
       tech: { ...(s.tech || {}), [techId]: 1 },
+      techLvls: { ...(s.techLvls || {}), [techId]: nextLvl },
     },
   };
 }
@@ -1355,6 +1528,15 @@ const POLLUTING_INDUSTRY_IDS = new Set([
   'heavy_industry',
   'auto_mfg_plant',
   'steel_complex',
+  'quarry_cement_works',
+  'iron_ore_mine',
+  'oil_extraction_rig',
+  'petrochemical_refinery',
+  'chemical_fertilizer_complex',
+  'heavy_machinery_foundry',
+  'automated_shipyard',
+  'titanium_metallurgy_hub',
+  'gas_peaker_turbine',
 ]);
 
 export function targetHappiness(s: GameState, nowMs = Date.now()): number {
@@ -1364,7 +1546,12 @@ export function targetHappiness(s: GameState, nowMs = Date.now()): number {
     (s.b?.offshore_wind || 0) +
     (s.b?.adv_solar_station || 0) +
     (s.b?.hydro_plant || 0) +
-    (s.b?.geothermal_plant || 0);
+    (s.b?.geothermal_plant || 0) +
+    (s.b?.small_nuclear_smr || 0) +
+    (s.b?.thorium_molten_reactor || 0) +
+    (s.b?.fusion_tokamak_station || 0) +
+    (s.b?.floating_solar_array || 0) +
+    (s.b?.tidal_barrage_station || 0);
   const carbonOffset = cleanEnergy * 2.5 + (s.green || 0) * 0.5;
   const carbonPen = Math.max(0, (s.carbon || 0) - carbonOffset) * 0.5;
   const ecoTech = hasTech(s, 'eco_catalysis');
@@ -2484,7 +2671,7 @@ export function getUnclaimedRewardsSummary(
   const questReady = dqView.readyCount;
   const readyQuestIds = dqView.quests.filter((q) => q.ready).map((q) => q.def.id);
   const achReady = computeReadyAchievementCount(s);
-  const challengeReady = CHALLENGES_2_0.filter((c) => !s.challenges?.[c.id] && c.f(s) >= c.goal).length;
+  const challengeReady = CHALLENGES_ALL.filter((c) => !s.challenges?.[c.id] && c.f(s) >= c.goal).length;
 
   return {
     dailyReady,
@@ -2599,8 +2786,28 @@ export function computeLeaderboardMetrics(p: PlayerProfile) {
   const contribution = Math.floor(trades * 25_000 + cashTraded * 0.05 + bldgs * 800 + rankNum * 10_000);
   const weekly = Math.floor(gdp * 0.35 + bldgs * 18_000 + trades * 30_000);
   const monthly = Math.floor(gdp * 0.55 + cash * 0.25 + trades * 45_000);
+  const natDev = Math.max(0, Math.round(Number(p.natDev) || (rankNum * 28 + Math.min(200, bldgs * 0.5) + levelNum * 2)));
+  const population = Math.max(1, Math.round(Number(p.pop) || (48 + Math.round(bldgs * 1.4))));
+  const researchProg = Math.max(0, Math.round(Number(p.techCount) || Math.floor(rankNum * 1.6)));
+  const megaProjects = Math.max(0, Math.round(Number(p.megaCount) || Math.floor(rankNum / 4)));
+  const tradePerf = Math.max(0, Math.round(Number(p.tradeScore) || (cashTraded + trades * 50_000)));
+  const stability = Math.max(0, Math.min(100, Math.round((Number(p.stability) || Math.min(96, 55 + rankNum * 1.5)) * 10) / 10));
 
-  return { overall, netWorth, buildingDev, production, contribution, weekly, monthly };
+  return {
+    overall,
+    netWorth,
+    buildingDev,
+    production,
+    contribution,
+    weekly,
+    monthly,
+    natDev,
+    population,
+    researchProg,
+    megaProjects,
+    tradePerf,
+    stability,
+  };
 }
 
 export function sortLeaderboardProfiles(players: PlayerProfile[], mode: LeaderboardMode): PlayerProfile[] {
@@ -2793,6 +3000,7 @@ export {
   getTechEnergyBonus,
   getTechHapBonus,
   getTechIncomeMult,
+  getTechLevel,
   getTechMaintReduction,
   getTechResearchSpeedBonus,
   getTechTradeBonus,
@@ -2821,6 +3029,16 @@ export {
   totalBuildings,
   unlockedAchievementCount,
   POLICY_BOUNDS,
+  BUILDING_META_OVERRIDES_16,
+  CHALLENGES_16,
+  CHALLENGES_2_0,
+  CHALLENGES_ALL,
+  DIPLOMACY_PARTNERS_16,
+  DIPLOMACY_TREATIES_16,
+  DYNAMIC_EVENTS_16,
+  PRODUCTION_CHAINS_16,
+  RESOURCE_CATALOG_16,
+  TECH_CATEGORY_META,
 };
 
 export * from './cosmetics';

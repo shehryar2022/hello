@@ -398,7 +398,10 @@ function isValidPlayerProfile(data: unknown): boolean {
     'username', 'usernameLower', 'countryCode', 'countryName',
     'gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats',
   ];
-  const allowed = [...req, 'createdAt', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'cosLbAnim', 'eqStk'];
+  const allowed = [
+    ...req, 'createdAt', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge',
+    'cosAnim', 'cosLbAnim', 'eqStk', 'natDev', 'pop', 'techCount', 'megaCount', 'tradeScore', 'stability',
+  ];
   if (!hasAll(data, req) || !hasOnly(data, allowed)) return false;
   if (typeof data.username !== 'string' || !/^[A-Za-z0-9_]{3,16}$/.test(data.username)) return false;
   if (typeof data.usernameLower !== 'string' || !/^[a-z0-9_]{3,16}$/.test(data.usernameLower)) return false;
@@ -414,6 +417,12 @@ function isValidPlayerProfile(data: unknown): boolean {
   if ('createdAt' in data && !isNum(data.createdAt)) return false;
   if ('subTier' in data && !['', 'daily', 'weekly', 'monthly'].includes(String(data.subTier))) return false;
   if ('subExp' in data && !(isNum(data.subExp) && data.subExp >= 0 && data.subExp <= 1e13)) return false;
+  if ('natDev' in data && !(isNum(data.natDev) && data.natDev >= 0 && data.natDev <= 1e6)) return false;
+  if ('pop' in data && !(isNum(data.pop) && data.pop >= 0 && data.pop <= 1e6)) return false;
+  if ('techCount' in data && !(isNum(data.techCount) && data.techCount >= 0 && data.techCount <= 1000)) return false;
+  if ('megaCount' in data && !(isNum(data.megaCount) && data.megaCount >= 0 && data.megaCount <= 1000)) return false;
+  if ('tradeScore' in data && !(isNum(data.tradeScore) && data.tradeScore >= 0 && data.tradeScore <= 1e14)) return false;
+  if ('stability' in data && !(isNum(data.stability) && data.stability >= 0 && data.stability <= 100)) return false;
   for (const cosField of ['cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'cosLbAnim', 'eqStk'] as const) {
     if (cosField in data && (typeof data[cosField] !== 'string' || !/^[a-z0-9_]{0,36}$/.test(String(data[cosField])))) {
       return false;
@@ -435,12 +444,39 @@ function evalPlayerUpdate(
   if (incoming.lastSeen !== req.time) return false;
   const changed = affectedKeys(incoming, existing);
   if (changed.every((k) => k === 'lastSeen')) return true;
-  const allowedSync = [
+  const baseAllowed = [
     'gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp',
     'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'cosLbAnim', 'eqStk',
   ];
-  if (!changed.every((k) => allowedSync.includes(k))) return false;
-  return isValidPlayerProfile(incoming);
+  const extendedAllowed = [
+    ...baseAllowed,
+    'natDev', 'pop', 'techCount', 'megaCount', 'tradeScore', 'stability',
+  ];
+  if (changed.every((k) => baseAllowed.includes(k)) && isValidPlayerProfile(incoming)) return true;
+  if (!changed.every((k) => extendedAllowed.includes(k))) return false;
+  const checkChanged = (k: string, pred: (v: unknown) => boolean) => !changed.includes(k) || pred(incoming[k]);
+  return (
+    checkChanged('gdp', (v) => isNum(v) && v >= 0 && v <= 1e13) &&
+    checkChanged('cash', (v) => isNum(v) && v >= 0 && v <= 1e13) &&
+    checkChanged('gems', (v) => isNum(v) && v >= 0 && v <= 1e9) &&
+    checkChanged('level', (v) => isNum(v) && v >= 1 && v <= 1e7) &&
+    checkChanged('rank', (v) => isNum(v) && v >= 0 && v <= 25) &&
+    checkChanged('subTier', (v) => ['', 'daily', 'weekly', 'monthly'].includes(String(v))) &&
+    checkChanged('subExp', (v) => isNum(v) && v >= 0 && v <= 1e13) &&
+    checkChanged('natDev', (v) => isNum(v) && v >= 0 && v <= 1e6) &&
+    checkChanged('pop', (v) => isNum(v) && v >= 0 && v <= 1e6) &&
+    checkChanged('techCount', (v) => isNum(v) && v >= 0 && v <= 1000) &&
+    checkChanged('megaCount', (v) => isNum(v) && v >= 0 && v <= 1000) &&
+    checkChanged('tradeScore', (v) => isNum(v) && v >= 0 && v <= 1e14) &&
+    checkChanged('stability', (v) => isNum(v) && v >= 0 && v <= 100) &&
+    checkChanged('cosFrame', (v) => typeof v === 'string' && /^[a-z0-9_]{0,36}$/.test(v)) &&
+    checkChanged('cosNameFx', (v) => typeof v === 'string' && /^[a-z0-9_]{0,36}$/.test(v)) &&
+    checkChanged('cosBadge', (v) => typeof v === 'string' && /^[a-z0-9_]{0,36}$/.test(v)) &&
+    checkChanged('cosAnim', (v) => typeof v === 'string' && /^[a-z0-9_]{0,36}$/.test(v)) &&
+    checkChanged('cosLbAnim', (v) => typeof v === 'string' && /^[a-z0-9_]{0,36}$/.test(v)) &&
+    checkChanged('eqStk', (v) => typeof v === 'string' && /^[a-z0-9_]{0,36}$/.test(v)) &&
+    checkChanged('stats', (v) => isValidPlayerStats(v))
+  );
 }
 
 test('saves/{uid} rules allow create & update for unverified-email owner with fresh, fractional-tick, maxed-out, and sanitized legacy payloads', () => {
@@ -890,7 +926,7 @@ test('Update 2.0 rules allow Rank 25, cosLbAnim, 70 stickers, pb<=0.4, ph<=16, 5
     false,
   );
 
-  // Verify Mega Project types and 3600000ms cap in firestore.rules
+  // Verify all 21 Mega Project types and 3600000ms cap in firestore.rules
   for (const pType of [
     'school',
     'hospital',
@@ -902,10 +938,129 @@ test('Update 2.0 rules allow Rank 25, cosLbAnim, 70 stickers, pb<=0.4, ph<=16, 5
     'ai_corridor',
     'seawall_shield',
     'trade_canal',
+    'smart_city',
+    'intl_trade_corridor',
+    'hsr_network',
+    'mega_hydro',
+    'intl_fin_district',
+    'industrial_rev',
+    'semicon_program',
+    'health_transform',
+    'edu_revolution',
+    'agri_modernization',
+    'tourism_dev',
   ]) {
     assert.ok(rules.includes(`'${pType}'`), `Missing project type ${pType} in firestore.rules`);
   }
   assert.match(rules, /data\.progressMs <= 3600000/);
+});
+
+test('Part 16 security & legacy-profile regression suite passes (>= 12 rule checks)', () => {
+  const uid = 'part16-tester';
+  const now = 1_796_000_000_000;
+  const reqOwner: ReqContext = { auth: { uid }, time: now };
+  const reqAttacker: ReqContext = { auth: { uid: 'attacker-uid' }, time: now };
+
+  // 1. Legacy profile with extra pre-v2 field can still update metrics + Part 16 leaderboard metrics
+  const legacyProfile = {
+    username: 'LegacyNation',
+    usernameLower: 'legacynation',
+    countryCode: 'US',
+    countryName: 'United States',
+    legacyTag: 'v1_founder',
+    gdp: 100_000,
+    cash: 25_000,
+    gems: 5,
+    level: 10,
+    rank: 3,
+    lastSeen: now - 5_000,
+    createdAt: now - 500_000,
+    stats: sanitizeStats(undefined, { buildings: 14 }),
+  };
+  assert.equal(
+    evalPlayerUpdate(
+      reqOwner,
+      uid,
+      {
+        ...legacyProfile,
+        gdp: 250_000,
+        cash: 60_000,
+        rank: 5,
+        cosLbAnim: 'lb_gold_sweep',
+        eqStk: 'crown',
+        natDev: 420,
+        pop: 85.4,
+        techCount: 18,
+        megaCount: 4,
+        tradeScore: 1_200_000,
+        stability: 88.5,
+        lastSeen: now,
+      },
+      legacyProfile,
+    ),
+    true,
+  );
+
+  // 2. Heartbeat-only update works on legacy profile
+  assert.equal(evalPlayerUpdate(reqOwner, uid, { ...legacyProfile, lastSeen: now }, legacyProfile), true);
+
+  // 3. Attacker cannot inject privilege field into own or other profile
+  assert.equal(
+    evalPlayerUpdate(reqOwner, uid, { ...legacyProfile, isAdmin: true, lastSeen: now }, legacyProfile),
+    false,
+  );
+
+  // 4. Attacker cannot overwrite another user's profile
+  assert.equal(
+    evalPlayerUpdate(reqAttacker, uid, { ...legacyProfile, gdp: 999_999, lastSeen: now }, legacyProfile),
+    false,
+  );
+
+  // 5. Out-of-bounds stability (>100) rejected
+  assert.equal(
+    evalPlayerUpdate(reqOwner, uid, { ...legacyProfile, stability: 120, lastSeen: now }, legacyProfile),
+    false,
+  );
+
+  // 6. Out-of-bounds techCount (>1000) rejected
+  assert.equal(
+    evalPlayerUpdate(reqOwner, uid, { ...legacyProfile, techCount: 1001, lastSeen: now }, legacyProfile),
+    false,
+  );
+
+  // 7. Immutable usernameLower tampering rejected
+  assert.equal(
+    evalPlayerUpdate(reqOwner, uid, { ...legacyProfile, usernameLower: 'hijack', lastSeen: now }, legacyProfile),
+    false,
+  );
+
+  // 8. Non-server timestamp rejected
+  assert.equal(
+    evalPlayerUpdate(reqOwner, uid, { ...legacyProfile, gdp: 120_000, lastSeen: now + 10 }, legacyProfile),
+    false,
+  );
+
+  // 9. Path traversal in cosBadge rejected
+  assert.equal(
+    evalPlayerUpdate(reqOwner, uid, { ...legacyProfile, cosBadge: '../admin', lastSeen: now }, legacyProfile),
+    false,
+  );
+
+  // 10. Negative tradeScore rejected
+  assert.equal(
+    evalPlayerUpdate(reqOwner, uid, { ...legacyProfile, tradeScore: -5, lastSeen: now }, legacyProfile),
+    false,
+  );
+
+  // 11. Save with negative balance rejected
+  const cleanDoc = { save: cleanSavePayload(freshState()) };
+  assert.equal(
+    evalSavesAccess('update', reqOwner, uid, { save: { ...cleanDoc.save, cash: -1 } }),
+    false,
+  );
+
+  // 12. Save read by another user rejected
+  assert.equal(evalSavesAccess('get', reqAttacker, uid), false);
 });
 
 void SERVER_TIME;

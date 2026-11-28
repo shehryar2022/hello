@@ -29,21 +29,58 @@ import {
   NEW_STICKERS_2_0,
   NEW_TECHS_2_0,
   STICKER_COLLECTIONS,
-  TECH_CATEGORY_META,
-  TRADE_GOODS,
+  TRADE_GOODS as TRADE_GOODS_2_0,
   TRADE_MILESTONES,
   TRADE_PARTNERS,
 } from './dataUpdate2';
+import {
+  BUILDING_META_OVERRIDES_16,
+  CHALLENGES_16,
+  DIPLOMACY_PARTNERS_16,
+  DIPLOMACY_TREATIES_16,
+  DYNAMIC_EVENTS_16,
+  EXTRA_MEGA_PROJECTS_16,
+  EXTRA_TRADE_GOODS_16,
+  NEW_ACHIEVEMENTS_16,
+  NEW_BUILDINGS_16,
+  NEW_TECHS_16,
+  PRODUCTION_CHAINS_16,
+  RESOURCE_CATALOG_16,
+  TECH_CATEGORY_META_16,
+} from './dataExpansion16';
+
+export const TECH_CATEGORY_META = TECH_CATEGORY_META_16;
+
+// Enforce anti-arbitrage spread (import >= 1.55x export) across all 18 tradeable commodities
+export const TRADE_GOODS = [
+  ...TRADE_GOODS_2_0.map((g) => ({
+    ...g,
+    baseImportPrice: Math.max(g.baseImportPrice, Math.ceil(g.baseExportPrice * 1.55)),
+  })),
+  ...EXTRA_TRADE_GOODS_16,
+];
+
+export const CHALLENGES_ALL = [...CHALLENGES_2_0, ...CHALLENGES_16];
 
 export {
+  BUILDING_META_OVERRIDES_16,
+  CHALLENGES_16,
   CHALLENGES_2_0,
+  DIPLOMACY_PARTNERS_16,
+  DIPLOMACY_TREATIES_16,
+  DYNAMIC_EVENTS_16,
+  EXTRA_TRADE_GOODS_16,
+  NEW_ACHIEVEMENTS_16,
+  NEW_BUILDINGS_16,
   NEW_BUILDINGS_2_0,
   NEW_POLICIES_2_0,
   NEW_STICKERS_2_0,
+  NEW_TECHS_16,
   NEW_TECHS_2_0,
+  PRODUCTION_CHAINS_16,
+  RESOURCE_CATALOG_16,
   STICKER_COLLECTIONS,
-  TECH_CATEGORY_META,
-  TRADE_GOODS,
+  TECH_CATEGORY_META_16,
   TRADE_MILESTONES,
   TRADE_PARTNERS,
 };
@@ -109,7 +146,7 @@ export const LEGACY_22_BUILDING_IDS = [
   'training_centers', 'hospitals', 'universities',
 ] as const;
 
-export const BUILDINGS: BuildingDef[] = [
+export const BUILDINGS: BuildingDef[] = ([
   // Agriculture
   {
     id: 'farms',
@@ -1073,7 +1110,11 @@ export const BUILDINGS: BuildingDef[] = [
     d: 'Orbital launchpad & satellite telemetry sovereign flagship',
   },
   ...NEW_BUILDINGS_2_0,
-];
+  ...NEW_BUILDINGS_16,
+] as BuildingDef[]).map((b) => {
+  const ov = BUILDING_META_OVERRIDES_16[b.id];
+  return ov ? { ...b, ...ov } : b;
+});
 
 export const BUILDING_POLICIES: BuildingPolicyDef[] = [
   {
@@ -1838,6 +1879,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     rewardCash: 500_000,
   },
   ...NEW_ACHIEVEMENTS_2_0,
+  ...NEW_ACHIEVEMENTS_16,
 ];
 
 /**
@@ -2056,6 +2098,7 @@ export const TECH_TREE: TechDef[] = [
     effectLabel: '40m Tax Pool cap (up from 30m) · +4% income',
   },
   ...NEW_TECHS_2_0,
+  ...NEW_TECHS_16,
 ];
 
 export const EXEC_DECISIONS: ExecDecisionDef[] = [
@@ -2246,6 +2289,7 @@ export const GX_PROJECT_TYPES: Record<ProjectType, ProjectTypeDef> = {
   bridge: { n: 'River Bridge', e: '🌉', cost: 250000, dur: 1200000, dl: 4320, pb: 0.03, ph: 1, rewardCoins: 360000, rewardGems: 3, desc: 'Steel cable-stayed freight bridge crossing.' },
   highway: { n: 'National Highway', e: '🛣️', cost: 1000000, dur: 2400000, dl: 5760, pb: 0.05, ph: 1.5, rewardCoins: 1450000, rewardGems: 5, desc: 'Multi-lane national arterial expressway.' },
   ...EXTRA_MEGA_PROJECTS_2_0,
+  ...EXTRA_MEGA_PROJECTS_16,
 };
 
 export interface PolicyPreset {

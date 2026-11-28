@@ -261,14 +261,14 @@ export const ShopTab: React.FC<ShopTabProps> = memo(({
                         {r.id}. {r.n}
                       </span>
                       <span className="lv">+{r.incomeBonusPct}% inc</span>
-                      {r.id > 1 && r.rewardCoins > 0 && (
+                      {r.id > 1 && (r.rewardCoins ?? 0) > 0 && (
                         <span className="lv" style={{ borderColor: 'rgba(255,194,61,0.45)', color: 'var(--gold)' }}>
-                          +₨ {formatCoinsCompact(r.rewardCoins)}
+                          +₨ {formatCoinsCompact(r.rewardCoins ?? 0)}
                         </span>
                       )}
-                      {r.id > 1 && r.rewardGems > 0 && (
+                      {r.id > 1 && (r.rewardGems ?? 0) > 0 && (
                         <span className="lv" style={{ borderColor: 'rgba(92,203,255,0.45)', color: 'var(--cy)' }}>
-                          +{r.rewardGems} 💎
+                          +{r.rewardGems ?? 0} 💎
                         </span>
                       )}
                     </h2>

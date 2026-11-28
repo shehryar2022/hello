@@ -1,5 +1,5 @@
 import React, { memo, useEffect, useMemo, useState } from 'react';
-import { ACHIEVEMENTS, CHALLENGES_2_0, WEEKLY_MISSIONS } from '../../game/constants';
+import { ACHIEVEMENTS, CHALLENGES_ALL, WEEKLY_MISSIONS } from '../../game/constants';
 import {
   formatCountdownShort,
   getDailyQuestsView,
@@ -101,7 +101,7 @@ export const RewardsDashboard = memo(function RewardsDashboard({
     [achTierFilter],
   );
   const completedChalCount = useMemo(
-    () => CHALLENGES_2_0.filter((c) => !!state.challenges?.[c.id]).length,
+    () => CHALLENGES_ALL.filter((c) => !!state.challenges?.[c.id]).length,
     [state.challenges],
   );
 
@@ -411,11 +411,11 @@ export const RewardsDashboard = memo(function RewardsDashboard({
 
         <div className="gxh" style={{ marginTop: 6 }}>
           <Trophy size={15} color="#5ccbff" />
-          <span>Long-Term National Challenges ({completedChalCount}/{CHALLENGES_2_0.length})</span>
+          <span>Long-Term National Challenges ({completedChalCount}/{CHALLENGES_ALL.length})</span>
         </div>
 
         <div className="list g2" data-testid="challenges-grid">
-          {CHALLENGES_2_0.map((c) => {
+          {CHALLENGES_ALL.map((c) => {
             const cur = c.f(state);
             const pct = Math.max(0, Math.min(100, (cur / Math.max(1, c.goal)) * 100));
             const isClaimed = !!state.challenges?.[c.id];

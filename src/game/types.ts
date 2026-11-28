@@ -12,7 +12,7 @@ export type PlayersSubTab = 'lb' | 'chat' | 'dm';
 export type GiftsSubTab = 'in' | 'out' | 'hist' | 'find';
 export type ShopSubTab = 'rank' | 'sub' | 'boost' | 'diamond';
 export type ShopWing = 'regular' | 'exclusives';
-export type GovtSubTab = 'infra' | 'projects' | 'decisions' | 'research' | 'intl_trade' | 'stats';
+export type GovtSubTab = 'infra' | 'projects' | 'decisions' | 'research' | 'intl_trade' | 'ecosystem' | 'stats';
 
 export type CosmeticCategory =
   | 'profile_effect'
@@ -136,23 +136,60 @@ export type BuildingCategory =
 
 export type ExcludeAllBuildingCategory = Exclude<BuildingCategory, 'all'>;
 
+export type BuildingTier =
+  | 'basic'
+  | 'advanced'
+  | 'premium'
+  | 'elite'
+  | 'national_wonder';
+
+export type ResourceId =
+  | 'oil'
+  | 'natural_gas'
+  | 'clean_energy'
+  | 'iron_ore'
+  | 'steel'
+  | 'cement'
+  | 'grain'
+  | 'food'
+  | 'fuel'
+  | 'silicon'
+  | 'semiconductors'
+  | 'electronics'
+  | 'pharmaceuticals'
+  | 'machinery'
+  | 'vehicles'
+  | 'chemicals'
+  | 'textiles'
+  | 'fertilizers'
+  | 'construction_materials'
+  | 'agri_products'
+  | 'luxury_goods'
+  | 'ai_chips';
+
 export interface BuildingDef {
   id: string;
   n: string;
   e: string;
   c: string;
   cat: ExcludeAllBuildingCategory;
+  tier?: BuildingTier;
   cost: number;
   costScale: number;
   buildSec: number;
   inc: number;
   maint: number;
   jobs: number;
+  skilledShare?: number; // 0..1 fraction of jobs requiring skilled workforce
   energy: number; // +MW generated or -MW consumed
   hapDelta: number;
   reqRank: number;
   reqBuildings?: number;
   reqTech?: string;
+  dependsOn?: string[];
+  produces?: Partial<Record<ResourceId, number>>;
+  consumes?: Partial<Record<ResourceId, number>>;
+  drawback?: string;
   capacity?: number; // Housing beds / civic service capacity
   demolishRefundPct?: number;
   d: string;
@@ -332,6 +369,19 @@ export interface EconomySnapshot {
   researchSpeedMult: number;
   realGdp: number;
   sectorIncome: Record<ExcludeAllBuildingCategory, number>;
+  // Part 16 national ecosystem metrics
+  skilledJobs?: number;
+  skilledSupply?: number;
+  skilledRatio?: number;
+  healthcareProductivity?: number;
+  bondInterestCost?: number;
+  megaMaintCost?: number;
+  resourceMult?: number;
+  resourceCap?: number;
+  fdiBonusPct?: number;
+  stabilityScore?: number;
+  netBudget?: number;
+  resourceNet?: Partial<Record<ResourceId, number>>;
 }
 
 export type TechCategory =
@@ -339,12 +389,20 @@ export type TechCategory =
   | 'robotics'
   | 'manufacturing'
   | 'energy'
+  | 'nuclear'
+  | 'transportation'
   | 'healthcare'
   | 'education'
   | 'agriculture'
   | 'space'
   | 'fintech'
-  | 'cybersecurity';
+  | 'environment'
+  | 'urban'
+  | 'military'
+  | 'cybersecurity'
+  | 'biotech'
+  | 'semiconductors'
+  | 'quantum';
 
 export interface TechDef {
   id: string;
@@ -353,6 +411,9 @@ export interface TechDef {
   cost: number;
   reqBuildings: number;
   reqRank?: number;
+  reqLabBuilding?: string;
+  maxLevel?: number;
+  researchPtsReq?: number;
   durSec: number;
   prereq?: string[];
   unlocksBuildings?: string[];
@@ -544,7 +605,17 @@ export type TradeGoodId =
   | 'clean_energy'
   | 'ai_chips'
   | 'machinery'
-  | 'textiles';
+  | 'textiles'
+  | 'oil'
+  | 'natural_gas'
+  | 'cement'
+  | 'food'
+  | 'vehicles'
+  | 'chemicals'
+  | 'fertilizers'
+  | 'construction_materials'
+  | 'agri_products'
+  | 'luxury_goods';
 
 export interface TradeGoodDef {
   id: TradeGoodId;
@@ -687,6 +758,18 @@ export interface GameState {
   challenges?: Record<string, number>;
   megaProjects?: LocalMegaProjectSlot[];
   mig?: Record<string, number>;
+  // Part 16 national ecosystem (round-tripped cleanly via localStorage & v2 cloud pack)
+  resources?: { stock: Record<string, number>; cap?: number };
+  finance?: { debt: number; interestPaid: number; borrowedTotal: number };
+  diplomacy?: {
+    relations: Record<string, number>;
+    treaties: string[];
+    rep: number;
+    jointVentures?: string[];
+    sanctionTarget?: string;
+  };
+  dynEvent?: { id: string; expiresAt: number; resolved?: boolean } | null;
+  techLvls?: Record<string, number>;
 }
 
 export interface PlayerStats {
@@ -719,6 +802,12 @@ export interface PlayerProfile {
   eqStk?: string;
   lastSeen?: unknown;
   seen?: number;
+  natDev?: number;
+  pop?: number;
+  techCount?: number;
+  megaCount?: number;
+  tradeScore?: number;
+  stability?: number;
   stats: PlayerStats;
   createdAt?: unknown;
 }
@@ -730,7 +819,13 @@ export type LeaderboardMode =
   | 'production'
   | 'contribution'
   | 'weekly'
-  | 'monthly';
+  | 'monthly'
+  | 'natDev'
+  | 'population'
+  | 'researchProg'
+  | 'megaProjects'
+  | 'tradePerf'
+  | 'stability';
 
 export interface WalletData {
   cash: number;
@@ -787,7 +882,18 @@ export type ProjectType =
   | 'metro_loop'
   | 'ai_corridor'
   | 'seawall_shield'
-  | 'trade_canal';
+  | 'trade_canal'
+  | 'smart_city'
+  | 'intl_trade_corridor'
+  | 'hsr_network'
+  | 'mega_hydro'
+  | 'intl_fin_district'
+  | 'industrial_rev'
+  | 'semicon_program'
+  | 'health_transform'
+  | 'edu_revolution'
+  | 'agri_modernization'
+  | 'tourism_dev';
 
 export interface ProjectTypeDef {
   n: string;
@@ -800,6 +906,9 @@ export interface ProjectTypeDef {
   reqRank?: number;
   minJobs?: number;
   minEnergySupply?: number;
+  materials?: Partial<Record<ResourceId, number>>;
+  maintPerSec?: number;
+  sectors?: ExcludeAllBuildingCategory[];
   rewardCoins?: number;
   rewardGems?: number;
   desc?: string;

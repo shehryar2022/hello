@@ -29,6 +29,8 @@ import {
   calculateGdp,
   cleanSavePayload,
   cleanStickersMap,
+  computeEconomySnapshot,
+  computeNationalDevelopmentIndex,
   dayKeyFor,
   getActiveSubscription,
   getEquippedCosmetics,
@@ -37,6 +39,7 @@ import {
   sanitizeCosmeticIdField,
   sanitizeCountryCode,
   sanitizeStats,
+  techCount,
   totalBuildings,
 } from '../game/rules';
 import type {
@@ -73,6 +76,22 @@ export function capValue(v: unknown, max: number): number {
   const raw = Number(v);
   const n = Number.isFinite(raw) ? Math.floor(raw) : 0;
   return Math.min(max, Math.max(0, n)) + 0;
+}
+
+function buildExtendedPublicMetrics(state: GameState) {
+  const snap = computeEconomySnapshot(state, { ignoreTempBoosters: true });
+  const stability = Math.max(0, Math.min(100, Math.round((snap.stabilityScore ?? 65) * 10) / 10));
+  return {
+    natDev: capValue(computeNationalDevelopmentIndex(state, stability), 1_000_000),
+    pop: capValue(state.pop || 48, 1_000_000),
+    techCount: capValue(techCount(state), 1000),
+    megaCount: capValue((state.megaProjects || []).filter((p) => p.claimed).length, 1000),
+    tradeScore: capValue(
+      (state.intlTrade?.exportRevenue || 0) + (state.intlTrade?.completedCount || 0) * 50_000,
+      1e14,
+    ),
+    stability,
+  };
 }
 
 function makeError(code: string, message: string): Error & { code: string } {
@@ -307,6 +326,7 @@ export async function createPlayerProfile(
         cosAnim: sanitizeCosmeticIdField(eqCos.anim),
         cosLbAnim: sanitizeCosmeticIdField(eqCos.lbAnim),
         eqStk: sanitizeCosmeticIdField(baseState.eqStk),
+        ...buildExtendedPublicMetrics(baseState),
         lastSeen: serverTimestamp(),
         stats: sanitizeStats(undefined, { buildings: totalBuildings(baseState) }),
         createdAt: serverTimestamp(),
@@ -413,6 +433,7 @@ export async function syncSaveToCloud(params: {
             cosAnim: sanitizeCosmeticIdField(eqCos.anim),
             cosLbAnim: sanitizeCosmeticIdField(eqCos.lbAnim),
             eqStk: sanitizeCosmeticIdField(state.eqStk),
+            ...buildExtendedPublicMetrics(state),
             lastSeen: serverTimestamp(),
             stats: mergedStats,
           });
@@ -553,6 +574,7 @@ export async function syncSaveToCloud(params: {
       cosAnim: sanitizeCosmeticIdField(eqCos.anim),
       cosLbAnim: sanitizeCosmeticIdField(eqCos.lbAnim),
       eqStk: sanitizeCosmeticIdField(state.eqStk),
+      ...buildExtendedPublicMetrics(state),
       lastSeen: serverTimestamp(),
       stats: mergedStats,
     };
@@ -1148,6 +1170,7 @@ export async function syncPublicProfileMetrics(params: {
     cosAnim: sanitizeCosmeticIdField(eqCos.anim),
     cosLbAnim: sanitizeCosmeticIdField(eqCos.lbAnim),
     eqStk: sanitizeCosmeticIdField(state.eqStk),
+    ...buildExtendedPublicMetrics(state),
     lastSeen: serverTimestamp(),
   };
   const bTotal = totalBuildings(state);

@@ -33,6 +33,12 @@
         "cosAnim": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
         "cosLbAnim": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
         "eqStk": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
+        "natDev": { "type": "number", "minimum": 0 },
+        "pop": { "type": "number", "minimum": 0 },
+        "techCount": { "type": "integer", "minimum": 0 },
+        "megaCount": { "type": "integer", "minimum": 0 },
+        "tradeScore": { "type": "number", "minimum": 0 },
+        "stability": { "type": "number", "minimum": 0, "maximum": 100 },
         "stats": { "type": "object" }
       },
       "required": ["username", "usernameLower", "countryCode", "countryName", "gdp", "cash", "gems", "level", "rank", "lastSeen", "stats", "createdAt"]
@@ -64,7 +70,7 @@
     },
     "PlayerSave": {
       "title": "PlayerSave",
-      "description": "Owner-only full game state save snapshot with Update 2.0 chunked v2Pack extension (107 buildings, Lv 1-50 upgrades, 50 techs, 20 policies, 70 stickers, 25 ranks, international trade, mega projects, cosmetics, and rewards).",
+      "description": "Owner-only full game state save snapshot with chunked v2Pack extension (220+ buildings, Lv 1-50 upgrades, 105+ techs across 18 branches, 20 policies, 70 stickers, 25 ranks, 18-commodity trade, resources, debt, diplomacy, events, and 15+ mega projects).",
       "type": "object",
       "properties": {
         "save": { "type": "object" }
@@ -93,7 +99,7 @@
       "type": "object",
       "properties": {
         "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "type": { "type": "string", "enum": ["school", "hospital", "bridge", "highway", "spaceport", "fusion_grid", "metro_loop", "ai_corridor", "seawall_shield", "trade_canal"] },
+        "type": { "type": "string", "enum": ["school", "hospital", "bridge", "highway", "spaceport", "fusion_grid", "metro_loop", "ai_corridor", "seawall_shield", "trade_canal", "smart_city", "intl_trade_corridor", "hsr_network", "mega_hydro", "intl_fin_district", "industrial_rev", "semicon_program", "health_transform", "edu_revolution", "agri_modernization", "tourism_dev"] },
         "paid": { "type": "integer" },
         "progressMs": { "type": "number" },
         "status": { "type": "string", "enum": ["active", "done", "failed"] },

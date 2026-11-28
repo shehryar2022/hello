@@ -124,9 +124,9 @@ test('1. Idempotent legacy migration consolidates provinces & 24 old buildings w
   assert.equal(Object.keys(cleaned.b as Record<string, unknown>).length, 35);
 });
 
-test('2. 107 buildings across 10 categories & 107 3D city plots, unlock gates, timed construction queue (max 5), and completion', () => {
-  assert.equal(BUILDINGS.length, 107);
-  assert.equal(CITY_PLOTS.length, 107);
+test('2. 227 buildings across 10 categories & 227 3D city plots, unlock gates, timed construction queue (max 5), and completion', () => {
+  assert.equal(BUILDINGS.length, 227);
+  assert.equal(CITY_PLOTS.length, 227);
   for (const def of BUILDINGS) {
     assert.ok(PLOT_BY_ID[def.id], `Missing 3D city plot for building ${def.id}`);
   }
@@ -338,8 +338,8 @@ test('6. Multi-factor Rank 1..25 progression gates, promotion rewards, & Real GD
   const promoted2 = applyBuyRank(state, 2);
   assert.equal(promoted2.ok, true);
   assert.equal(promoted2.state.rank, 2);
-  assert.equal(promoted2.state.cash, 150_000 - RANKS[2].cost + RANKS[2].rewardCoins);
-  assert.equal(promoted2.state.gems, gemsBefore + RANKS[2].rewardGems);
+  assert.equal(promoted2.state.cash, 150_000 - RANKS[2].cost + (RANKS[2].rewardCoins ?? 0));
+  assert.equal(promoted2.state.gems, gemsBefore + (RANKS[2].rewardGems ?? 0));
 
   // Buying a building invests cash into capital equity -> Real GDP stays resilient rather than crashing to 0
   const rich = { ...freshState(), cash: 50_000, b: { ...freshState().b, farms: 10, solar_plants: 2 } };

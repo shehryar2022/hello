@@ -172,7 +172,7 @@ test('ranks 1..25 progress strictly in sequential order after meeting multi-fact
   let state = freshState();
   state.cash = 10_000_000_000_000;
   state.hap = 85;
-  state.pop = 5_000_000;
+  state.pop = 50_000;
   for (const b of BUILDINGS) {
     state.b[b.id] = 45;
     state.gx.lvl[b.id] = MAX_BUILDING_LEVEL;
@@ -485,9 +485,9 @@ test('government renovation depends strictly on 20% of building development (una
   assert.equal(gxRepairCost(state, 'parl', true), 0);
 });
 
-test('107 national buildings and 16 policies function cleanly', () => {
-  assert.equal(BUILDINGS.length, 107);
-  for (const id of ['farms', 'food_plant', 'steel_plants', 'wind_farms', 'railways', 'shopping_centers', 'tech_parks', 'data_centers', 'universities']) {
+test('227 national buildings and 16 policies function cleanly', () => {
+  assert.equal(BUILDINGS.length, 227);
+  for (const id of ['farms', 'food_plant', 'steel_plants', 'wind_farms', 'railways', 'shopping_centers', 'tech_parks', 'data_centers', 'universities', 'petrochemical_refinery', 'sub2nm_giga_fab', 'arcology_habitat']) {
     assert.ok(BUILDINGS.some((b) => b.id === id), `Missing building ${id}`);
   }
 
@@ -563,7 +563,7 @@ test('National Research Lab doctrines unlock with building prerequisites and app
   let state = freshState();
   state.cash = 100_000_000;
   state.b.farms = 5;
-  assert.equal(TECH_TREE.length, 50);
+  assert.equal(TECH_TREE.length, 101);
 
   const blocked = applyUnlockTech(state, 'smart_grid');
   assert.equal(blocked.ok, false);
@@ -1176,8 +1176,8 @@ test('applyEquipSticker equips/unequips owned stickers, rejects unowned/invalid,
   assert.equal(fused.state.eqStk, '');
 });
 
-test('targetApproval reflects National Policy stances and ACHIEVEMENTS includes all 42 + 10-sector achievement', () => {
-  assert.equal(ACHIEVEMENTS.length, 42);
+test('targetApproval reflects National Policy stances and ACHIEVEMENTS includes all 54 + 10-sector achievement', () => {
+  assert.equal(ACHIEVEMENTS.length, 54);
   const ach10 = ACHIEVEMENTS.find((a) => a.id === 'ach_sectors_10');
   assert.ok(ach10);
 

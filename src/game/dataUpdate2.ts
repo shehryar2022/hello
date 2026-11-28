@@ -1263,7 +1263,7 @@ export const NEW_TECHS_2_0: TechDef[] = [
 
 // ==================== +6 NATIONAL MEGA PROJECTS -> 10 TOTAL ====================
 export const EXTRA_MEGA_PROJECTS_2_0: Record<
-  Exclude<ProjectType, 'school' | 'hospital' | 'bridge' | 'highway'>,
+  'spaceport' | 'fusion_grid' | 'metro_loop' | 'ai_corridor' | 'seawall_shield' | 'trade_canal',
   ProjectTypeDef
 > = {
   spaceport: {

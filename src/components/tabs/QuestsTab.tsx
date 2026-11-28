@@ -104,9 +104,13 @@ export const QuestsTab: React.FC<QuestsTabProps> = memo(({
     p.pol === n.pol &&
     p.stk === n.stk &&
     p.tech === n.tech &&
+    p.techLvls === n.techLvls &&
     p.intlTrade === n.intlTrade &&
     p.upgHist === n.upgHist &&
     p.megaProjects === n.megaProjects &&
+    p.diplomacy === n.diplomacy &&
+    p.resources === n.resources &&
+    p.finance === n.finance &&
     p.gx?.lvl === n.gx?.lvl &&
     p.gx?.blk === n.gx?.blk &&
     p.gx?.pb === n.gx?.pb &&

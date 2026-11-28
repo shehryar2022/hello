@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import type { BuildingDef, TextureQuality } from '../game/types';
-import type { CityPlotDef } from './cityLayout';
+import type { BuildingDef, LocalMegaProjectSlot, ProjectTypeDef, TextureQuality } from '../game/types';
+import type { CityPlotDef, MegaProjectSlotDef } from './cityLayout';
 
 export interface AnimatedCityPart {
   obj: THREE.Object3D;
@@ -1016,6 +1016,130 @@ export function buildPlotGroup(params: {
       break;
     }
 
+    case 'refinery': {
+      // Petrochemical distillation columns + spherical gas storage + piping bridge
+      addBox(g, w * 0.8, 0.5, d * 0.7, 0, 0.28, 0, lib.tarmacMat, false, true);
+      for (let i = -1; i <= 1; i++) {
+        addCyl(g, 0.65, 0.72, 4.6 + lv * 0.55 + Math.abs(i) * 0.8, 12, i * 2.2 - 1.2, 0.78, -d * 0.14, lib.brightSteel);
+        addCyl(g, 0.72, 0.72, 0.28, 12, i * 2.2 - 1.2, 3.2 + lv * 0.4, -d * 0.14, accent);
+      }
+      for (const sx of [-w * 0.2, w * 0.18]) {
+        const tank = new THREE.Mesh(new THREE.SphereGeometry(1.45, 12, 10), lib.brightSteel);
+        tank.position.set(sx, 2.0, d * 0.2);
+        tank.castShadow = true;
+        g.add(tank);
+      }
+      addCyl(g, 0.14, 0.22, 6.8 + lv * 0.6, 8, w * 0.34, 0.78, -d * 0.22, lib.darkSteel);
+      const flare = addCyl(g, 0.25, 0.15, 0.45, 8, w * 0.34, 7.6 + lv * 0.6, -d * 0.22, lib.emissiveWarmMat, false);
+      animatedParts.push({ obj: flare, kind: 'beacon', speed: 3.1, phase: plot.x * 0.1 });
+      break;
+    }
+
+    case 'mine': {
+      // Open-pit terrace + ore headframe derrick + crusher silo + conveyor ramp
+      addBox(g, w * 0.82, 0.42, d * 0.74, 0, 0.24, 0, lib.tarmacMat, false, true);
+      addBox(g, w * 0.42, 1.8, d * 0.4, -w * 0.18, 0.66, 0, lib.industrialFacade);
+      // Derrick headframe
+      addBox(g, 0.35, 5.4 + lv * 0.4, 0.35, -w * 0.25, 0.66, -0.9, lib.goldAccent);
+      addBox(g, 0.35, 5.4 + lv * 0.4, 0.35, -w * 0.1, 0.66, -0.9, lib.goldAccent);
+      addBox(g, 1.9, 0.4, 1.4, -w * 0.18, 5.9 + lv * 0.4, -0.9, lib.roofRed);
+      addCyl(g, 1.35, 1.45, 3.4 + lv * 0.35, 12, w * 0.24, 0.66, d * 0.12, lib.concreteBase);
+      break;
+    }
+
+    case 'semicon': {
+      // Sub-2nm cleanroom pavilion + precision HVAC bays + optical metrology dome
+      addBox(g, w * 0.84, 2.8 + lv * 0.35, d * 0.68, 0, 0.28, 0, lib.brightSteel);
+      addBox(g, w * 0.86, 0.35, d * 0.7, 0, 1.85, 0, lib.emissiveGlassMat, false);
+      for (const sx of [-w * 0.24, 0, w * 0.24]) {
+        addCyl(g, 0.75, 0.82, 1.6 + lv * 0.25, 10, sx, 3.08 + lv * 0.35, -d * 0.16, lib.darkSteel);
+      }
+      addBox(g, w * 0.45, 1.1, d * 0.28, 0, 3.08 + lv * 0.35, d * 0.16, lib.glassFacade);
+      break;
+    }
+
+    case 'fusion': {
+      // Toroidal tokamak plasma reactor hall + glowing torus containment + cryogenic stacks
+      addBox(g, w * 0.82, 1.2, d * 0.74, 0, 0.28, 0, lib.concreteBase);
+      const torus = new THREE.Mesh(new THREE.TorusGeometry(2.65, 0.85, 10, 22), lib.brightSteel);
+      torus.rotation.x = Math.PI * 0.5;
+      torus.position.set(0, 2.6 + lv * 0.2, 0);
+      torus.castShadow = true;
+      g.add(torus);
+      const coreRing = new THREE.Mesh(new THREE.TorusGeometry(2.65, 0.24, 8, 22), lib.emissiveGlassMat);
+      coreRing.rotation.x = Math.PI * 0.5;
+      coreRing.position.set(0, 3.4 + lv * 0.2, 0);
+      g.add(coreRing);
+      const pulseCore = new THREE.Mesh(new THREE.OctahedronGeometry(1.15, 0), lib.beaconMat);
+      pulseCore.position.set(0, 3.4 + lv * 0.2, 0);
+      g.add(pulseCore);
+      animatedParts.push({ obj: pulseCore, kind: 'radar', speed: 1.8, phase: plot.z * 0.2 });
+      break;
+    }
+
+    case 'biosphere': {
+      // Geodesic glass conservatory dome over lush agricultural terrain + spire
+      addBox(g, w * 0.8, 0.4, d * 0.72, 0, 0.28, 0, lib.cropMat, false, true);
+      const bioDome = new THREE.Mesh(
+        new THREE.SphereGeometry(Math.min(w, d) * 0.36, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55),
+        lib.emissiveGlassMat,
+      );
+      bioDome.position.set(0, 0.65, 0);
+      bioDome.scale.set(1.1, 0.9 + lv * 0.08, 1);
+      g.add(bioDome);
+      addCyl(g, 0.4, 0.7, 3.2 + lv * 0.4, 10, -w * 0.26, 0.65, -d * 0.2, lib.foliageGreen);
+      break;
+    }
+
+    case 'arcology': {
+      // Stepped sky-garden eco-megatower with alternating glass tiers and green terraces
+      const baseH = 5.5 + lv * 0.8;
+      addBox(g, w * 0.76, baseH * 0.45, d * 0.68, 0, 0.28, 0, lib.glassFacade);
+      addBox(g, w * 0.78, 0.28, d * 0.7, 0, 0.28 + baseH * 0.45, 0, lib.foliageGreen, false);
+      const y2 = 0.56 + baseH * 0.45;
+      addBox(g, w * 0.56, baseH * 0.45, d * 0.5, 0, y2, 0, lib.glassFacade);
+      addBox(g, w * 0.58, 0.26, d * 0.52, 0, y2 + baseH * 0.45, 0, lib.foliageGreen, false);
+      const y3 = y2 + 0.26 + baseH * 0.45;
+      addBox(g, w * 0.34, baseH * 0.4, d * 0.34, 0, y3, 0, lib.solarMat);
+      addCyl(g, 0.1, 0.28, 3.0 + lv * 0.4, 8, 0, y3 + baseH * 0.4, 0, lib.goldAccent);
+      break;
+    }
+
+    case 'spaceport': {
+      // Twin orbital pads + heavy-lift booster + launch service truss + telemetry dish
+      addBox(g, w * 0.86, 0.45, d * 0.74, 0, 0.24, 0, lib.tarmacMat, false, true);
+      addBox(g, w * 0.36, 2.2 + lv * 0.2, d * 0.44, -w * 0.24, 0.68, 0, lib.glassFacade);
+      addBox(g, 0.65, 11.2 + lv * 0.8, 0.65, w * 0.28, 0.68, -0.7, lib.roofRed);
+      addCyl(g, 0.72, 0.85, 8.8 + lv * 0.7, 12, w * 0.14, 0.68, 0.4, lib.brightSteel);
+      const nose = new THREE.Mesh(new THREE.ConeGeometry(0.74, 2.2, 12), lib.goldAccent);
+      nose.position.set(w * 0.14, 10.6 + lv * 0.7, 0.4);
+      g.add(nose);
+      break;
+    }
+
+    case 'museum': {
+      // Cantilevered cultural hall + classical rotunda dome + colonnade gallery
+      addBox(g, w * 0.8, 1.4, d * 0.68, 0, 0.28, 0, lib.concreteBase);
+      addBox(g, w * 0.74, 2.2 + lv * 0.3, d * 0.48, 0, 1.68, 0, lib.glassFacade);
+      const cup = new THREE.Mesh(
+        new THREE.SphereGeometry(2.15, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.5),
+        lib.goldAccent,
+      );
+      cup.position.set(0, 3.88 + lv * 0.3, 0);
+      g.add(cup);
+      break;
+    }
+
+    case 'bridge': {
+      // Cable-stayed viaduct deck + twin A-pylons + gold tension cables
+      addBox(g, w * 0.92, 0.65, d * 0.46, 0, 2.4 + lv * 0.15, 0, lib.tarmacMat);
+      for (const px of [-w * 0.24, w * 0.24]) {
+        addCyl(g, 0.34, 0.48, 6.2 + lv * 0.45, 8, px, 0.28, 0, lib.brightSteel);
+        addBox(g, 0.6, 0.45, d * 0.5, px, 6.4 + lv * 0.45, 0, accent);
+      }
+      break;
+    }
+
     case 'road_hub':
     case 'highway':
     case 'railway':
@@ -1233,3 +1357,78 @@ export function buildDiamondLandmarkGroup(params: {
   return g;
 }
 
+/**
+ * Renders a monumental 3D representation for any active or completed National Mega Project
+ * on its dedicated Harbor Island (south bay) or Ceremonial Ridge (north horizon).
+ */
+export function buildMegaProjectMonumentGroup(params: {
+  slot: MegaProjectSlotDef;
+  proj: LocalMegaProjectSlot;
+  def: ProjectTypeDef;
+  lib: CityMaterialLibrary;
+  animatedParts: AnimatedCityPart[];
+}): THREE.Group {
+  const { slot, proj, def, lib, animatedParts } = params;
+  const g = new THREE.Group();
+  g.position.set(slot.x, 0, slot.z);
+  g.name = `mega-project:${slot.id}`;
+
+  const w = 18;
+  const d = 14;
+  const stage = Math.max(1, Math.min(3, Math.floor(proj.stage || 1)));
+  const isCompleted = Boolean(proj.claimed);
+
+  // Monumental island / ridge plinth
+  addBox(g, w, slot.isIsland ? 0.9 : 0.55, d, 0, slot.isIsland ? -0.15 : 0, 0, lib.concreteBase, false, true);
+  addBox(g, w - 1.2, 0.35, d - 1.2, 0, slot.isIsland ? 0.75 : 0.55, 0, isCompleted ? lib.goldAccent : lib.darkSteel, false, true);
+
+  const synthPlot: CityPlotDef = {
+    id: `mega_${slot.id}`,
+    x: 0,
+    z: 0,
+    w: 14,
+    d: 11,
+    zone: 'special',
+    archetype: slot.archetype,
+  };
+  const synthDef: BuildingDef = {
+    id: `mega_${slot.id}`,
+    n: def.n,
+    cat: 'special',
+    e: def.e,
+    cost: def.cost,
+    costScale: 1.2,
+    buildSec: 60,
+    inc: 0,
+    maint: 0,
+    jobs: 0,
+    energy: 0,
+    hapDelta: 0,
+    reqRank: 1,
+    d: def.desc || def.n,
+    c: isCompleted ? '#ffc23d' : '#38bdf8',
+  };
+
+  const inner = buildPlotGroup({
+    plot: synthPlot,
+    def: synthDef,
+    count: stage * 4,
+    level: isCompleted ? 25 : stage * 5,
+    underConstruction: !isCompleted,
+    lib,
+    animatedParts,
+  });
+  inner.position.set(0, slot.isIsland ? 1.05 : 0.85, 0);
+  inner.scale.set(1.18, 1.25, 1.18);
+  g.add(inner);
+
+  if (isCompleted) {
+    const crownHalo = new THREE.Mesh(new THREE.TorusGeometry(4.2, 0.22, 8, 24), lib.goldAccent);
+    crownHalo.rotation.x = Math.PI * 0.5;
+    crownHalo.position.set(0, 14.5, 0);
+    g.add(crownHalo);
+    animatedParts.push({ obj: crownHalo, kind: 'radar', speed: 0.75, phase: slot.x * 0.05 });
+  }
+
+  return g;
+}

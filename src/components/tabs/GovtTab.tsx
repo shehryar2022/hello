@@ -2,13 +2,17 @@ import React, { memo, useEffect, useMemo, useState } from 'react';
 import {
   BUILDING_CATEGORIES,
   BUILDINGS,
+  DIPLOMACY_PARTNERS_16,
+  DIPLOMACY_TREATIES_16,
   GOV_DAY_SEC,
   GX_GOV_BUILDINGS,
   GX_PROJECT_TYPES,
   GX_ROADS,
   MAX_BUILDING_LEVEL,
   NATIONAL_DECISIONS,
+  PRODUCTION_CHAINS_16,
   PROJECT_STAGES,
+  RESOURCE_CATALOG_16,
   TECH_CATEGORY_META,
   TECH_TREE,
   TRADE_GOODS,
@@ -24,14 +28,23 @@ import {
   canStartResearch,
   canStartTradeContract,
   computeEconomySnapshot,
+  computeNationalDevelopmentIndex,
+  computeNationalStability,
+  computeResourceEcosystem,
+  computeWorkforceMetrics,
   formatNumber,
+  getActiveDynamicEvent,
+  getBondLimits,
   getBuildingUpgradeQuote,
   getDevelopmentDiscount,
+  getDiplomacyBonuses,
+  getDiplomacyState,
   getIntlTradeCapacity,
   getLocalMegaProjectStageQuote,
   getProjectSpeedMult,
   getRecommendedTech,
   getResearchCostMult,
+  getTechLevel,
   getTradeGoodQuote,
   getUpgradeQueue,
   gxAverageCondition,
@@ -116,6 +129,11 @@ interface GovtTabProps {
   ) => void;
   onClaimTradeMilestone?: (milestoneId: string) => void;
   onEnactDecision?: (decisionId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
+  onBorrowBond?: (amount: number) => void;
+  onRepayBond?: (amount: number) => void;
+  onSendEnvoy?: (partnerCode: string) => void;
+  onSignTreaty?: (treatyId: string) => void;
+  onResolveDynamicEvent?: (choiceIdx: 0 | 1) => void;
 }
 
 export const GovtTab: React.FC<GovtTabProps> = memo(({
@@ -140,6 +158,11 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
   onStartTradeContract,
   onClaimTradeMilestone,
   onEnactDecision,
+  onBorrowBond,
+  onRepayBond,
+  onSendEnvoy,
+  onSignTreaty,
+  onResolveDynamicEvent,
 }) => {
   const gx = state.gx;
   const gbAvg = useMemo(() => gxAverageCondition(state, GX_GOV_BUILDINGS), [state]);
@@ -172,14 +195,18 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
   const upgQueue = useMemo(() => getUpgradeQueue(state), [state]);
   const techRec = useMemo(() => getRecommendedTech(state), [state]);
   const ownedBuildings = useMemo(() => totalBuildings(state), [state]);
+  const activeDynEv = useMemo(() => getActiveDynamicEvent(state, nowSrv), [state, nowSrv]);
   const econSnap = useMemo(
-    () => (subTab === 'stats' ? computeEconomySnapshot(state, { nowMs: nowSrv }) : null),
+    () => (subTab === 'stats' || subTab === 'ecosystem' ? computeEconomySnapshot(state, { nowMs: nowSrv }) : null),
     [state, subTab, nowSrv],
   );
 
   const [techCat, setTechCat] = useState<'all' | TechCategory>('all');
+  const [techSearch, setTechSearch] = useState<string>('');
+  const [techStatus, setTechStatus] = useState<'all' | 'ready' | 'unlocked'>('all');
   const [tradePartner, setTradePartner] = useState<string>(TRADE_PARTNERS[0]?.code || 'AE');
   const [tradeUnits, setTradeUnits] = useState<number>(5);
+  const [tradeSearch, setTradeSearch] = useState<string>('');
   const [upgSearch, setUpgSearch] = useState<string>('');
 
   const dismissStorageKey = `cet_cleared_proj_${uid || 'offline'}`;
@@ -243,6 +270,11 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
           <Globe size={14} />
           <span>Intl Trade</span>
           {activeTradeContracts.length > 0 && <em>{activeTradeContracts.length}</em>}
+        </button>
+        <button type="button" className={subTab === 'ecosystem' ? 'on' : ''} onClick={() => onChangeSubTab('ecosystem')}>
+          <Coins size={14} />
+          <span>Ecosystem</span>
+          {activeDynEv && !activeDynEv.active.resolved && <em>!</em>}
         </button>
         <button type="button" className={subTab === 'stats' ? 'on' : ''} onClick={() => onChangeSubTab('stats')}>
           <BarChart3 size={14} />
@@ -524,10 +556,10 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
         <>
           <div className="gxh" style={{ marginTop: 4 }}>
             <Hammer size={15} color="#a58cff" />
-            <span>National Mega Projects (10 Projects)</span>
+            <span>National Mega Projects ({Object.keys(GX_PROJECT_TYPES).length} Projects)</span>
           </div>
           <p className="dim" style={{ marginBottom: 10 }}>
-            Launch strategic sovereign mega projects (max {MAX_CONCURRENT_LOCAL_PROJECTS} active solo projects). Completing each grants permanent income, happiness, Coins, and Diamonds.
+            Launch strategic sovereign mega projects (max {MAX_CONCURRENT_LOCAL_PROJECTS} active solo projects). Completing each grants permanent income, happiness, Coins, and Diamonds, with balanced operating maintenance.
           </p>
 
           {localMegaProjects.filter((p) => !p.claimed).length > 0 && (
@@ -640,6 +672,8 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
                       {def.reqRank && <span>Rank {def.reqRank}+</span>}
                       {def.minJobs && <span>{formatNumber(def.minJobs)} Jobs</span>}
                       {def.minEnergySupply && <span>{def.minEnergySupply} MW</span>}
+                      {def.maintPerSec && <span>Maint −₨ {formatNumber(def.maintPerSec)}/s</span>}
+                      {def.sectors?.length && <span style={{ color: '#c4b8ff' }}>{def.sectors.join(' · ')}</span>}
                       <span style={{ color: 'var(--mint)' }}>+{Math.round(def.pb * 100)}% Inc · +{def.ph} Hap</span>
                       {def.rewardGems && <span style={{ color: 'var(--cy)' }}>+{def.rewardGems} Diamonds</span>}
                     </div>
@@ -845,6 +879,30 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
             );
           })()}
 
+          <div className="build-tools" style={{ marginBottom: 8 }}>
+            <div className="build-search-wrap">
+              <input
+                type="search"
+                className="inp build-search-inp"
+                placeholder={`Search all ${TECH_TREE.length} research upgrades…`}
+                aria-label="Search technologies"
+                value={techSearch}
+                onChange={(e) => setTechSearch(e.target.value)}
+              />
+            </div>
+            <div className="qty-toggle" role="group" aria-label="Filter research status">
+              <button type="button" className={techStatus === 'all' ? 'on' : ''} onClick={() => setTechStatus('all')}>
+                All
+              </button>
+              <button type="button" className={techStatus === 'ready' ? 'on' : ''} onClick={() => setTechStatus('ready')}>
+                Ready ({readyTechCount})
+              </button>
+              <button type="button" className={techStatus === 'unlocked' ? 'on' : ''} onClick={() => setTechStatus('unlocked')}>
+                Active ({researchedCount})
+              </button>
+            </div>
+          </div>
+
           <div className="fchips" style={{ marginBottom: 10 }} role="tablist" aria-label="Research disciplines">
             <button
               type="button"
@@ -874,30 +932,52 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
           </div>
 
           <div className="list g2">
-            {TECH_TREE.filter((t) => techCat === 'all' || t.cat === techCat).map((t) => {
-              const unlocked = hasTech(state, t.id);
+            {TECH_TREE.filter((t) => {
+              if (techCat !== 'all' && t.cat !== techCat) return false;
+              const tq = techSearch.trim().toLowerCase();
+              if (tq && !t.n.toLowerCase().includes(tq) && !t.d.toLowerCase().includes(tq) && !t.effectLabel.toLowerCase().includes(tq)) {
+                return false;
+              }
+              const curLvl = getTechLevel(state, t.id);
+              if (techStatus === 'unlocked' && curLvl <= 0) return false;
+              if (techStatus === 'ready' && !canStartResearch(state, t.id, nowSrv).ok) return false;
+              return true;
+            }).map((t) => {
+              const curLvl = getTechLevel(state, t.id);
+              const maxLvl = Math.max(1, t.maxLevel ?? 1);
+              const unlocked = curLvl > 0;
+              const mastered = curLvl >= maxLvl;
               const isResearching = state.resQueue?.techId === t.id;
               const check = canStartResearch(state, t.id, nowSrv);
               const meta = TECH_CATEGORY_META.find((m) => m.id === t.cat);
               const catColor = meta?.color || '#5ccbff';
               const metReq = ownedBuildings >= t.reqBuildings;
-              const recReason = !unlocked ? techRec[t.id] : undefined;
+              const reqLabName = t.reqLabBuilding
+                ? BUILDINGS.find((b) => b.id === t.reqLabBuilding)?.n || t.reqLabBuilding
+                : '';
+              const metLab = !t.reqLabBuilding || (state.b[t.reqLabBuilding] || 0) > 0;
+              const recReason = !mastered ? techRec[t.id] : undefined;
               const researchHandler = onStartResearch || onUnlockTech;
               return (
                 <div
                   key={t.id}
                   className={`row${recReason ? ' rec-card' : ''}`}
-                  style={{ '--c': unlocked ? '#3fe0b0' : catColor } as React.CSSProperties}
+                  style={{ '--c': mastered ? '#3fe0b0' : catColor } as React.CSSProperties}
                 >
                   <div className="em">
-                    {unlocked ? <CheckCircle2 size={22} color="#3fe0b0" /> : <span style={{ fontSize: 20 }}>{meta?.icon || '🧪'}</span>}
+                    {mastered ? <CheckCircle2 size={22} color="#3fe0b0" /> : <span style={{ fontSize: 20 }}>{meta?.icon || '🧪'}</span>}
                   </div>
                   <div style={{ minWidth: 0 }}>
                     <h2>
                       <span>{t.n}</span>
-                      <span className="lv" style={{ borderColor: unlocked ? 'var(--mint)' : catColor, color: unlocked ? 'var(--mint)' : catColor, background: 'rgba(255,255,255,0.06)' }}>
+                      <span className="lv" style={{ borderColor: mastered ? 'var(--mint)' : catColor, color: mastered ? 'var(--mint)' : catColor, background: 'rgba(255,255,255,0.06)' }}>
                         {meta?.label || t.cat.toUpperCase()}
                       </span>
+                      {maxLvl > 1 && (
+                        <span className="lv" style={{ borderColor: unlocked ? 'var(--mint)' : 'rgba(255,255,255,0.2)', color: unlocked ? 'var(--mint)' : 'var(--mu)' }}>
+                          Lv {curLvl}/{maxLvl}
+                        </span>
+                      )}
                       {recReason && (
                         <span className="rec-badge">
                           <Sparkles size={10} />
@@ -908,11 +988,16 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
                     <p>
                       {t.d} <b style={{ color: '#e6dcff' }}>{t.effectLabel}</b>
                     </p>
-                    {!unlocked && (
+                    {!mastered && (
                       <div className="bmeta" style={{ marginTop: 2 }}>
                         <span className={metReq ? 'ok' : 'bad'}>
                           {ownedBuildings}/{t.reqBuildings} Bldgs
                         </span>
+                        {reqLabName && (
+                          <span className={metLab ? 'ok' : 'bad'}>
+                            Lab: {reqLabName}{metLab ? ' ✓' : ''}
+                          </span>
+                        )}
                         {t.reqRank && <span>Rank {t.reqRank}+</span>}
                         <span>{formatDuration((check.durSec || t.durSec) * 1000)}</span>
                         {t.unlocksBuildings?.length ? (
@@ -921,9 +1006,9 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
                       </div>
                     )}
                   </div>
-                  {unlocked ? (
+                  {mastered ? (
                     <span className="lv" style={{ borderColor: 'var(--mint)', color: 'var(--mint)', background: 'rgba(63,224,176,0.14)' }}>
-                      Active
+                      {maxLvl > 1 ? `Max Lv ${maxLvl}` : 'Active'}
                     </span>
                   ) : isResearching ? (
                     <span className="lv" style={{ borderColor: 'var(--cy)', color: 'var(--cy)', background: 'rgba(92,203,255,0.14)' }}>
@@ -937,7 +1022,7 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
                       title={check.reason}
                       onClick={(e) => researchHandler(t.id, e)}
                     >
-                      ₨ {formatNumber(check.cost)}
+                      {curLvl > 0 ? `Lv ${curLvl + 1} · ` : ''}₨ {formatNumber(check.cost)}
                     </button>
                   )}
                 </div>
@@ -961,15 +1046,22 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
         const importBuffLeft = intl.importBuffUntil && intl.importBuffUntil > nowSrv
           ? Math.ceil((intl.importBuffUntil - nowSrv) / 1000)
           : 0;
+        const dipBonus = getDiplomacyBonuses(state);
+        const stockMap = state.resources?.stock || {};
+        const tq = tradeSearch.trim().toLowerCase();
+        const visibleGoods = TRADE_GOODS.filter(
+          (g) => !tq || g.name.toLowerCase().includes(tq) || g.effectLabel.toLowerCase().includes(tq),
+        );
         return (
           <div data-testid="intl-trade-view">
             <div className="tradelim">
               <span>
                 <Globe size={14} color="#5ccbff" />
-                International Trade Corridor
+                International Trade Corridor ({TRADE_GOODS.length} Commodities)
               </span>
               <b>
-                Slots {activeTradeContracts.length}/{cap.maxConcurrent} · Daily Freight {cap.dailyVolumeUsed}/{cap.dailyVolumeCap}
+                Slots {activeTradeContracts.length}/{cap.maxConcurrent} · Freight {cap.dailyVolumeUsed}/{cap.dailyVolumeCap}
+                {dipBonus.tradeBonusPct > 0 ? ` · +${dipBonus.tradeBonusPct}% Treaties` : ''}
               </b>
             </div>
 
@@ -1007,7 +1099,7 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
                   ))}
                 </div>
               </div>
-              <div className="fchips">
+              <div className="fchips" style={{ marginBottom: 8 }}>
                 {TRADE_PARTNERS.map((p) => (
                   <button
                     key={p.code}
@@ -1019,6 +1111,15 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
                   </button>
                 ))}
               </div>
+              <input
+                type="search"
+                className="inp"
+                placeholder={`Filter all ${TRADE_GOODS.length} commodities…`}
+                aria-label="Filter trade commodities"
+                value={tradeSearch}
+                onChange={(e) => setTradeSearch(e.target.value)}
+                style={{ marginBottom: 0, padding: '7px 10px', fontSize: 12.5 }}
+              />
             </div>
 
             {activeTradeContracts.length > 0 && (
@@ -1048,10 +1149,11 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
             )}
 
             <div className="list g2" data-testid="trade-goods-grid">
-              {TRADE_GOODS.map((g) => {
+              {visibleGoods.map((g) => {
                 const quote = getTradeGoodQuote(g.id, state, nowSrv);
                 const expCheck = canStartTradeContract(state, g.id, tradePartner, 'export', clampedUnits, nowSrv);
                 const impCheck = canStartTradeContract(state, g.id, tradePartner, 'import', clampedUnits, nowSrv);
+                const heldQty = Math.round((Number(stockMap[g.id]) || 0) * 10) / 10;
                 return (
                   <div key={g.id} className="row" style={{ '--c': quote.unlocked ? '#3fe0b0' : '#a58cff' } as React.CSSProperties}>
                     <div className="em" style={{ fontSize: 22 }}>{g.icon}</div>
@@ -1066,6 +1168,7 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
                       <div className="bmeta">
                         <span style={{ color: 'var(--mint)' }}>Export ₨ {formatNumber(expCheck.unitPrice || quote.exportPrice)}/{g.unitLabel}</span>
                         <span style={{ color: 'var(--cy)' }}>Import ₨ {formatNumber(quote.importPrice)}/{g.unitLabel}</span>
+                        <span>Stock: {heldQty} {g.unitLabel}</span>
                         {!quote.unlocked && <span style={{ color: 'var(--pink)' }}>Rank {g.minRank}+</span>}
                       </div>
                     </div>
@@ -1205,6 +1308,295 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
         </div>
       )}
 
+      {subTab === 'ecosystem' && econSnap && (() => {
+        const ecoRes = computeResourceEcosystem(state);
+        const wf = computeWorkforceMetrics(state, econSnap.jobsCreated, state.hap || 60);
+        const stability = econSnap.stabilityScore ?? computeNationalStability(state, econSnap.energyRatio, econSnap.inflationRate, econSnap.realGdp);
+        const ndi = computeNationalDevelopmentIndex(state, stability);
+        const bondLimits = getBondLimits(state, econSnap.realGdp, stability);
+        const dipState = getDiplomacyState(state);
+        const dipBonus = getDiplomacyBonuses(state);
+        const envoyCost = Math.max(15_000, Math.round(15_000 * Math.pow(1.35, Math.max(0, (state.rank || 1) - 1))));
+        const borrowTiers = [
+          Math.max(10_000, Math.round(bondLimits.availableHeadroom * 0.1)),
+          Math.max(25_000, Math.round(bondLimits.availableHeadroom * 0.25)),
+        ].filter((amt, idx, arr) => amt > 0 && amt <= bondLimits.availableHeadroom && arr.indexOf(amt) === idx);
+        const stockMap = state.resources?.stock || {};
+
+        return (
+          <div data-testid="ecosystem-finance-view">
+            <div className="tradelim" style={{ marginBottom: 10 }}>
+              <span>
+                <Coins size={14} color="#ffc23d" />
+                National Economic Ecosystem &amp; Sovereign Finance
+              </span>
+              <b>
+                NDI {ndi} · Stability {Math.round(stability)}% · FDI +{dipBonus.fdiBonusPct}%
+              </b>
+            </div>
+
+            {activeDynEv ? (
+              <div className="gxc" data-testid="dynamic-event-banner" style={{ marginBottom: 12, borderColor: activeDynEv.active.resolved ? 'rgba(63,224,176,0.4)' : 'rgba(255,194,61,0.5)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 18 }}>{activeDynEv.def.e}</span>
+                    <b>{activeDynEv.def.title}</b>
+                    <span className="lv" style={{ color: activeDynEv.active.resolved ? 'var(--mint)' : '#ffc23d' }}>
+                      {activeDynEv.active.resolved ? 'Mitigated' : 'Active Crisis / Opportunity'}
+                    </span>
+                  </span>
+                  <span style={{ color: '#5ccbff', fontSize: 12, fontWeight: 700 }}>
+                    {formatDuration(Math.max(0, activeDynEv.active.expiresAt - nowSrv))} left
+                  </span>
+                </div>
+                <p className="dim" style={{ marginBottom: 8 }}>
+                  {activeDynEv.def.desc} (Income ×{activeDynEv.def.incomeMult.toFixed(2)} · Energy ×{activeDynEv.def.energyMult.toFixed(2)} · Trade ×{activeDynEv.def.tradeMult.toFixed(2)})
+                </p>
+                {!activeDynEv.active.resolved && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {activeDynEv.def.choices.map((ch, idx) => {
+                      const estCost = Math.min(Math.floor((state.cash || 0) * 0.5), Math.max(1_000, Math.round((state.cash || 0) * ch.costPctCash)));
+                      const canAfford = (state.cash || 0) >= estCost;
+                      return (
+                        <button
+                          key={ch.label}
+                          type="button"
+                          className={`btn sm ${canAfford ? (idx === 0 ? 'gold' : 'mint') : 'no'}`}
+                          disabled={!canAfford || !onResolveDynamicEvent}
+                          title={ch.summary}
+                          onClick={() => onResolveDynamicEvent?.(idx as 0 | 1)}
+                        >
+                          {ch.label} (₨ {formatNumber(estCost)})
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="gxc" style={{ marginBottom: 12 }}>
+                <p className="dim">
+                  Macro Climate: <b>Stable Equilibrium</b> — Dynamic national macro events occur periodically once your city grows past 5 buildings.
+                </p>
+              </div>
+            )}
+
+            <div className="econ-stats" style={{ marginBottom: 12 }}>
+              <div className="econ-tile">
+                <small>Skilled Labor Balance</small>
+                <b style={{ color: wf.skilledRatio >= 0.98 ? 'var(--mint)' : 'var(--gold)' }}>
+                  ×{wf.skilledRatio.toFixed(2)} Eff
+                </b>
+                <span>{formatNumber(wf.skilledSupply)} supply / {formatNumber(wf.skilledJobs)} skilled jobs</span>
+              </div>
+              <div className="econ-tile">
+                <small>Healthcare &amp; Migration</small>
+                <b style={{ color: 'var(--cy)' }}>×{wf.healthcareProductivity.toFixed(2)} Health</b>
+                <span>Net migration {wf.migrationRate >= 0 ? `+${wf.migrationRate}` : wf.migrationRate}M / cycle</span>
+              </div>
+              <div className="econ-tile">
+                <small>Resource Chains &amp; Storage</small>
+                <b style={{ color: ecoRes.resourceMult >= 1 ? 'var(--mint)' : 'var(--pink)' }}>
+                  {ecoRes.activeChains}/5 Chains · ×{ecoRes.resourceMult.toFixed(2)}
+                </b>
+                <span>
+                  {formatNumber(ecoRes.storageUsed)} / {formatNumber(ecoRes.storageCap)} stored · {ecoRes.shortages.length} shortages
+                </span>
+              </div>
+              <div className="econ-tile">
+                <small>National Development Index</small>
+                <b style={{ color: 'var(--gold)' }}>{ndi} NDI</b>
+                <span>Stability {Math.round(stability)}% · Diplomatic Rep {dipState.rep}</span>
+              </div>
+            </div>
+
+            <div className="gxh">
+              <Coins size={15} color="#ffc23d" />
+              <span>Sovereign Bonds &amp; National Debt</span>
+            </div>
+            <div className="gxc" style={{ marginBottom: 12 }} data-testid="sovereign-bonds-panel">
+              <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                <span>
+                  Active Debt: <b style={{ color: bondLimits.currentDebt > 0 ? '#ff8ea8' : 'var(--mint)' }}>₨ {formatNumber(bondLimits.currentDebt)}</b> / Ceiling ₨ {formatNumber(bondLimits.maxDebt)}
+                </span>
+                <span className="dim">
+                  Coupon <b>{bondLimits.annualInterestPct}% APR</b> · Service −₨ {bondLimits.interestPerSec < 100 ? bondLimits.interestPerSec.toFixed(2) : formatNumber(bondLimits.interestPerSec)}/s · Headroom <b>₨ {formatNumber(bondLimits.availableHeadroom)}</b>
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {borrowTiers.map((amt) => (
+                  <button
+                    key={`borrow-${amt}`}
+                    type="button"
+                    className="btn sm gold"
+                    disabled={!onBorrowBond || bondLimits.availableHeadroom < amt}
+                    onClick={() => onBorrowBond?.(amt)}
+                  >
+                    Issue Bond +₨ {formatNumber(amt)}
+                  </button>
+                ))}
+                {bondLimits.currentDebt > 0 && (
+                  <>
+                    <button
+                      type="button"
+                      className={`btn sm ${state.cash >= Math.max(1, Math.round(bondLimits.currentDebt * 0.25)) ? 'mint' : 'no'}`}
+                      disabled={!onRepayBond || state.cash < Math.max(1, Math.round(bondLimits.currentDebt * 0.25))}
+                      onClick={() => onRepayBond?.(Math.max(1, Math.round(bondLimits.currentDebt * 0.25)))}
+                    >
+                      Repay 25% (₨ {formatNumber(Math.max(1, Math.round(bondLimits.currentDebt * 0.25)))})
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn sm ${state.cash >= bondLimits.currentDebt ? 'mint' : 'no'}`}
+                      disabled={!onRepayBond || state.cash < bondLimits.currentDebt}
+                      onClick={() => onRepayBond?.(bondLimits.currentDebt)}
+                    >
+                      Retire All Debt (₨ {formatNumber(bondLimits.currentDebt)})
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="gxh">
+              <Zap size={15} color="#3fe0b0" />
+              <span>Industrial Production Chains ({ecoRes.activeChains}/5 Active)</span>
+            </div>
+            <div className="list g2" style={{ marginBottom: 12 }}>
+              {PRODUCTION_CHAINS_16.map((ch) => {
+                const pr = ecoRes.production;
+                const isRunning =
+                  ch.id === 'chain_oil_fuel'
+                    ? (pr.oil || 0) > 0.5 && (pr.fuel || 0) > 0.8
+                    : ch.id === 'chain_steel_construction'
+                      ? (pr.iron_ore || 0) > 0.5 && (pr.steel || 0) > 0.5
+                      : ch.id === 'chain_grain_food'
+                        ? (pr.grain || 0) > 1.5 && (pr.food || 0) > 1.5
+                        : ch.id === 'chain_silicon_semicon'
+                          ? (pr.silicon || 0) > 0.3 && (pr.semiconductors || 0) > 0.3
+                          : (pr.chemicals || 0) > 0.5 && ((pr.fertilizers || 0) > 0.4 || (pr.pharmaceuticals || 0) > 0.4);
+                return (
+                  <div key={ch.id} className="row" style={{ '--c': isRunning ? '#3fe0b0' : '#6c688a' } as React.CSSProperties}>
+                    <div className="em">{isRunning ? <CheckCircle2 size={20} color="#3fe0b0" /> : <Clock size={20} color="#9e96c7" />}</div>
+                    <div style={{ minWidth: 0 }}>
+                      <h2>
+                        <span>{ch.name}</span>
+                        <span className="lv" style={{ color: isRunning ? 'var(--mint)' : 'var(--mu)' }}>
+                          {isRunning ? 'Active' : 'Idle'}
+                        </span>
+                      </h2>
+                      <p>{ch.effectLabel}</p>
+                      <div className="bmeta">
+                        <span>{ch.steps.join(' → ')}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="gxh">
+              <BarChart3 size={15} color="#5ccbff" />
+              <span>National Resource Ledger ({RESOURCE_CATALOG_16.length} Resources)</span>
+            </div>
+            <div className="econ-stats" style={{ marginBottom: 12 }}>
+              {RESOURCE_CATALOG_16.map((rm) => {
+                const netVal = ecoRes.net[rm.id] || 0;
+                const stockVal = Math.round((Number(stockMap[rm.id]) || 0) * 10) / 10;
+                const isShort = ecoRes.shortages.includes(rm.id);
+                return (
+                  <div key={rm.id} className="econ-tile">
+                    <small>{rm.icon} {rm.name}</small>
+                    <b style={{ color: isShort ? '#ff7bb0' : netVal >= 0 ? 'var(--mint)' : '#ffc23d' }}>
+                      {netVal >= 0 ? `+${netVal.toFixed(1)}` : netVal.toFixed(1)}/s
+                    </b>
+                    <span>
+                      Stock {stockVal} {rm.unit} {isShort ? '· Shortage' : ''}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="gxh">
+              <Globe size={15} color="#5ccbff" />
+              <span>International Diplomacy &amp; Bilateral Treaties</span>
+            </div>
+            <div className="list g2" style={{ marginBottom: 10 }} data-testid="diplomacy-partners-list">
+              {DIPLOMACY_PARTNERS_16.map((dp) => {
+                const rel = Math.round(dipState.relations[dp.code] ?? dp.baseRelation);
+                const canAfford = (state.cash || 0) >= envoyCost && rel < 100;
+                return (
+                  <div key={dp.code} className="row" style={{ '--c': '#5ccbff' } as React.CSSProperties}>
+                    <div className="em" style={{ fontSize: 22 }}>{dp.flag}</div>
+                    <div style={{ minWidth: 0 }}>
+                      <h2>
+                        <span>{dp.name}</span>
+                        <span className="lv">{rel}/100 Rel</span>
+                      </h2>
+                      <p>Focus: {dp.specialty} (×{dp.tariffBias.toFixed(2)} tariff bias)</p>
+                      <div className="gxm">
+                        <b style={{ width: `${rel}%`, background: rel >= 70 ? '#3fe0b0' : '#5ccbff' }} />
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className={`btn sm ${canAfford ? 'mint' : 'no'}`}
+                      disabled={!canAfford || !onSendEnvoy}
+                      onClick={() => onSendEnvoy?.(dp.code)}
+                    >
+                      {rel >= 100 ? 'Max' : `Envoy · ₨ ${formatNumber(envoyCost)}`}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="list g2" data-testid="diplomacy-treaties-list">
+              {DIPLOMACY_TREATIES_16.map((tr) => {
+                const signed = dipState.treaties.includes(tr.id);
+                const partnerRel = Math.round(dipState.relations[tr.partnerCode] ?? 50);
+                const eligible =
+                  !signed &&
+                  (state.rank || 1) >= tr.minRank &&
+                  partnerRel >= tr.minRelation &&
+                  (state.cash || 0) >= tr.signCost;
+                return (
+                  <div key={tr.id} className="row" style={{ '--c': signed ? '#3fe0b0' : '#a58cff' } as React.CSSProperties}>
+                    <div className="em">
+                      {signed ? <CheckCircle2 size={20} color="#3fe0b0" /> : <Landmark size={20} color="#a58cff" />}
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <h2>
+                        <span>{tr.name}</span>
+                        <span className="lv">{tr.partnerCode}</span>
+                      </h2>
+                      <p>{tr.desc}</p>
+                      <div className="bmeta">
+                        <span style={{ color: 'var(--mint)' }}>+{tr.fdiBonusPct}% FDI · +{tr.tradeBonusPct}% Trade</span>
+                        <span>Rank {tr.minRank}+ · Rel {partnerRel}/{tr.minRelation}</span>
+                      </div>
+                    </div>
+                    {signed ? (
+                      <span className="lv" style={{ borderColor: 'var(--mint)', color: 'var(--mint)' }}>Active</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className={`btn sm ${eligible ? 'gold' : 'no'}`}
+                        disabled={!eligible || !onSignTreaty}
+                        onClick={() => onSignTreaty?.(tr.id)}
+                      >
+                        Sign · ₨ {formatNumber(tr.signCost)}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
       {subTab === 'stats' && econSnap && (
         <div data-testid="economy-stats-view">
           <div className="econ-stats">
@@ -1334,7 +1726,12 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
     prev.onClaimLocalMegaProject !== next.onClaimLocalMegaProject ||
     prev.onStartTradeContract !== next.onStartTradeContract ||
     prev.onClaimTradeMilestone !== next.onClaimTradeMilestone ||
-    prev.onEnactDecision !== next.onEnactDecision
+    prev.onEnactDecision !== next.onEnactDecision ||
+    prev.onBorrowBond !== next.onBorrowBond ||
+    prev.onRepayBond !== next.onRepayBond ||
+    prev.onSendEnvoy !== next.onSendEnvoy ||
+    prev.onSignTreaty !== next.onSignTreaty ||
+    prev.onResolveDynamicEvent !== next.onResolveDynamicEvent
   ) {
     return false;
   }
@@ -1344,6 +1741,7 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
     p.cash !== n.cash ||
     p.b !== n.b ||
     p.tech !== n.tech ||
+    p.techLvls !== n.techLvls ||
     p.pol !== n.pol ||
     p.sub !== n.sub ||
     p.rank !== n.rank ||
@@ -1354,6 +1752,10 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
     p.resQueue !== n.resQueue ||
     p.intlTrade !== n.intlTrade ||
     p.megaProjects !== n.megaProjects ||
+    p.resources !== n.resources ||
+    p.finance !== n.finance ||
+    p.diplomacy !== n.diplomacy ||
+    p.dynEvent !== n.dynEvent ||
     p.gx.lvl !== n.gx.lvl ||
     p.gx.cond !== n.gx.cond ||
     p.gx.blk !== n.gx.blk ||
@@ -1385,6 +1787,12 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
   }
   if (prev.subTab === 'intl_trade') {
     if ((n.intlTrade?.contracts?.length || 0) > 0 || (p.intlTrade?.contracts?.length || 0) > 0 || (n.intlTrade?.importBuffUntil || 0) > nNow) {
+      return Math.floor(pNow / 1000) === Math.floor(nNow / 1000);
+    }
+    return true;
+  }
+  if (prev.subTab === 'ecosystem') {
+    if ((n.dynEvent && (n.dynEvent.expiresAt || 0) > nNow) || (p.dynEvent && (p.dynEvent.expiresAt || 0) > pNow)) {
       return Math.floor(pNow / 1000) === Math.floor(nNow / 1000);
     }
     return true;

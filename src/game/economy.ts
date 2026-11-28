@@ -4,7 +4,7 @@ import {
   BUILDING_POLICIES,
   BUILDING_UPGRADE_TIERS,
   BUILDINGS,
-  CHALLENGES_2_0,
+  CHALLENGES_ALL,
   FISCAL_COMMIT_BASE_COST,
   FISCAL_COMMIT_CD_MS,
   GOVS,
@@ -36,6 +36,16 @@ import {
   getBuildingLevelMultiplier,
 } from './constants';
 import { getDiamondAssetBonuses } from './cosmetics';
+import {
+  computeMegaProjectMaintPerSec,
+  computeNationalStability,
+  computeResourceEcosystem,
+  computeResourceStorageCap,
+  computeWorkforceMetrics,
+  getActiveDynamicEvent,
+  getBondLimits,
+  getDiplomacyBonuses,
+} from './ecosystem16';
 import type {
   ActiveTradeContract,
   BoosterDef,
@@ -165,12 +175,18 @@ export function stickerBonus(s: GameState): number {
   return Math.min(0.28, uniq * 0.004);
 }
 
+export function getTechLevel(s: GameState, techId: string): number {
+  const lvlRaw = Number(s.techLvls?.[techId]);
+  if (Number.isFinite(lvlRaw) && lvlRaw > 0) return Math.floor(lvlRaw);
+  return s.tech && (s.tech[techId] || 0) > 0 ? 1 : 0;
+}
+
 export function hasTech(s: GameState, techId: string): boolean {
-  return Boolean(s.tech && (s.tech[techId] || 0) > 0);
+  return getTechLevel(s, techId) > 0;
 }
 
 export function techCount(s: GameState): number {
-  return TECH_TREE.filter((t) => (s.tech?.[t.id] || 0) > 0).length;
+  return TECH_TREE.filter((t) => getTechLevel(s, t.id) > 0).length;
 }
 
 export function getActiveSubscription(s: GameState, nowMs = Date.now()) {
@@ -190,49 +206,55 @@ export function getActiveSubscription(s: GameState, nowMs = Date.now()) {
 export function getTechMaintReduction(s: GameState): number {
   let pct = 0;
   for (const t of TECH_TREE) {
-    if (t.maintReductionPct && hasTech(s, t.id)) pct += t.maintReductionPct;
+    const lvl = getTechLevel(s, t.id);
+    if (t.maintReductionPct && lvl > 0) pct += t.maintReductionPct * lvl;
   }
-  return Math.min(0.35, pct / 100);
+  return Math.min(0.42, pct / 100);
 }
 
 export function getTechEnergyBonus(s: GameState): number {
   let pct = 0;
   for (const t of TECH_TREE) {
-    if (t.energyBonusPct && hasTech(s, t.id)) pct += t.energyBonusPct;
+    const lvl = getTechLevel(s, t.id);
+    if (t.energyBonusPct && lvl > 0) pct += t.energyBonusPct * lvl;
   }
-  return Math.min(0.55, pct / 100);
+  return Math.min(0.75, pct / 100);
 }
 
 export function getTechHapBonus(s: GameState): number {
   let hap = 0;
   for (const t of TECH_TREE) {
-    if (t.hapBonus && hasTech(s, t.id)) hap += t.hapBonus;
+    const lvl = getTechLevel(s, t.id);
+    if (t.hapBonus && lvl > 0) hap += t.hapBonus * lvl;
   }
-  return Math.min(24, hap);
+  return Math.min(32, hap);
 }
 
 export function getTechTradeBonus(s: GameState): number {
   let pct = 0;
   for (const t of TECH_TREE) {
-    if (t.tradeBonusPct && hasTech(s, t.id)) pct += t.tradeBonusPct;
+    const lvl = getTechLevel(s, t.id);
+    if (t.tradeBonusPct && lvl > 0) pct += t.tradeBonusPct * lvl;
   }
-  return Math.min(0.45, pct / 100);
+  return Math.min(0.6, pct / 100);
 }
 
 export function getTechBuildSpeedBonus(s: GameState): number {
   let pct = 0;
   for (const t of TECH_TREE) {
-    if (t.buildSpeedPct && hasTech(s, t.id)) pct += t.buildSpeedPct;
+    const lvl = getTechLevel(s, t.id);
+    if (t.buildSpeedPct && lvl > 0) pct += t.buildSpeedPct * lvl;
   }
-  return Math.min(0.6, pct / 100);
+  return Math.min(0.75, pct / 100);
 }
 
 export function getTechResearchSpeedBonus(s: GameState): number {
   let pct = 0;
   for (const t of TECH_TREE) {
-    if (t.researchSpeedPct && hasTech(s, t.id)) pct += t.researchSpeedPct;
+    const lvl = getTechLevel(s, t.id);
+    if (t.researchSpeedPct && lvl > 0) pct += t.researchSpeedPct * lvl;
   }
-  return Math.min(0.65, pct / 100);
+  return Math.min(0.85, pct / 100);
 }
 
 export function getDevelopmentDiscount(s: GameState, nowMs = Date.now()): number {
@@ -1339,7 +1361,7 @@ export function unlockedAchievementCount(s: GameState): number {
   return ACHIEVEMENTS.filter((a) => Boolean(s.achievements?.[a.id])).length;
 }
 
-// ---------- Timed National Research Queue (50 Techs across 10 Categories) ----------
+// ---------- Timed National Research Queue (110 Techs across 18 Categories) ----------
 
 export function canStartResearch(
   s: GameState,
@@ -1348,13 +1370,31 @@ export function canStartResearch(
 ): { ok: boolean; reason?: string; cost: number; durSec: number } {
   const def = TECH_TREE.find((t) => t.id === techId);
   if (!def) return { ok: false, reason: 'Unknown research', cost: 0, durSec: 0 };
-  if (hasTech(s, techId)) return { ok: false, reason: 'Already researched', cost: def.cost, durSec: 0 };
+  const curLvl = getTechLevel(s, techId);
+  const maxLvl = Math.max(1, def.maxLevel ?? 1);
+  if (curLvl >= maxLvl) {
+    return {
+      ok: false,
+      reason: maxLvl > 1 ? `Max Level ${maxLvl} mastered` : 'Already researched',
+      cost: def.cost,
+      durSec: 0,
+    };
+  }
   if (s.resQueue && s.resQueue.finishAt > nowMs) {
     return { ok: false, reason: 'Another research project is underway', cost: def.cost, durSec: def.durSec };
   }
   const curRank = Math.max(MIN_RANK, Math.floor(Number(s.rank) || MIN_RANK));
   if (def.reqRank && curRank < def.reqRank) {
     return { ok: false, reason: `Requires Rank ${def.reqRank}`, cost: def.cost, durSec: def.durSec };
+  }
+  if (def.reqLabBuilding && (s.b?.[def.reqLabBuilding] || 0) <= 0) {
+    const labDef = BUILDINGS.find((b) => b.id === def.reqLabBuilding);
+    return {
+      ok: false,
+      reason: `Requires ${labDef?.n || def.reqLabBuilding} facility`,
+      cost: def.cost,
+      durSec: def.durSec,
+    };
   }
   if (def.prereq?.length) {
     const missing = def.prereq.find((pid) => !hasTech(s, pid));
@@ -1367,8 +1407,9 @@ export function canStartResearch(
   if (ownedBldgs < def.reqBuildings) {
     return { ok: false, reason: `Requires ${def.reqBuildings} total buildings (${ownedBldgs}/${def.reqBuildings})`, cost: def.cost, durSec: def.durSec };
   }
-  const cost = Math.max(1, Math.ceil(def.cost * getResearchCostMult(s, nowMs)));
-  const durSec = Math.max(5, Math.ceil((def.durSec || 25) / getResearchSpeedMult(s, nowMs)));
+  const lvlScale = Math.pow(1.65, curLvl);
+  const cost = Math.max(1, Math.ceil(def.cost * lvlScale * getResearchCostMult(s, nowMs)));
+  const durSec = Math.max(5, Math.ceil(((def.durSec || 25) * (1 + curLvl * 0.35)) / getResearchSpeedMult(s, nowMs)));
   if (!Number.isFinite(s.cash) || s.cash < cost) {
     return { ok: false, reason: 'Not enough Coins', cost, durSec };
   }
@@ -1411,22 +1452,27 @@ export function tickResearchQueue(
   if (q.finishAt > nowMs) {
     return { state: s, completedTechId: null, completedName: null };
   }
+  const curLvl = getTechLevel(s, def.id);
+  const maxLvl = Math.max(1, def.maxLevel ?? 1);
+  const nextLvl = Math.min(maxLvl, curLvl + 1);
+  const nextTechLvls = { ...(s.techLvls || {}), [def.id]: nextLvl };
   return {
     completedTechId: def.id,
-    completedName: def.n,
+    completedName: maxLvl > 1 ? `${def.n} (Lv ${nextLvl})` : def.n,
     state: {
       ...s,
       tech: { ...(s.tech || {}), [def.id]: 1 },
+      techLvls: nextTechLvls,
       resQueue: null,
       gx: {
         ...s.gx,
-        log: [`Research Completed: ${def.n}`, ...(s.gx?.log || [])].slice(0, 8),
+        log: [`Research Completed: ${def.n}${maxLvl > 1 ? ` Lv ${nextLvl}` : ''}`, ...(s.gx?.log || [])].slice(0, 8),
       },
     },
   };
 }
 
-// ---------- International Trade Engine (8 Goods, Dynamic Anti-Arbitrage Pricing) ----------
+// ---------- International Trade Engine (18 Goods, Dynamic Anti-Arbitrage Pricing) ----------
 
 export interface TradeGoodQuote {
   good: TradeGoodDef;
@@ -1449,11 +1495,14 @@ export function getIntlTradeCapacity(s: GameState): {
     (b.deep_sea_port || 0) +
     (b.intl_airport_terminal || 0) +
     (b.logistics_center || 0) +
-    (b.trade_center || 0);
-  const resCapMult = getPolicyStance(s, 'p_res') === 1 ? 1.1 : 1;
-  const maxConcurrent = Math.min(4, 1 + Math.floor(portInfra / 4) + (hasTech(s, 'auto_customs') ? 1 : 0));
-  const maxUnitsPerOrder = Math.min(55, Math.round((8 + portInfra * 2 + Math.floor((s.rank || 1) * 1.5)) * resCapMult));
-  const dailyVolumeCap = Math.min(660, Math.round((80 + portInfra * 25 + (s.rank || 1) * 15) * resCapMult));
+    (b.trade_center || 0) +
+    (b.cargo_mega_hub || 0) +
+    (b.inland_dry_port || 0) +
+    (b.smart_cold_warehouse || 0);
+  const resCapMult = getPolicyStance(s, 'p_res') === 1 ? 1.15 : 1;
+  const maxConcurrent = Math.min(5, 1 + Math.floor(portInfra / 4) + (hasTech(s, 'auto_customs') ? 1 : 0));
+  const maxUnitsPerOrder = Math.min(75, Math.round((8 + portInfra * 2 + Math.floor((s.rank || 1) * 1.6)) * resCapMult));
+  const dailyVolumeCap = Math.min(900, Math.round((80 + portInfra * 25 + (s.rank || 1) * 18) * resCapMult));
   const dailyVolumeUsed = Math.max(0, Math.floor(s.intlTrade?.dailyVolumeUsed || 0));
   return { maxConcurrent, maxUnitsPerOrder, dailyVolumeCap, dailyVolumeUsed };
 }
@@ -1470,12 +1519,17 @@ export function getTradeGoodQuote(
   const wave = Math.sin(seed * 0.73); // -1 .. +1
   const demandTrendPct = Math.round(wave * 14); // -14% .. +14%
 
+  const dip = getDiplomacyBonuses(s);
+  const activeDyn = getActiveDynamicEvent(s, nowMs);
+  const dynTradeMult = activeDyn ? activeDyn.def.tradeMult : 1;
+
   const tradeBoost =
     getTechTradeBonus(s) +
+    dip.tradeBonusPct / 100 +
     (getPolicyStance(s, 'p_mar') === 1 ? 0.18 : 0) +
     (getPolicyStance(s, 'p_trd') === 1 ? 0.16 : 0) +
     (getPolicyStance(s, 'p_env') === 2 ? 0.04 : 0);
-  const cappedExportMult = Math.min(1.28, 1 + tradeBoost * 0.4);
+  const cappedExportMult = Math.min(1.32, (1 + tradeBoost * 0.38) * dynTradeMult);
   const exportPrice = Math.max(10, Math.round(good.baseExportPrice * (1 + demandTrendPct / 100) * cappedExportMult));
   const importDisc = getPolicyStance(s, 'p_mar') === 2 ? 0.88 : 1;
   // Strict anti-arbitrage spread: importPrice is ALWAYS >= 1.55 * exportPrice
@@ -1603,6 +1657,9 @@ export function tickIntlTradeContracts(
   let exportRevAdd = 0;
   let importBuffUntil = trade.importBuffUntil || 0;
   let hapAdd = 0;
+  const nextStock: Record<string, number> = { ...(s.resources?.stock || {}) };
+  const cap = computeResourceStorageCap(s);
+  const perCap = Math.max(250, Math.round(cap / 6));
 
   for (const c of trade.contracts) {
     if (!c.completed && c.finishAt <= nowMs) {
@@ -1613,6 +1670,7 @@ export function tickIntlTradeContracts(
       } else {
         importBuffUntil = Math.max(importBuffUntil, nowMs + 180_000);
         hapAdd += 1;
+        nextStock[c.goodId] = Math.min(perCap, (Number(nextStock[c.goodId]) || 0) + c.units * 4);
       }
     } else if (!c.completed) {
       active.push(c);
@@ -1627,6 +1685,10 @@ export function tickIntlTradeContracts(
       ...s,
       cash: Math.min(1e13, (s.cash || 0) + cashAdd),
       hap: Math.min(100, (s.hap || 60) + hapAdd),
+      resources: {
+        stock: nextStock,
+        cap,
+      },
       intlTrade: {
         ...trade,
         contracts: active,
@@ -1989,7 +2051,7 @@ export function claimChallenge(
   s: GameState,
   challengeId: string,
 ): { ok: boolean; state: GameState; coinsAdded: number; gemsAdded: number; reason?: string } {
-  const def = CHALLENGES_2_0.find((c) => c.id === challengeId);
+  const def = CHALLENGES_ALL.find((c) => c.id === challengeId);
   if (!def) return { ok: false, state: s, coinsAdded: 0, gemsAdded: 0, reason: 'Unknown challenge' };
   if (s.challenges?.[challengeId]) {
     return { ok: false, state: s, coinsAdded: 0, gemsAdded: 0, reason: 'Challenge already claimed' };
@@ -2065,12 +2127,13 @@ export function taxInfo(s: GameState) {
 export function getTechIncomeMult(s: GameState): number {
   let bonusPct = 0;
   for (const t of TECH_TREE) {
-    if (t.incomeBonusPct && hasTech(s, t.id)) {
-      bonusPct += t.incomeBonusPct;
+    const lvl = getTechLevel(s, t.id);
+    if (t.incomeBonusPct && lvl > 0) {
+      bonusPct += t.incomeBonusPct * lvl;
     }
   }
-  // Controlled diminishing cap so unlocking all 50 techs never creates runaway infinite inflation
-  return 1 + Math.min(1.15, bonusPct / 100);
+  // Controlled diminishing cap so unlocking all 101 techs scales fairly without runaway inflation
+  return 1 + Math.min(2.2, bonusPct / 100);
 }
 
 export function getResearchCostMult(s: GameState, nowMs = Date.now()): number {
@@ -2376,12 +2439,17 @@ export function computeEconomySnapshot(
     ) *
       (pEmp === 1 ? 1.04 : 1);
 
+  const ecoRes = computeResourceEcosystem(s);
+  const dip = getDiplomacyBonuses(s);
+  const activeDyn = getActiveDynamicEvent(s, nowMs);
+
   let baseTradeExportBonus =
     tradeTier * 0.05 +
     getTechTradeBonus(s) +
+    dip.tradeBonusPct / 100 +
     ((s.intlTrade?.importBuffUntil || 0) > nowMs ? 0.06 : 0) +
     Math.min(
-      0.44,
+      0.48,
       (b.ports || 0) * 0.02 +
         (b.airports || 0) * 0.03 +
         (b.intl_airport_terminal || 0) * 0.035 +
@@ -2389,7 +2457,9 @@ export function computeEconomySnapshot(
         (b.food_plant || 0) * 0.008 +
         (b.logistics_center || 0) * 0.025 +
         (b.trade_center || 0) * 0.035 +
-        (b.convention_center || 0) * 0.03,
+        (b.convention_center || 0) * 0.03 +
+        (b.cargo_mega_hub || 0) * 0.04 +
+        (b.inland_dry_port || 0) * 0.025,
     );
   const assetBonuses = getDiamondAssetBonuses(s);
   if (pInd === 1) baseTradeExportBonus += 0.1;
@@ -2400,17 +2470,21 @@ export function computeEconomySnapshot(
   if (pEnv === 2) baseTradeExportBonus += 0.04;
   if (pMar === 1) baseTradeExportBonus += 0.18;
   baseTradeExportBonus += assetBonuses.tradeBonus;
-  baseTradeExportBonus = Math.max(-0.08, Math.min(0.85, baseTradeExportBonus));
+  baseTradeExportBonus = Math.max(-0.08, Math.min(0.95, baseTradeExportBonus));
   const tradeExportBonus = Math.max(
     -0.08,
-    Math.min(0.85, baseTradeExportBonus + (growthBoostActive ? 0.2 : 0)),
+    Math.min(0.95, baseTradeExportBonus + (growthBoostActive ? 0.2 : 0)),
   );
   const growthTradeLift = (1 + tradeExportBonus) / Math.max(0.5, 1 + baseTradeExportBonus);
   const tradeImportDrag = pTrd === 1 ? 0.03 : 0;
 
   const ti = taxInfo(s);
   const taxInflation = Math.max(0, ti.burden - 24) * 0.08;
-  const agrFoodSupplyOffset = Math.min(2.2, ((b.farms || 0) + (b.greenhouses || 0) + (b.automated_farm_complex || 0)) * 0.05 + (b.national_bank || 0) * 0.35);
+  const agrFoodSupplyOffset = Math.min(
+    2.5,
+    ((b.farms || 0) + (b.greenhouses || 0) + (b.automated_farm_complex || 0) + (b.global_food_ark || 0) * 2) * 0.05 +
+      ((b.national_bank || 0) + (b.global_bullion_depository || 0)) * 0.35,
+  );
   let inflationRate = 2.0 + taxInflation - agrFoodSupplyOffset;
   if (pTax === 2) inflationRate *= 0.85;
   if (pAgr === 1) inflationRate -= 0.8;
@@ -2424,12 +2498,21 @@ export function computeEconomySnapshot(
   inflationRate = Math.max(0.5, Math.min(18, Number(inflationRate.toFixed(2))));
   const inflationDrag = Math.max(0.78, Math.min(1.02, 1 - Math.max(0, inflationRate - 2.8) * 0.014));
 
+  const wf = computeWorkforceMetrics(s, jobsCreated, s.hap || 60);
+
+  const effEnergyFactor = activeDyn
+    ? Math.max(0.62, Math.min(1.1, energyFactor * activeDyn.def.energyMult))
+    : energyFactor;
+
   let prodMult =
-    energyFactor *
+    effEnergyFactor *
     empFactor *
     housingFactor *
     consumerDemandMult *
     inflationDrag *
+    ecoRes.resourceMult *
+    wf.skilledRatio *
+    wf.healthcareProductivity *
     (1 + tradeExportBonus) *
     (1 - tradeImportDrag);
   if (prodBoostActive) prodMult *= 1.3;
@@ -2437,7 +2520,7 @@ export function computeEconomySnapshot(
   else if (pTax === 2) prodMult *= 0.96;
 
   const worldEv = currentWorldEvent(nowMs);
-  const evMult = worldEv ? worldEv.ev.m : 1;
+  const evMult = (worldEv ? worldEv.ev.m : 1) * (activeDyn ? activeDyn.def.incomeMult : 1);
   const gov = getGovDefinition(s);
   const subMult = getActiveSubscription(s, nowMs)?.def.incomeMult ?? 1;
   const gemBoost = !ignoreTemp && (s.boost || 0) > 0 ? 2 : 1;
@@ -2446,10 +2529,17 @@ export function computeEconomySnapshot(
   const rankDef = RANKS[Math.max(MIN_RANK, Math.min(MAX_RANK, Math.floor(s.rank || MIN_RANK)))] || RANKS[MIN_RANK];
   const rankMult = 1 + (rankDef.incomeBonusPct || 0) / 100;
 
-  const greenCount = (b.solar_plants || 0) + (b.wind_farms || 0) + (b.offshore_wind || 0) + (b.adv_solar_station || 0);
-  const greenSynergy = 1 + Math.min(0.4, greenCount * (s.green || 0) * 0.0025);
-  const transitSynergy = 1 + Math.min(0.38, ((b.roads || 0) + (b.railways || 0) + (b.highway_network || 0) + (b.transit_hub || 0) + (b.hs_railway_station || 0) + (b.smart_transit_hub || 0)) * (s.transitSub || 0) * 0.002);
-  const rAndDSynergy = 1 + Math.min(0.45, ((b.research_centers || 0) + (b.universities || 0) + (b.central_lab || 0) + (b.space_center || 0) + (b.ai_research_campus || 0) + (b.quantum_lab || 0) + (b.national_space_center || 0)) * 0.014);
+  const greenCount =
+    (b.solar_plants || 0) +
+    (b.wind_farms || 0) +
+    (b.offshore_wind || 0) +
+    (b.adv_solar_station || 0) +
+    (b.highland_wind_array || 0) +
+    (b.concentrated_solar_tower || 0);
+  const greenSynergy = 1 + Math.min(0.42, greenCount * (s.green || 0) * 0.0025);
+  const transitSynergy = 1 + Math.min(0.4, ((b.roads || 0) + (b.railways || 0) + (b.highway_network || 0) + (b.transit_hub || 0) + (b.hs_railway_station || 0) + (b.smart_transit_hub || 0) + (b.maglev_corridor || 0)) * (s.transitSub || 0) * 0.002);
+  const rAndDSynergy = 1 + Math.min(0.5, ((b.research_centers || 0) + (b.universities || 0) + (b.central_lab || 0) + (b.space_center || 0) + (b.ai_research_campus || 0) + (b.quantum_lab || 0) + (b.national_space_center || 0) + (b.singularity_rnd_citadel || 0)) * 0.014);
+  const fdiMult = 1 + dip.fdiBonusPct / 100;
 
   const macroMult =
     ti.mult *
@@ -2468,6 +2558,7 @@ export function computeEconomySnapshot(
     gov.inc *
     subMult *
     getTechIncomeMult(s) *
+    fdiMult *
     assetBonuses.incomeMult;
 
   const totalMult = macroMult * prodMult;
@@ -2486,15 +2577,21 @@ export function computeEconomySnapshot(
     (((s.wel + s.edu) * 0.65 + (s.rd || 0) * 0.5 + (s.green || 0) * 0.4 + (s.transitSub || 0) * 0.35) / 100) * gov.wel,
   );
   const welfareCost = buildingGross * policySpendShare;
-  const net = buildingGross - maintCost - salaryCost - welfareCost;
+  const megaMaintCost = Math.min(buildingGross * 0.08, computeMegaProjectMaintPerSec(s));
 
-  const baseFlow = Math.max(0, net);
+  const preDebtNet = buildingGross - maintCost - salaryCost - welfareCost - Math.min(buildingGross * 0.05, ecoRes.storageMaintCost) - megaMaintCost;
+  const preDebtFlow = Math.max(0, preDebtNet);
   const humanCapital = (s.pop || 48) * 220 + jobsCreated * 45 + techCount(s) * 140_000;
   const treasuryComponent = Math.min(1e12, Math.max(0, Number(s.cash) || 0) * 0.35);
   const realGdp = Math.max(
     1000,
-    Math.min(1e13, Math.floor(capitalEquity + baseFlow * 180 + humanCapital + treasuryComponent)),
+    Math.min(1e13, Math.floor(capitalEquity + preDebtFlow * 180 + humanCapital + treasuryComponent)),
   );
+
+  const stabilityScore = computeNationalStability(s, energyRatio, inflationRate, realGdp);
+  const bondLimits = getBondLimits(s, realGdp, stabilityScore);
+  const bondInterestCost = Math.min(Math.max(0, preDebtNet * 0.35), bondLimits.interestPerSec);
+  const net = preDebtNet - bondInterestCost;
 
   return {
     gross: buildingGross,
@@ -2506,7 +2603,7 @@ export function computeEconomySnapshot(
     energySupply: Math.round(energySupply),
     energyDemand: Math.round(energyDemand),
     energyRatio: Number(energyRatio.toFixed(2)),
-    energyFactor: Number(energyFactor.toFixed(3)),
+    energyFactor: Number(effEnergyFactor.toFixed(3)),
     jobsCreated: Math.round(jobsCreated),
     laborPool,
     employmentRate: Number(employmentRate.toFixed(3)),
@@ -2525,6 +2622,18 @@ export function computeEconomySnapshot(
     researchSpeedMult: Number(getResearchSpeedMult(s, nowMs).toFixed(2)),
     realGdp,
     sectorIncome,
+    skilledJobs: wf.skilledJobs,
+    skilledSupply: wf.skilledSupply,
+    skilledRatio: wf.skilledRatio,
+    healthcareProductivity: wf.healthcareProductivity,
+    bondInterestCost,
+    megaMaintCost,
+    resourceMult: ecoRes.resourceMult,
+    resourceCap: ecoRes.storageCap,
+    fdiBonusPct: dip.fdiBonusPct,
+    stabilityScore,
+    netBudget: net,
+    resourceNet: ecoRes.net,
   };
 }
 
