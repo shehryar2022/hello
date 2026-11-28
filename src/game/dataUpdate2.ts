@@ -1182,17 +1182,17 @@ export const NEW_POLICIES_2_0: PolicyCategoryDef[] = [
 ];
 
 // ==================== +44 RESEARCH UPGRADES -> 50 TOTAL ACROSS 10 CATEGORIES ====================
-export const TECH_CATEGORY_META: ReadonlyArray<{ id: TechCategory; label: string; icon: string }> = [
-  { id: 'ai', label: 'Artificial Intelligence', icon: '🧠' },
-  { id: 'robotics', label: 'Robotics', icon: '🤖' },
-  { id: 'manufacturing', label: 'Adv. Manufacturing', icon: '⚙️' },
-  { id: 'energy', label: 'Renewable Energy', icon: '⚡' },
-  { id: 'healthcare', label: 'Healthcare', icon: '🩺' },
-  { id: 'education', label: 'Education', icon: '🎓' },
-  { id: 'agriculture', label: 'Agriculture', icon: '🌾' },
-  { id: 'space', label: 'Space Exploration', icon: '🚀' },
-  { id: 'fintech', label: 'FinTech', icon: '💳' },
-  { id: 'cybersecurity', label: 'Cybersecurity', icon: '🛡️' },
+export const TECH_CATEGORY_META: ReadonlyArray<{ id: TechCategory; label: string; icon: string; color: string }> = [
+  { id: 'ai', label: 'Artificial Intelligence', icon: '🧠', color: '#a78bfa' },
+  { id: 'robotics', label: 'Robotics', icon: '🤖', color: '#818cf8' },
+  { id: 'manufacturing', label: 'Adv. Manufacturing', icon: '⚙️', color: '#fb923c' },
+  { id: 'energy', label: 'Renewable Energy', icon: '⚡', color: '#facc15' },
+  { id: 'healthcare', label: 'Healthcare', icon: '🩺', color: '#2dd4bf' },
+  { id: 'education', label: 'Education', icon: '🎓', color: '#60a5fa' },
+  { id: 'agriculture', label: 'Agriculture', icon: '🌾', color: '#4ade80' },
+  { id: 'space', label: 'Space Exploration', icon: '🚀', color: '#c084fc' },
+  { id: 'fintech', label: 'FinTech', icon: '💳', color: '#38bdf8' },
+  { id: 'cybersecurity', label: 'Cybersecurity', icon: '🛡️', color: '#f472b6' },
 ];
 
 export const NEW_TECHS_2_0: TechDef[] = [
@@ -1471,17 +1471,114 @@ export const NEW_STICKERS_2_0: StickerDef[] = [
   { id: 'v2_horizon_seal', n: 'Centennial Horizon Seal', e: '🌟', r: 3, collection: 'Limited Edition', animated: true, diamondPrice: 590, desc: 'Ultra-limited sovereign collector emblem.' },
 ];
 
-// ==================== +20 ACHIEVEMENTS -> 32 TOTAL ====================
+// ==================== +30 ACHIEVEMENTS -> 42 TOTAL ====================
+const BASE_BUILDING_SPEC_MAP: Record<string, { cat: BuildingDef['cat']; jobs: number; energy: number }> = {
+  farms: { cat: 'agriculture', jobs: 12, energy: -2 },
+  greenhouses: { cat: 'agriculture', jobs: 18, energy: -5 },
+  food_plant: { cat: 'agriculture', jobs: 34, energy: -12 },
+  textile_mills: { cat: 'industry', jobs: 42, energy: -8 },
+  factories: { cat: 'industry', jobs: 68, energy: -18 },
+  steel_plants: { cat: 'industry', jobs: 115, energy: -38 },
+  solar_plants: { cat: 'energy', jobs: 16, energy: 36 },
+  wind_farms: { cat: 'energy', jobs: 26, energy: 82 },
+  power_stations: { cat: 'energy', jobs: 58, energy: 210 },
+  roads: { cat: 'infrastructure', jobs: 28, energy: -3 },
+  railways: { cat: 'infrastructure', jobs: 72, energy: -22 },
+  ports: { cat: 'infrastructure', jobs: 120, energy: -30 },
+  airports: { cat: 'infrastructure', jobs: 185, energy: -48 },
+  markets: { cat: 'commercial', jobs: 24, energy: -3 },
+  shopping_centers: { cat: 'commercial', jobs: 82, energy: -18 },
+  business_districts: { cat: 'commercial', jobs: 210, energy: -42 },
+  research_centers: { cat: 'technology', jobs: 64, energy: -24 },
+  tech_parks: { cat: 'technology', jobs: 145, energy: -36 },
+  data_centers: { cat: 'technology', jobs: 95, energy: -78 },
+  training_centers: { cat: 'healthcare_edu', jobs: 38, energy: -8 },
+  hospitals: { cat: 'healthcare_edu', jobs: 96, energy: -22 },
+  universities: { cat: 'healthcare_edu', jobs: 135, energy: -32 },
+  small_housing: { cat: 'residential', jobs: 4, energy: -2 },
+  apartments: { cat: 'residential', jobs: 14, energy: -6 },
+  residential_towers: { cat: 'residential', jobs: 32, energy: -16 },
+  luxury_residences: { cat: 'residential', jobs: 65, energy: -28 },
+  smart_housing: { cat: 'residential', jobs: 95, energy: -24 },
+  corporate_tower: { cat: 'commercial', jobs: 240, energy: -52 },
+  trade_center: { cat: 'commercial', jobs: 360, energy: -70 },
+  financial_center: { cat: 'commercial', jobs: 420, energy: -88 },
+  intl_hotel: { cat: 'commercial', jobs: 115, energy: -26 },
+  small_factory: { cat: 'industry', jobs: 22, energy: -5 },
+  mfg_plant: { cat: 'industry', jobs: 88, energy: -26 },
+  auto_factory: { cat: 'industry', jobs: 220, energy: -54 },
+  electronics_factory: { cat: 'industry', jobs: 210, energy: -68 },
+  heavy_industry: { cat: 'industry', jobs: 340, energy: -120 },
+  water_plant: { cat: 'infrastructure', jobs: 26, energy: -14 },
+  highway_network: { cat: 'infrastructure', jobs: 84, energy: -14 },
+  logistics_center: { cat: 'infrastructure', jobs: 195, energy: -42 },
+  telecom_center: { cat: 'infrastructure', jobs: 140, energy: -58 },
+  schools: { cat: 'healthcare_edu', jobs: 20, energy: -4 },
+  adv_medical: { cat: 'healthcare_edu', jobs: 240, energy: -46 },
+  central_lab: { cat: 'technology', jobs: 175, energy: -82 },
+  police_hq: { cat: 'public_services', jobs: 64, energy: -10 },
+  fire_dept: { cat: 'public_services', jobs: 52, energy: -8 },
+  govt_admin: { cat: 'public_services', jobs: 120, energy: -18 },
+  transit_hub: { cat: 'public_services', jobs: 90, energy: -16 },
+  national_stadium: { cat: 'special', jobs: 180, energy: -48 },
+  national_bank: { cat: 'special', jobs: 260, energy: -62 },
+  convention_center: { cat: 'special', jobs: 340, energy: -76 },
+  space_center: { cat: 'special', jobs: 420, energy: -140 },
+};
+
+const ALL_BUILDING_SPEC_MAP: Record<string, { cat: BuildingDef['cat']; jobs: number; energy: number }> = {
+  ...BASE_BUILDING_SPEC_MAP,
+  ...Object.fromEntries(NEW_BUILDINGS_2_0.map((b) => [b.id, { cat: b.cat, jobs: b.jobs, energy: b.energy }])),
+};
+
+function countDistinctOwnedSectors(s: { b?: Record<string, number> }): number {
+  const sectors = new Set<string>();
+  for (const [id, rawCount] of Object.entries(s.b || {})) {
+    if ((Number(rawCount) || 0) <= 0) continue;
+    const spec = ALL_BUILDING_SPEC_MAP[id];
+    if (spec) sectors.add(spec.cat);
+  }
+  return sectors.size;
+}
+
+function estimateNationalJobs(s: { b?: Record<string, number>; gx?: { lvl?: Record<string, number> } }): number {
+  let jobs = 0;
+  for (const [id, rawCount] of Object.entries(s.b || {})) {
+    const count = Math.max(0, Math.floor(Number(rawCount) || 0));
+    if (count <= 0) continue;
+    const spec = ALL_BUILDING_SPEC_MAP[id];
+    if (!spec) continue;
+    const lvl = Math.max(1, Math.min(50, Math.floor(Number(s.gx?.lvl?.[id]) || 1)));
+    jobs += spec.jobs * count * (1 + (lvl - 1) * 0.04);
+  }
+  return Math.round(jobs);
+}
+
+function estimateGridSurplusMw(s: { b?: Record<string, number>; gx?: { lvl?: Record<string, number> } }): number {
+  let supply = 12;
+  let demand = 0;
+  for (const [id, rawCount] of Object.entries(s.b || {})) {
+    const count = Math.max(0, Math.floor(Number(rawCount) || 0));
+    if (count <= 0) continue;
+    const spec = ALL_BUILDING_SPEC_MAP[id];
+    if (!spec) continue;
+    const lvl = Math.max(1, Math.min(50, Math.floor(Number(s.gx?.lvl?.[id]) || 1)));
+    if (spec.energy > 0) {
+      supply += spec.energy * count * (1 + Math.pow(lvl - 1, 0.72) * 0.12);
+    } else if (spec.energy < 0) {
+      demand += Math.abs(spec.energy) * count * (1 + Math.pow(lvl - 1, 0.65) * 0.06);
+    }
+  }
+  return Math.max(0, Math.floor(supply - demand));
+}
+
 export const NEW_ACHIEVEMENTS_2_0: AchievementDef[] = [
   { id: 'ach_city_500', n: 'Continental Metropolis', tier: 'Diamond', cat: 'city', desc: 'Own 500 buildings across all 10 sectors.', f: (s) => Object.values(s.b || {}).reduce((a, v) => a + (Number(v) || 0), 0), goal: 500, rewardGems: 12, rewardCash: 50_000_000 },
   { id: 'ach_city_800', n: 'Global Megacity', tier: 'Diamond', cat: 'city', desc: 'Command 800 national structures.', f: (s) => Object.values(s.b || {}).reduce((a, v) => a + (Number(v) || 0), 0), goal: 800, rewardGems: 16, rewardCash: 150_000_000 },
   { id: 'ach_upg_10', n: 'Modernization Drive', tier: 'Bronze', cat: 'city', desc: 'Reach Building Level 10 on any structure.', f: (s) => Math.max(1, ...Object.values(s.gx?.lvl || {}).map((v) => Number(v) || 1)), goal: 10, rewardGems: 3, rewardCash: 120_000 },
   { id: 'ach_upg_25', n: 'Advanced Engineering', tier: 'Silver', cat: 'city', desc: 'Upgrade any building to Level 25.', f: (s) => Math.max(1, ...Object.values(s.gx?.lvl || {}).map((v) => Number(v) || 1)), goal: 25, rewardGems: 6, rewardCash: 2_500_000 },
   { id: 'ach_upg_50', n: 'Apex Level 50', tier: 'Diamond', cat: 'city', desc: 'Master a building to maximum Level 50.', f: (s) => Math.max(1, ...Object.values(s.gx?.lvl || {}).map((v) => Number(v) || 1)), goal: 50, rewardGems: 18, rewardCash: 100_000_000 },
-  { id: 'ach_sectors_10', n: 'Balanced Republic', tier: 'Silver', cat: 'city', desc: 'Construct at least 1 building in all 10 economic sectors.', f: (s) => {
-    const owned = Object.entries(s.b || {}).filter(([, c]) => Number(c) > 0).map(([id]) => id);
-    return owned.length >= 10 ? 10 : owned.length;
-  }, goal: 10, rewardGems: 4, rewardCash: 400_000 },
+  { id: 'ach_sectors_10', n: 'Balanced Republic', tier: 'Silver', cat: 'city', desc: 'Construct at least 1 building in all 10 economic sectors.', f: (s) => countDistinctOwnedSectors(s), goal: 10, rewardGems: 4, rewardCash: 400_000 },
   { id: 'ach_cash_1b', n: 'Billion-Coin Treasury', tier: 'Gold', cat: 'economy', desc: 'Hold ₨ 1,000,000,000 in treasury Coins.', f: (s) => Math.floor(s.cash || 0), goal: 1_000_000_000, rewardGems: 8, rewardCash: 40_000_000 },
   { id: 'ach_cash_50b', n: 'Sovereign Wealth Titan', tier: 'Diamond', cat: 'economy', desc: 'Hold ₨ 50,000,000,000 in liquid Coins.', f: (s) => Math.floor(s.cash || 0), goal: 50_000_000_000, rewardGems: 15, rewardCash: 500_000_000 },
   { id: 'ach_rank_20', n: 'Orbital Industrialist', tier: 'Gold', cat: 'economy', desc: 'Reach National Rank 20.', f: (s) => Math.floor(s.rank || 1), goal: 20, rewardGems: 14, rewardCash: 150_000_000 },
@@ -1496,6 +1593,16 @@ export const NEW_ACHIEVEMENTS_2_0: AchievementDef[] = [
   { id: 'ach_stk_50', n: 'Curator of the Realm', tier: 'Diamond', cat: 'diplomacy', desc: 'Collect 50 unique national stickers.', f: (s) => Object.keys(s.stk || {}).filter((k) => (s.stk?.[k] || 0) > 0).length, goal: 50, rewardGems: 10, rewardCash: 10_000_000 },
   { id: 'ach_pop_200', n: 'Demographic Boom', tier: 'Gold', cat: 'civic', desc: 'Grow national population to 200M citizens.', f: (s) => Math.floor(s.pop || 0), goal: 200, rewardGems: 6, rewardCash: 4_000_000 },
   { id: 'ach_hap_95', n: 'Utopian Standard', tier: 'Diamond', cat: 'civic', desc: 'Sustain 95% citizen Happiness.', f: (s) => Math.floor(s.hap || 0), goal: 95, rewardGems: 8, rewardCash: 5_000_000 },
+  { id: 'ach_mega_1', n: 'Monumental Groundbreaking', tier: 'Bronze', cat: 'city', desc: 'Complete and claim 1 National Mega Project.', f: (s) => (s.megaProjects || []).filter((p) => p.claimed).length, goal: 1, rewardGems: 3, rewardCash: 250_000 },
+  { id: 'ach_mega_5', n: 'Wonder Architect', tier: 'Gold', cat: 'city', desc: 'Complete and claim 5 National Mega Projects.', f: (s) => (s.megaProjects || []).filter((p) => p.claimed).length, goal: 5, rewardGems: 8, rewardCash: 15_000_000 },
+  { id: 'ach_fuse_5', n: 'Collector Alchemist', tier: 'Bronze', cat: 'diplomacy', desc: 'Fuse 5 sticker sets in the Collector Workshop.', f: (s) => Math.floor(s.fused || 0), goal: 5, rewardGems: 3, rewardCash: 400_000 },
+  { id: 'ach_stk_70', n: 'Complete Atlas Sovereign', tier: 'Diamond', cat: 'diplomacy', desc: 'Collect all 70 unique stickers across 10 collections.', f: (s) => Object.keys(s.stk || {}).filter((k) => (s.stk?.[k] || 0) > 0).length, goal: 70, rewardGems: 16, rewardCash: 30_000_000 },
+  { id: 'ach_cos_5', n: 'Sovereign Curator', tier: 'Silver', cat: 'economy', desc: 'Unlock 5 exclusive Diamond Marketplace items.', f: (s) => (Array.isArray(s.cos) ? s.cos.length : 0), goal: 5, rewardGems: 4, rewardCash: 500_000 },
+  { id: 'ach_upg_sum_150', n: 'Steel & Silicon Retrofit', tier: 'Gold', cat: 'city', desc: 'Accumulate 150 total upgrade levels across your buildings.', f: (s) => Object.values(s.gx?.lvl || {}).reduce((a, v) => a + Math.max(0, (Number(v) || 1) - 1), 0), goal: 150, rewardGems: 7, rewardCash: 8_000_000 },
+  { id: 'ach_jobs_5000', n: 'Full Employment Charter', tier: 'Silver', cat: 'civic', desc: 'Create 5,000 active jobs across national industries.', f: (s) => estimateNationalJobs(s), goal: 5000, rewardGems: 5, rewardCash: 2_000_000 },
+  { id: 'ach_energy_surplus_500', n: 'Grid Power Exporter', tier: 'Silver', cat: 'economy', desc: 'Maintain +500 MW net national electricity surplus.', f: (s) => estimateGridSurplusMw(s), goal: 500, rewardGems: 5, rewardCash: 1_800_000 },
+  { id: 'ach_streak_30', n: 'Monthly Governance Pillar', tier: 'Gold', cat: 'diplomacy', desc: 'Maintain a 30-day daily governance streak.', f: (s) => Math.floor(s.streak || 0), goal: 30, rewardGems: 10, rewardCash: 10_000_000 },
+  { id: 'ach_trade_50', n: 'Intercontinental Clearinghouse', tier: 'Diamond', cat: 'diplomacy', desc: 'Complete 50 International Trade contracts.', f: (s) => Math.floor(s.intlTrade?.completedCount || 0), goal: 50, rewardGems: 12, rewardCash: 25_000_000 },
 ];
 
 // ==================== 10 LONG-TERM CHALLENGES ====================

@@ -22,6 +22,7 @@ import {
   SlidersHorizontal,
   Smartphone,
   Sparkles,
+  StickerArt,
   SubIcon,
   Volume2,
 } from '../GameIcons';
@@ -31,6 +32,7 @@ interface ProfileModalProps {
   isMe: boolean;
   uid: string | null;
   ownCosmetics?: EquippedCosmetics;
+  ownEqStk?: string;
   animationsEnabled?: boolean;
   onClose: () => void;
   onGift: (profile: PlayerProfile) => void;
@@ -59,6 +61,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = memo(({
   isMe,
   uid,
   ownCosmetics,
+  ownEqStk,
   animationsEnabled = true,
   onClose,
   onGift,
@@ -74,6 +77,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = memo(({
   const nameFxId = (isMe ? ownCosmetics?.nameEffect : undefined) || profile.cosNameFx;
   const badgeId = (isMe ? ownCosmetics?.badge : undefined) || profile.cosBadge;
   const animId = (isMe ? ownCosmetics?.anim : undefined) || profile.cosAnim;
+  const eqStkId = (isMe ? ownEqStk : undefined) || profile.eqStk;
 
   return (
     <div className="modal" role="dialog" aria-modal="true" aria-label="Player Profile" onClick={onClose}>
@@ -99,9 +103,14 @@ export const ProfileModal: React.FC<ProfileModalProps> = memo(({
           <h2 style={{ flexWrap: 'wrap', gap: 6 }}>
             <CosmeticName name={profile.username} nameEffectId={nameFxId} />
           </h2>
-          {badgeId && (
-            <div style={{ marginTop: 4, display: 'flex', justifyContent: 'center' }}>
-              <CosmeticBadgeChip badgeId={badgeId} />
+          {(badgeId || eqStkId) && (
+            <div style={{ marginTop: 4, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              {badgeId && <CosmeticBadgeChip badgeId={badgeId} />}
+              {eqStkId && (
+                <span className="lb-stk-badge" title="Equipped Sticker">
+                  <StickerArt id={eqStkId} size={18} />
+                </span>
+              )}
             </div>
           )}
           <p style={{ margin: '4px 0 8px' }}>

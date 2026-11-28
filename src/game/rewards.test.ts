@@ -86,10 +86,13 @@ test('Weekly Strategic Missions & Achievements still count toward unclaimed summ
 
   const summary = getUnclaimedRewardsSummary(s, now, 1);
   assert.equal(summary.dailyReady, 1);
-  assert.equal(summary.questReady, 0);
-  assert.deepEqual(summary.readyQuestIds, []);
+  assert.ok(summary.questReady > 0);
+  assert.equal(summary.readyQuestIds.length, summary.questReady);
   assert.ok(summary.achReady > 0);
-  assert.equal(summary.total, summary.dailyReady + summary.weeklyReady + summary.achReady);
+  assert.equal(
+    summary.total,
+    summary.dailyReady + summary.weeklyReady + summary.questReady + summary.achReady + summary.challengeReady,
+  );
 
   const weeklyIndices = selectWeeklyMissionIds(wk);
   const readyWeekly = weeklyIndices

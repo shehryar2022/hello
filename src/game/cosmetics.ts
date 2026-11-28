@@ -3,6 +3,7 @@ import type {
   CosmeticBundleDef,
   CosmeticCategory,
   CosmeticItemDef,
+  CosmeticPurchaseHistoryEntry,
   CosmeticRarity,
   DiamondAssetDef,
   EquippedCosmetics,
@@ -16,7 +17,7 @@ export const PROFILE_FRAMES: CosmeticItemDef[] = [
     name: 'Neon Glow Frame',
     category: 'profile_effect',
     rarity: 'Rare',
-    diamondsCost: 12,
+    diamondsCost: 50,
     previewTag: 'Cyber Static Rim',
     icon: '💠',
     desc: 'Crisp electric cyan-violet neon border with static luminous trim.',
@@ -28,7 +29,7 @@ export const PROFILE_FRAMES: CosmeticItemDef[] = [
     name: 'Prismatic Spectrum Frame',
     category: 'profile_effect',
     rarity: 'Epic',
-    diamondsCost: 18,
+    diamondsCost: 56,
     previewTag: 'Spectrum Border',
     icon: '🌈',
     desc: 'Clean full-spectrum chromatic border with zero distraction.',
@@ -40,7 +41,7 @@ export const PROFILE_FRAMES: CosmeticItemDef[] = [
     name: 'Galaxy Orbit Frame',
     category: 'profile_effect',
     rarity: 'Epic',
-    diamondsCost: 22,
+    diamondsCost: 64,
     previewTag: 'Deep Nebula',
     icon: '🌌',
     desc: 'Rich indigo-magenta celestial border around your emblem.',
@@ -52,7 +53,7 @@ export const PROFILE_FRAMES: CosmeticItemDef[] = [
     name: 'Aurora Borealis Frame',
     category: 'profile_effect',
     rarity: 'Epic',
-    diamondsCost: 24,
+    diamondsCost: 72,
     previewTag: 'Polar Trim',
     icon: '✨',
     desc: 'Crisp emerald, teal, and violet polar gradient border.',
@@ -64,7 +65,7 @@ export const PROFILE_FRAMES: CosmeticItemDef[] = [
     name: 'Electric Cobalt Frame',
     category: 'profile_effect',
     rarity: 'Legendary',
-    diamondsCost: 34,
+    diamondsCost: 82,
     reqRank: 3,
     previewTag: 'Storm Gold',
     icon: '⚡',
@@ -77,7 +78,7 @@ export const PROFILE_FRAMES: CosmeticItemDef[] = [
     name: 'Royal Gold Frame',
     category: 'profile_effect',
     rarity: 'Legendary',
-    diamondsCost: 38,
+    diamondsCost: 92,
     coinsCost: 250_000,
     reqRank: 4,
     previewTag: 'Imperial Crest',
@@ -91,7 +92,7 @@ export const PROFILE_FRAMES: CosmeticItemDef[] = [
     name: 'Holographic Prism Frame',
     category: 'profile_effect',
     rarity: 'Legendary',
-    diamondsCost: 42,
+    diamondsCost: 108,
     previewTag: 'Iridescent',
     icon: '🪩',
     desc: 'Refractive pastel holographic foil border.',
@@ -103,7 +104,7 @@ export const PROFILE_FRAMES: CosmeticItemDef[] = [
     name: 'Diamond Crystal Frame',
     category: 'profile_effect',
     rarity: 'Legendary',
-    diamondsCost: 46,
+    diamondsCost: 125,
     coinsCost: 400_000,
     reqRank: 4,
     previewTag: 'Faceted Gleam',
@@ -117,7 +118,7 @@ export const PROFILE_FRAMES: CosmeticItemDef[] = [
     name: 'Legendary Sovereign Frame',
     category: 'profile_effect',
     rarity: 'Legendary',
-    diamondsCost: 62,
+    diamondsCost: 175,
     coinsCost: 1_000_000,
     reqRank: 5,
     previewTag: 'Apex Crown',
@@ -131,7 +132,7 @@ export const PROFILE_FRAMES: CosmeticItemDef[] = [
     name: 'Solstice Celebration Frame',
     category: 'profile_effect',
     rarity: 'Exclusive',
-    diamondsCost: 54,
+    diamondsCost: 145,
     previewTag: 'Seasonal Drop',
     icon: '🎆',
     desc: 'Limited seasonal celebration border in rose-gold and amber.',
@@ -147,7 +148,7 @@ export const NAME_EFFECTS: CosmeticItemDef[] = [
     name: 'Animated Gradient Name',
     category: 'name_effect',
     rarity: 'Rare',
-    diamondsCost: 12,
+    diamondsCost: 50,
     previewTag: 'Silky Flow',
     icon: '🌊',
     desc: 'Smooth ocean-to-amethyst flowing gradient nameplate.',
@@ -159,7 +160,7 @@ export const NAME_EFFECTS: CosmeticItemDef[] = [
     name: 'Rainbow Spectrum Name',
     category: 'name_effect',
     rarity: 'Epic',
-    diamondsCost: 16,
+    diamondsCost: 52,
     previewTag: 'Prism Type',
     icon: '🌈',
     desc: 'Vibrant gliding rainbow spectrum lettering across chat & ranks.',
@@ -171,7 +172,7 @@ export const NAME_EFFECTS: CosmeticItemDef[] = [
     name: 'Neon Glow Name',
     category: 'name_effect',
     rarity: 'Epic',
-    diamondsCost: 18,
+    diamondsCost: 54,
     previewTag: 'Cyber Lit',
     icon: '💠',
     desc: 'Crisp luminous cyan nameplate with soft neon text bloom.',
@@ -183,7 +184,7 @@ export const NAME_EFFECTS: CosmeticItemDef[] = [
     name: 'Electric Surge Name',
     category: 'name_effect',
     rarity: 'Epic',
-    diamondsCost: 24,
+    diamondsCost: 56,
     previewTag: 'High Voltage',
     icon: '⚡',
     desc: 'Cobalt and lightning-gold shimmer across your leader name.',
@@ -195,7 +196,7 @@ export const NAME_EFFECTS: CosmeticItemDef[] = [
     name: 'Royal Gold Name',
     category: 'name_effect',
     rarity: 'Legendary',
-    diamondsCost: 30,
+    diamondsCost: 58,
     coinsCost: 200_000,
     reqRank: 3,
     previewTag: 'Sovereign Ink',
@@ -209,7 +210,7 @@ export const NAME_EFFECTS: CosmeticItemDef[] = [
     name: 'Holographic Shimmer Name',
     category: 'name_effect',
     rarity: 'Legendary',
-    diamondsCost: 36,
+    diamondsCost: 60,
     previewTag: 'Holo Sheen',
     icon: '🪩',
     desc: 'Pearl-iridescent pastel shine visible across every leaderboard.',
@@ -221,7 +222,7 @@ export const NAME_EFFECTS: CosmeticItemDef[] = [
     name: 'Diamond Shine Name',
     category: 'name_effect',
     rarity: 'Legendary',
-    diamondsCost: 42,
+    diamondsCost: 62,
     coinsCost: 350_000,
     reqRank: 4,
     previewTag: 'Crystal Spark',
@@ -235,7 +236,7 @@ export const NAME_EFFECTS: CosmeticItemDef[] = [
     name: 'Legendary Aura Name',
     category: 'name_effect',
     rarity: 'Exclusive',
-    diamondsCost: 56,
+    diamondsCost: 64,
     coinsCost: 900_000,
     reqRank: 5,
     previewTag: 'Grand Master',
@@ -651,7 +652,7 @@ export const THEME_ITEMS: CosmeticItemDef[] = [
     name: 'Ocean Blue',
     category: 'theme',
     rarity: 'Rare',
-    diamondsCost: 14,
+    diamondsCost: 52,
     themeId: 'ocean_blue',
     previewTag: 'Deep Marine',
     icon: '🌊',
@@ -664,7 +665,7 @@ export const THEME_ITEMS: CosmeticItemDef[] = [
     name: 'Cyber Neon',
     category: 'theme',
     rarity: 'Rare',
-    diamondsCost: 16,
+    diamondsCost: 58,
     themeId: 'cyber_neon',
     previewTag: 'Synth Grid',
     icon: '⚡',
@@ -677,7 +678,7 @@ export const THEME_ITEMS: CosmeticItemDef[] = [
     name: 'Dark Luxury',
     category: 'theme',
     rarity: 'Epic',
-    diamondsCost: 22,
+    diamondsCost: 68,
     themeId: 'dark_luxury',
     previewTag: 'Obsidian Silk',
     icon: '🖤',
@@ -690,7 +691,7 @@ export const THEME_ITEMS: CosmeticItemDef[] = [
     name: 'Aurora Nights',
     category: 'theme',
     rarity: 'Epic',
-    diamondsCost: 24,
+    diamondsCost: 76,
     themeId: 'aurora_nights',
     previewTag: 'Nordic Sky',
     icon: '🌠',
@@ -703,7 +704,7 @@ export const THEME_ITEMS: CosmeticItemDef[] = [
     name: 'Emerald Kingdom',
     category: 'theme',
     rarity: 'Epic',
-    diamondsCost: 25,
+    diamondsCost: 86,
     themeId: 'emerald_kingdom',
     previewTag: 'Jade Reserve',
     icon: '💚',
@@ -716,7 +717,7 @@ export const THEME_ITEMS: CosmeticItemDef[] = [
     name: 'Crimson Empire',
     category: 'theme',
     rarity: 'Epic',
-    diamondsCost: 26,
+    diamondsCost: 95,
     themeId: 'crimson_empire',
     previewTag: 'Imperial Ruby',
     icon: '❤️',
@@ -729,7 +730,7 @@ export const THEME_ITEMS: CosmeticItemDef[] = [
     name: 'Sunset Paradise',
     category: 'theme',
     rarity: 'Exclusive',
-    diamondsCost: 28,
+    diamondsCost: 105,
     themeId: 'sunset_paradise',
     previewTag: 'Golden Dusk',
     icon: '🌅',
@@ -743,7 +744,7 @@ export const THEME_ITEMS: CosmeticItemDef[] = [
     name: 'Royal Gold',
     category: 'theme',
     rarity: 'Legendary',
-    diamondsCost: 34,
+    diamondsCost: 118,
     coinsCost: 300_000,
     themeId: 'royal_gold',
     previewTag: 'Sovereign Vault',
@@ -757,7 +758,7 @@ export const THEME_ITEMS: CosmeticItemDef[] = [
     name: 'Diamond Crystal',
     category: 'theme',
     rarity: 'Legendary',
-    diamondsCost: 38,
+    diamondsCost: 135,
     coinsCost: 450_000,
     themeId: 'diamond_crystal',
     previewTag: 'Crystalline Ice',
@@ -1051,7 +1052,7 @@ export const EXCLUSIVE_BADGES: CosmeticItemDef[] = [
     name: 'Diamond Member',
     category: 'badge',
     rarity: 'Rare',
-    diamondsCost: 15,
+    diamondsCost: 50,
     previewTag: 'Diamond Crest',
     icon: '💎',
     desc: 'Displays the official Diamond Member insignia beside your name.',
@@ -1063,7 +1064,7 @@ export const EXCLUSIVE_BADGES: CosmeticItemDef[] = [
     name: 'Royal Member',
     category: 'badge',
     rarity: 'Epic',
-    diamondsCost: 24,
+    diamondsCost: 52,
     previewTag: 'Crown Seal',
     icon: '👑',
     desc: 'Marks your nation with the Royal Sovereign crest across rankings & chat.',
@@ -1075,7 +1076,7 @@ export const EXCLUSIVE_BADGES: CosmeticItemDef[] = [
     name: 'Legendary Builder',
     category: 'badge',
     rarity: 'Epic',
-    diamondsCost: 26,
+    diamondsCost: 55,
     reqRank: 3,
     previewTag: 'Master Architect',
     icon: '🏗️',
@@ -1088,7 +1089,7 @@ export const EXCLUSIVE_BADGES: CosmeticItemDef[] = [
     name: 'Elite Governor',
     category: 'badge',
     rarity: 'Legendary',
-    diamondsCost: 34,
+    diamondsCost: 58,
     reqRank: 4,
     previewTag: 'High Council',
     icon: '🏛️',
@@ -1101,7 +1102,7 @@ export const EXCLUSIVE_BADGES: CosmeticItemDef[] = [
     name: 'Galaxy Explorer',
     category: 'badge',
     rarity: 'Legendary',
-    diamondsCost: 38,
+    diamondsCost: 62,
     previewTag: 'Astral Voyager',
     icon: '🌌',
     desc: 'Star-charted emblem shining on Global Chat & profile showcases.',
@@ -1113,7 +1114,7 @@ export const EXCLUSIVE_BADGES: CosmeticItemDef[] = [
     name: 'Premium Founder',
     category: 'badge',
     rarity: 'Exclusive',
-    diamondsCost: 58,
+    diamondsCost: 66,
     coinsCost: 800_000,
     reqRank: 6,
     previewTag: 'Founder Vault',
@@ -1369,7 +1370,7 @@ export const DIAMOND_ASSETS: DiamondAssetDef[] = [
     name: 'Aurora Cultural Obelisk',
     category: 'diamond_asset',
     rarity: 'Epic',
-    diamondsCost: 26,
+    diamondsCost: 55,
     coinsCost: 120_000,
     previewTag: '3D Landmark · +1.5% Inc',
     icon: '🗼',
@@ -1385,7 +1386,7 @@ export const DIAMOND_ASSETS: DiamondAssetDef[] = [
     name: 'Sovereign Prestige Arch',
     category: 'diamond_asset',
     rarity: 'Exclusive',
-    diamondsCost: 32,
+    diamondsCost: 72,
     coinsCost: 220_000,
     previewTag: '3D Monument · +4% Trade',
     icon: '⛩️',
@@ -1402,7 +1403,7 @@ export const DIAMOND_ASSETS: DiamondAssetDef[] = [
     name: 'Diamond Sovereign Spire',
     category: 'diamond_asset',
     rarity: 'Legendary',
-    diamondsCost: 45,
+    diamondsCost: 88,
     coinsCost: 500_000,
     reqRank: 3,
     previewTag: '3D Wonder · +2% Inc',
@@ -1419,7 +1420,7 @@ export const DIAMOND_ASSETS: DiamondAssetDef[] = [
     name: 'Crystal Exchange Pavilion',
     category: 'diamond_asset',
     rarity: 'Legendary',
-    diamondsCost: 56,
+    diamondsCost: 105,
     coinsCost: 1_200_000,
     reqRank: 5,
     previewTag: '3D Citadel · +2.5% Inc',
@@ -1545,7 +1546,7 @@ export const COSMETIC_BUNDLES: CosmeticBundleDef[] = [
     id: 'bundle_cyber_horizon',
     name: 'Cyber Neon Suite',
     rarity: 'Epic',
-    diamondsCost: 155,
+    diamondsCost: 235,
     itemIds: ['frame_neon', 'nfx_neon', 'theme_cyber_neon', 'anim_borders'],
     badgeText: 'Save 30%',
     desc: 'Neon Glow Frame, Neon Name Effect, Cyber Neon Theme & Glowing Borders.',
@@ -1556,7 +1557,7 @@ export const COSMETIC_BUNDLES: CosmeticBundleDef[] = [
     id: 'bundle_galaxy_sovereign',
     name: 'Midnight Cosmos Collection',
     rarity: 'Legendary',
-    diamondsCost: 68,
+    diamondsCost: 179,
     itemIds: ['frame_galaxy', 'nfx_animated_grad', 'badge_galaxy_explorer', 'theme_aurora_nights'],
     badgeText: 'Best Value',
     desc: 'Galaxy Frame, Animated Gradient Name, Galaxy Explorer Badge & Aurora Nights Theme.',
@@ -1567,7 +1568,7 @@ export const COSMETIC_BUNDLES: CosmeticBundleDef[] = [
     id: 'bundle_royal_imperial',
     name: 'Imperial Gold Collection',
     rarity: 'Legendary',
-    diamondsCost: 92,
+    diamondsCost: 225,
     coinsCost: 400_000,
     itemIds: ['frame_royal_gold', 'nfx_royal_gold', 'badge_royal_member', 'theme_royal_gold'],
     badgeText: 'Royal Vault',
@@ -1579,7 +1580,7 @@ export const COSMETIC_BUNDLES: CosmeticBundleDef[] = [
     id: 'bundle_diamond_prestige',
     name: 'Diamond Prestige Vault',
     rarity: 'Exclusive',
-    diamondsCost: 265,
+    diamondsCost: 425,
     coinsCost: 750_000,
     itemIds: [
       'frame_diamond_crystal',
@@ -1777,6 +1778,7 @@ export function applyBuyCosmeticItem(
   s: GameState,
   itemId: string,
   autoEquip = true,
+  nowMs = Date.now(),
 ): { ok: boolean; state: GameState; item?: CosmeticItemDef; reason?: string } {
   const check = canBuyCosmeticItem(s, itemId);
   const def = COSMETIC_BY_ID.get(itemId);
@@ -1796,6 +1798,18 @@ export function applyBuyCosmeticItem(
     if (def.category === 'theme' && def.themeId) nextTheme = def.themeId;
   }
 
+  const ts = Math.max(0, Math.floor(Number.isFinite(nowMs) ? nowMs : Date.now()));
+  const entry: CosmeticPurchaseHistoryEntry = {
+    id: `ch_${ts}_${def.id.slice(0, 12)}`,
+    itemId: def.id,
+    name: def.name,
+    kind: 'item',
+    diamondsPaid: check.diamondsCost,
+    coinsPaid: check.coinsCost,
+    atMs: ts,
+  };
+  const nextHist = [entry, ...(Array.isArray(s.cosHist) ? s.cosHist : [])].slice(0, 25);
+
   return {
     ok: true,
     item: def,
@@ -1805,6 +1819,7 @@ export function applyBuyCosmeticItem(
       cash: Math.max(0, safeCash - check.coinsCost),
       cos: nextOwned,
       cosEq: nextEq,
+      cosHist: nextHist,
       theme: nextTheme,
     },
   };
@@ -2017,6 +2032,7 @@ export function applyBuyCosmeticBundle(
   s: GameState,
   bundleId: string,
   autoEquip = true,
+  nowMs = Date.now(),
 ): { ok: boolean; state: GameState; unlockedIds: string[]; bundle?: CosmeticBundleDef; reason?: string } {
   const check = canBuyCosmeticBundle(s, bundleId);
   const quote = getBundlePurchaseQuote(s, bundleId);
@@ -2040,6 +2056,18 @@ export function applyBuyCosmeticBundle(
       if (def.category === 'theme' && def.themeId) nextTheme = def.themeId;
     }
   }
+  const ts = Math.max(0, Math.floor(Number.isFinite(nowMs) ? nowMs : Date.now()));
+  const entry: CosmeticPurchaseHistoryEntry = {
+    id: `ch_${ts}_${quote.bundle.id.slice(0, 12)}`,
+    itemId: quote.bundle.id,
+    name: quote.bundle.name,
+    kind: 'bundle',
+    diamondsPaid: check.diamondsCost,
+    coinsPaid: check.coinsCost,
+    atMs: ts,
+  };
+  const nextHist = [entry, ...(Array.isArray(s.cosHist) ? s.cosHist : [])].slice(0, 25);
+
   return {
     ok: true,
     unlockedIds: quote.unownedItemIds,
@@ -2050,6 +2078,7 @@ export function applyBuyCosmeticBundle(
       cash: Math.max(0, safeCash - check.coinsCost),
       cos: Array.from(nextOwned),
       cosEq: nextEq,
+      cosHist: nextHist,
       theme: nextTheme,
     },
   };
@@ -2136,7 +2165,7 @@ export function sanitizeCosmeticIdField(id: unknown): string {
 
 export type DxCategoryFilter = 'all' | 'bundle' | CosmeticCategory;
 export type DxRarityFilter = 'all' | CosmeticRarity;
-export type DxPriceFilter = 'all' | 'diamonds_only' | 'dual_currency' | 'under_50' | 'under_200';
+export type DxPriceFilter = 'all' | 'diamonds_only' | 'dual_currency' | 'under_100' | 'under_200';
 export type DxOwnershipFilter = 'all' | 'available' | 'owned' | 'unowned' | 'rank_locked';
 export type DxSortBy = 'recommended' | 'price_asc' | 'price_desc' | 'rarity' | 'newest';
 
@@ -2369,7 +2398,7 @@ export function filterAndSortCosmetics(
     if (priceFilter === 'dual_currency' && !(item.coinsCost && item.coinsCost > 0)) {
       return false;
     }
-    if (priceFilter === 'under_50' && item.diamondsCost >= 50) {
+    if (priceFilter === 'under_100' && (item.diamondsCost <= 0 || item.diamondsCost >= 100)) {
       return false;
     }
     if (priceFilter === 'under_200' && item.diamondsCost >= 200) {

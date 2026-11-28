@@ -32,6 +32,7 @@
         "cosBadge": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
         "cosAnim": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
         "cosLbAnim": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
+        "eqStk": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
         "stats": { "type": "object" }
       },
       "required": ["username", "usernameLower", "countryCode", "countryName", "gdp", "cash", "gems", "level", "rank", "lastSeen", "stats", "createdAt"]
@@ -153,6 +154,7 @@
         "cosNameFx": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
         "cosBadge": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
         "cosAnim": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
+        "eqStk": { "type": "string", "maxLength": 36, "pattern": "^[a-z0-9_]{0,36}$" },
         "text": { "type": "string", "minLength": 1, "maxLength": 200 },
         "createdAt": { "type": "string", "format": "date-time" }
       },

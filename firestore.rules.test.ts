@@ -85,7 +85,7 @@ test('Dirty Dozen security invariants are enforced in firestore.rules', () => {
   // 8. Legacy player updates, heartbeat-only updates, and atomic project completion/failure
   assert.match(rules, /'createdAt' in incoming\(\)/);
   assert.match(rules, /affectedOnly\(\['lastSeen'\]\)/);
-  assert.match(rules, /affectedOnly\(\['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'cosLbAnim'\]\)/);
+  assert.match(rules, /affectedOnly\(\['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'cosLbAnim', 'eqStk'\]\)/);
   assert.match(rules, /affectedOnly\(\['progressMs', 'lastTickAt', 'status', 'resolvedAt'\]\)[\s\S]*incoming\(\)\.status in \['done', 'failed'\]/);
   assert.match(rules, /\(!\('rev' in existing\(\)\) \|\| !\(existing\(\)\.rev is number\) \|\| incoming\(\)\.rev >= existing\(\)\.rev\)/);
 
@@ -133,7 +133,7 @@ test('Dirty Dozen security invariants are enforced in firestore.rules', () => {
   assert.match(rules, /data\.save\.set is map\s+&&\s+data\.save\.set\.size\(\) <= 10/);
   assert.match(rules, /!existing\(\)\.keys\(\)\.hasOnly\(\['sid', 't'\]\)/);
   assert.match(rules, /\^' \+ request\.auth\.uid \+ '_\[A-Za-z0-9_\\\\-\]\+\$/);
-  assert.match(rules, /affectedOnly\(\['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'cosLbAnim'\]\)[\s\S]*isValidPlayerProfile\(incoming\(\)\)/);
+  assert.match(rules, /affectedOnly\(\['gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'cosLbAnim', 'eqStk'\]\)[\s\S]*isValidPlayerProfile\(incoming\(\)\)/);
   assert.match(rules, /affectedOnly\(\['read'\]\)[\s\S]*existing\(\)\.read is bool[\s\S]*incoming\(\)\.read == true/);
 
   // 10. Strict nested key whitelists on save, gx, gx.exp, set, activeFx, sub, subPromo; no fragile `is int` checks on JS numbers
@@ -398,7 +398,7 @@ function isValidPlayerProfile(data: unknown): boolean {
     'username', 'usernameLower', 'countryCode', 'countryName',
     'gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats',
   ];
-  const allowed = [...req, 'createdAt', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'cosLbAnim'];
+  const allowed = [...req, 'createdAt', 'subTier', 'subExp', 'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'cosLbAnim', 'eqStk'];
   if (!hasAll(data, req) || !hasOnly(data, allowed)) return false;
   if (typeof data.username !== 'string' || !/^[A-Za-z0-9_]{3,16}$/.test(data.username)) return false;
   if (typeof data.usernameLower !== 'string' || !/^[a-z0-9_]{3,16}$/.test(data.usernameLower)) return false;
@@ -414,7 +414,7 @@ function isValidPlayerProfile(data: unknown): boolean {
   if ('createdAt' in data && !isNum(data.createdAt)) return false;
   if ('subTier' in data && !['', 'daily', 'weekly', 'monthly'].includes(String(data.subTier))) return false;
   if ('subExp' in data && !(isNum(data.subExp) && data.subExp >= 0 && data.subExp <= 1e13)) return false;
-  for (const cosField of ['cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'cosLbAnim'] as const) {
+  for (const cosField of ['cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'cosLbAnim', 'eqStk'] as const) {
     if (cosField in data && (typeof data[cosField] !== 'string' || !/^[a-z0-9_]{0,36}$/.test(String(data[cosField])))) {
       return false;
     }
@@ -437,7 +437,7 @@ function evalPlayerUpdate(
   if (changed.every((k) => k === 'lastSeen')) return true;
   const allowedSync = [
     'gdp', 'cash', 'gems', 'level', 'rank', 'lastSeen', 'stats', 'subTier', 'subExp',
-    'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'cosLbAnim',
+    'cosFrame', 'cosNameFx', 'cosBadge', 'cosAnim', 'cosLbAnim', 'eqStk',
   ];
   if (!changed.every((k) => allowedSync.includes(k))) return false;
   return isValidPlayerProfile(incoming);
@@ -697,8 +697,27 @@ test('players/{uid} heartbeat & leaderboard rules match client payloads and bloc
     ),
     false,
   );
+  assert.equal(
+    evalPlayerUpdate(
+      reqOwner,
+      uid,
+      { ...existingProfile, eqStk: 'bee', lastSeen: now },
+      existingProfile,
+    ),
+    true,
+  );
+  assert.equal(
+    evalPlayerUpdate(
+      reqOwner,
+      uid,
+      { ...existingProfile, eqStk: '../bad', lastSeen: now },
+      existingProfile,
+    ),
+    false,
+  );
   assert.match(rules, /isValidGlobalChat\(data\)[\s\S]*cosFrame/);
   assert.match(rules, /isValidGlobalChat\(data\)[\s\S]*cosAnim/);
+  assert.match(rules, /isValidGlobalChat\(data\)[\s\S]*eqStk/);
   // Leaderboard list limit enforced at <= 100 (app queries 25 active & 10 search)
   assert.equal(25 <= 100 && 10 <= 100, true);
 });

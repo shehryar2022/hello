@@ -23,6 +23,7 @@ interface StickersTabProps {
   onFuseSticker: (stickerId: string) => void;
   onBuyCrate: (kind: 'cash' | 'gems', e: React.MouseEvent<HTMLButtonElement>) => void;
   onBuyStickerWithDiamonds?: (stickerId: string) => void;
+  onEquipSticker?: (stickerId: string) => void;
 }
 
 export const StickersTab: React.FC<StickersTabProps> = memo(({
@@ -31,6 +32,7 @@ export const StickersTab: React.FC<StickersTabProps> = memo(({
   onFuseSticker,
   onBuyCrate,
   onBuyStickerWithDiamonds,
+  onEquipSticker,
 }) => {
   const [collectionFilter, setCollectionFilter] = useState<'all' | StickerCollectionId>('all');
   const [rarityFilter, setRarityFilter] = useState<'all' | 1 | 2 | 3>('all');
@@ -228,12 +230,13 @@ export const StickersTab: React.FC<StickersTabProps> = memo(({
           const count = state.stk[s.id] || 0;
           const [rarityLabel, rarityColor] = RARITY_META[s.r];
           const canFuse = count >= 3;
+          const isEquipped = count > 0 && state.eqStk === s.id;
           const directCost = s.diamondPrice || (s.r === 1 ? 65 : s.r === 2 ? 145 : 295);
           const canDirectBuy = Boolean(onBuyStickerWithDiamonds && count <= 0 && state.gems >= directCost);
           return (
             <div
               key={s.id}
-              className={`stkcard ${count > 0 ? '' : 'miss'}${canFuse ? ' rec-card' : ''}${s.animated ? ' stkcard--animated' : ''}`}
+              className={`stkcard ${count > 0 ? '' : 'miss'}${canFuse ? ' rec-card' : ''}${s.animated ? ' stkcard--animated' : ''}${isEquipped ? ' is-equipped' : ''}`}
               data-testid={`sticker-card-${s.id}`}
             >
               <StickerArt id={s.id} size={32} />
@@ -242,6 +245,7 @@ export const StickersTab: React.FC<StickersTabProps> = memo(({
                 {'★'.repeat(s.r)}
               </span>
               {s.animated && <span className="stk-rx-pill">Animated FX</span>}
+              {isEquipped && <span className="stk-eq-pill">Equipped</span>}
               {s.collection && (
                 <small className="dim" style={{ fontSize: 10 }}>{s.collection}</small>
               )}
@@ -252,16 +256,31 @@ export const StickersTab: React.FC<StickersTabProps> = memo(({
                 </span>
               )}
               <small className="dim">{count > 0 ? `Owned ×${count}` : rarityLabel}</small>
-              {canFuse ? (
-                <button
-                  type="button"
-                  className="btn sm mint"
-                  style={{ minWidth: 0, padding: '5px 10px', fontSize: 11, marginTop: 2 }}
-                  onClick={() => onFuseSticker(s.id)}
-                >
-                  Fuse 3×
-                </button>
-              ) : count <= 0 && onBuyStickerWithDiamonds ? (
+              {count > 0 ? (
+                <div className="stk-acts">
+                  {onEquipSticker && (
+                    <button
+                      type="button"
+                      className={`btn sm ${isEquipped ? '' : 'mint'}`}
+                      style={{ minWidth: 0, padding: '5px 9px', fontSize: 11 }}
+                      data-testid={`equip-sticker-${s.id}`}
+                      onClick={() => onEquipSticker(isEquipped ? '' : s.id)}
+                    >
+                      {isEquipped ? 'Unequip' : 'Equip'}
+                    </button>
+                  )}
+                  {canFuse && (
+                    <button
+                      type="button"
+                      className="btn sm gold"
+                      style={{ minWidth: 0, padding: '5px 9px', fontSize: 11 }}
+                      onClick={() => onFuseSticker(s.id)}
+                    >
+                      Fuse 3×
+                    </button>
+                  )}
+                </div>
+              ) : onBuyStickerWithDiamonds ? (
                 <button
                   type="button"
                   className={`btn sm ${canDirectBuy ? 'gold' : 'no'}`}
@@ -286,10 +305,12 @@ export const StickersTab: React.FC<StickersTabProps> = memo(({
     prev.onFuseSticker !== next.onFuseSticker ||
     prev.onBuyCrate !== next.onBuyCrate ||
     prev.onBuyStickerWithDiamonds !== next.onBuyStickerWithDiamonds ||
+    prev.onEquipSticker !== next.onEquipSticker ||
     prev.state.cash !== next.state.cash ||
     prev.state.gems !== next.state.gems ||
     prev.state.crateCd !== next.state.crateCd ||
-    prev.state.stk !== next.state.stk
+    prev.state.stk !== next.state.stk ||
+    prev.state.eqStk !== next.state.eqStk
   ) {
     return false;
   }

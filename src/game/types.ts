@@ -109,6 +109,16 @@ export interface RewardHistoryEntry {
   bonus?: string;
 }
 
+export interface CosmeticPurchaseHistoryEntry {
+  id: string;
+  itemId: string;
+  name: string;
+  kind: 'item' | 'bundle';
+  diamondsPaid: number;
+  coinsPaid: number;
+  atMs: number;
+}
+
 export type CountryTuple = [code: string, name: string, realGdp?: number];
 
 export type BuildingCategory =
@@ -220,6 +230,8 @@ export interface RankDef {
   minHap: number;
   minTech: number;
   incomeBonusPct: number;
+  rewardCoins?: number;
+  rewardGems?: number;
   d: string;
 }
 
@@ -590,6 +602,10 @@ export interface LocalMegaProjectSlot {
   totalSec: number;
   status: 'active' | 'done';
   claimed: boolean;
+  stage?: number;
+  totalStages?: number;
+  stagePaid?: number;
+  milestoneClaimedStage?: number;
 }
 
 export interface GameState {
@@ -652,6 +668,7 @@ export interface GameState {
   // Diamond Exclusives Cosmetics & Rewards Dashboard (v2 cloud pack compatible)
   cos?: string[];
   cosEq?: EquippedCosmetics;
+  cosHist?: CosmeticPurchaseHistoryEntry[];
   theme?: GameThemeId;
   dSlot?: number;
   dLastDay?: string;
@@ -661,6 +678,7 @@ export interface GameState {
   wHist?: RewardHistoryEntry[];
   qHist?: RewardHistoryEntry[];
   // Update 2.0 fields (persisted cleanly in localStorage & v2 cloud pack)
+  eqStk?: string;
   pol?: Record<string, 0 | 1 | 2>;
   upgQueue?: UpgradeQueueSlot[];
   upgHist?: UpgradeHistoryEntry[];
@@ -698,6 +716,7 @@ export interface PlayerProfile {
   cosBadge?: string;
   cosAnim?: string;
   cosLbAnim?: string;
+  eqStk?: string;
   lastSeen?: unknown;
   seen?: number;
   stats: PlayerStats;
@@ -811,6 +830,7 @@ export interface ChatMessage {
   cosNameFx?: string;
   cosBadge?: string;
   cosAnim?: string;
+  eqStk?: string;
   text: string;
   ms: number;
 }

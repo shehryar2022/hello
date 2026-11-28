@@ -306,6 +306,7 @@ export async function createPlayerProfile(
         cosBadge: sanitizeCosmeticIdField(eqCos.badge),
         cosAnim: sanitizeCosmeticIdField(eqCos.anim),
         cosLbAnim: sanitizeCosmeticIdField(eqCos.lbAnim),
+        eqStk: sanitizeCosmeticIdField(baseState.eqStk),
         lastSeen: serverTimestamp(),
         stats: sanitizeStats(undefined, { buildings: totalBuildings(baseState) }),
         createdAt: serverTimestamp(),
@@ -411,6 +412,7 @@ export async function syncSaveToCloud(params: {
             cosBadge: sanitizeCosmeticIdField(eqCos.badge),
             cosAnim: sanitizeCosmeticIdField(eqCos.anim),
             cosLbAnim: sanitizeCosmeticIdField(eqCos.lbAnim),
+            eqStk: sanitizeCosmeticIdField(state.eqStk),
             lastSeen: serverTimestamp(),
             stats: mergedStats,
           });
@@ -550,6 +552,7 @@ export async function syncSaveToCloud(params: {
       cosBadge: sanitizeCosmeticIdField(eqCos.badge),
       cosAnim: sanitizeCosmeticIdField(eqCos.anim),
       cosLbAnim: sanitizeCosmeticIdField(eqCos.lbAnim),
+      eqStk: sanitizeCosmeticIdField(state.eqStk),
       lastSeen: serverTimestamp(),
       stats: mergedStats,
     };
@@ -1016,6 +1019,7 @@ export async function sendGlobalChatMessage(params: {
   cosNameFx?: string;
   cosBadge?: string;
   cosAnim?: string;
+  eqStk?: string;
 }): Promise<void> {
   const activeUid = requireUid(params.uid);
   const cleanText = params.text.trim().slice(0, 200);
@@ -1032,6 +1036,7 @@ export async function sendGlobalChatMessage(params: {
     cosNameFx: sanitizeCosmeticIdField(params.cosNameFx),
     cosBadge: sanitizeCosmeticIdField(params.cosBadge),
     cosAnim: sanitizeCosmeticIdField(params.cosAnim),
+    eqStk: sanitizeCosmeticIdField(params.eqStk),
     text: cleanText,
     createdAt: serverTimestamp(),
   });
@@ -1142,6 +1147,7 @@ export async function syncPublicProfileMetrics(params: {
     cosBadge: sanitizeCosmeticIdField(eqCos.badge),
     cosAnim: sanitizeCosmeticIdField(eqCos.anim),
     cosLbAnim: sanitizeCosmeticIdField(eqCos.lbAnim),
+    eqStk: sanitizeCosmeticIdField(state.eqStk),
     lastSeen: serverTimestamp(),
   };
   const bTotal = totalBuildings(state);
@@ -1320,6 +1326,9 @@ export async function promoteRankOnline(params: {
   rejected?: boolean;
   error?: string;
   nextCash?: number;
+  nextGems?: number;
+  coinsAdded?: number;
+  gemsAdded?: number;
   walletRev?: number;
   gdp?: number;
 }> {
@@ -1344,6 +1353,9 @@ export async function promoteRankOnline(params: {
       ok?: boolean;
       error?: string;
       nextCash?: number;
+      nextGems?: number;
+      coinsAdded?: number;
+      gemsAdded?: number;
       walletRev?: number;
       gdp?: number;
     } | null;
@@ -1360,6 +1372,9 @@ export async function promoteRankOnline(params: {
     return {
       usedServer: true,
       nextCash: data.nextCash,
+      nextGems: data.nextGems,
+      coinsAdded: data.coinsAdded,
+      gemsAdded: data.gemsAdded,
       walletRev: data.walletRev,
       gdp: data.gdp,
     };

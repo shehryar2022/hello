@@ -16,6 +16,8 @@ import {
   TRADE_PARTNERS,
 } from '../../game/constants';
 import {
+  canAdvanceLocalMegaProjectStage,
+  canClaimLocalMegaProjectStageMilestone,
   canEnactNationalDecision,
   canStartBuildingUpgrade,
   canStartLocalMegaProject,
@@ -26,6 +28,7 @@ import {
   getBuildingUpgradeQuote,
   getDevelopmentDiscount,
   getIntlTradeCapacity,
+  getLocalMegaProjectStageQuote,
   getProjectSpeedMult,
   getRecommendedTech,
   getResearchCostMult,
@@ -102,6 +105,8 @@ interface GovtTabProps {
   onUnlockTech: (techId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
   onStartResearch?: (techId: string, e: React.MouseEvent<HTMLButtonElement>) => void;
   onStartLocalMegaProject?: (type: ProjectType) => void;
+  onAdvanceLocalMegaProjectStage?: (projectId: string) => void;
+  onClaimLocalMegaProjectStageMilestone?: (projectId: string) => void;
   onClaimLocalMegaProject?: (projectId: string) => void;
   onStartTradeContract?: (
     goodId: TradeGoodId,
@@ -129,6 +134,8 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
   onUnlockTech,
   onStartResearch,
   onStartLocalMegaProject,
+  onAdvanceLocalMegaProjectStage,
+  onClaimLocalMegaProjectStageMilestone,
   onClaimLocalMegaProject,
   onStartTradeContract,
   onClaimTradeMilestone,
@@ -439,6 +446,7 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
               .filter((d) => !upgSearch.trim() || d.n.toLowerCase().includes(upgSearch.trim().toLowerCase()))
               .map((d) => {
                 const quote = getBuildingUpgradeQuote(state, d.id, nowSrv);
+                if (!quote) return null;
                 const check = canStartBuildingUpgrade(state, d.id, nowSrv);
                 const queued = upgQueue.find((q) => q.buildingId === d.id);
                 const leftSec = queued ? Math.max(0, Math.ceil((queued.finishAt - nowSrv) / 1000)) : 0;
@@ -461,7 +469,7 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
                       </p>
                       <div className="bmeta" style={{ marginTop: 2 }}>
                         <span style={{ color: 'var(--mint)' }}>
-                          ₨ {formatNumber(quote.curStats.inc * 60)}/m{!quote.isMax ? ` → ${formatNumber(quote.nextStats.inc * 60)}/m` : ''}
+                          ₨ {formatNumber(quote.curStats.incPerSec * 60)}/m{!quote.isMax ? ` → ${formatNumber(quote.nextStats.incPerSec * 60)}/m` : ''}
                         </span>
                         <span>
                           Jobs {quote.curStats.jobs}{!quote.isMax ? ` → ${quote.nextStats.jobs}` : ''}
@@ -528,38 +536,82 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
                 .filter((p) => !p.claimed)
                 .map((mp) => {
                   const def = GX_PROJECT_TYPES[mp.type];
-                  const isDone = mp.status === 'done' || mp.finishAt <= nowSrv;
+                  const quote = getLocalMegaProjectStageQuote(state, mp, nowSrv);
+                  const msCheck = canClaimLocalMegaProjectStageMilestone(state, mp.id, nowSrv);
+                  const advCheck = canAdvanceLocalMegaProjectStage(state, mp.id, nowSrv);
+                  const isFinalReady = quote.currentStage >= quote.totalStages && quote.stageFinished;
                   const leftMs = Math.max(0, mp.finishAt - nowSrv);
-                  const pct = isDone
+                  const pct = quote.stageFinished
                     ? 100
                     : Math.max(4, Math.min(100, Math.round(((mp.totalSec * 1000 - leftMs) / Math.max(1000, mp.totalSec * 1000)) * 100)));
+                  const claimedStage = mp.milestoneClaimedStage ?? 0;
+                  const rCoins = Math.max(0, def?.rewardCoins || 0);
+                  const rGems = Math.max(0, def?.rewardGems || 0);
+                  const alreadyCoins = (claimedStage >= 1 ? Math.floor(rCoins * 0.25) : 0) + (claimedStage >= 2 ? Math.floor(rCoins * 0.3) : 0);
+                  const alreadyGems = (claimedStage >= 1 ? Math.floor(rGems * 0.25) : 0) + (claimedStage >= 2 ? Math.floor(rGems * 0.3) : 0);
+                  const remCoins = Math.max(0, rCoins - alreadyCoins);
+                  const remGems = Math.max(0, rGems - alreadyGems);
                   return (
                     <div key={mp.id} className="gxc" data-testid={`mega-project-active-${mp.type}`}>
                       <p style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'space-between', flexWrap: 'wrap' }}>
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                           <InfraIcon id={mp.type} size={16} />
                           <b>{def?.n || mp.type}</b>
+                          <span className="lv" data-testid={`mega-project-stage-${mp.type}`}>
+                            Stage {quote.currentStage}/{quote.totalStages}
+                          </span>
                         </span>
-                        <span style={{ color: isDone ? '#3fe0b0' : '#5ccbff', fontSize: 12 }}>
-                          {isDone ? 'Ready to Claim!' : `${formatDuration(leftMs)} left (${pct}%)`}
+                        <span style={{ color: isFinalReady ? '#3fe0b0' : '#5ccbff', fontSize: 12 }}>
+                          {isFinalReady
+                            ? 'Ready to Claim!'
+                            : quote.stageFinished
+                              ? `Stage ${quote.currentStage} Complete!`
+                              : `${formatDuration(leftMs)} left (${pct}%)`}
                         </span>
                       </p>
                       <div className="gxm">
-                        <b style={{ width: `${pct}%`, background: isDone ? '#3fe0b0' : '#7c5cff' }} />
+                        <b style={{ width: `${pct}%`, background: quote.stageFinished ? '#3fe0b0' : '#7c5cff' }} />
                       </div>
-                      {isDone && onClaimLocalMegaProject && (
-                        <button
-                          type="button"
-                          className="btn sm gold"
-                          style={{ marginTop: 8 }}
-                          onClick={() => onClaimLocalMegaProject(mp.id)}
-                        >
-                          <Sparkles size={13} />
-                          <span>
-                            Claim +₨ {formatNumber(def?.rewardCoins || 0)} &amp; +{def?.rewardGems || 0} Diamonds
-                          </span>
-                        </button>
-                      )}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                        {msCheck.ok && onClaimLocalMegaProjectStageMilestone && (
+                          <button
+                            type="button"
+                            className="btn sm mint"
+                            data-testid={`mega-project-milestone-${mp.type}`}
+                            onClick={() => onClaimLocalMegaProjectStageMilestone(mp.id)}
+                          >
+                            <Sparkles size={13} />
+                            <span>
+                              Claim Stage {msCheck.stage} Milestone (+₨ {formatNumber(msCheck.coinsAdded)} &amp; +{msCheck.gemsAdded} 💎)
+                            </span>
+                          </button>
+                        )}
+                        {quote.nextStage !== null && quote.stageFinished && onAdvanceLocalMegaProjectStage && (
+                          <button
+                            type="button"
+                            className={`btn sm ${advCheck.ok ? 'gold' : 'no'}`}
+                            disabled={!advCheck.ok}
+                            title={advCheck.reason}
+                            data-testid={`mega-project-advance-${mp.type}`}
+                            onClick={() => onAdvanceLocalMegaProjectStage(mp.id)}
+                          >
+                            Advance Stage {advCheck.nextStage} · ₨ {formatNumber(advCheck.cost)} ({formatDuration(advCheck.durSec * 1000)})
+                          </button>
+                        )}
+                        {isFinalReady && onClaimLocalMegaProject && (
+                          <button
+                            type="button"
+                            className="btn sm gold"
+                            data-testid={`mega-project-claim-${mp.type}`}
+                            onClick={() => onClaimLocalMegaProject(mp.id)}
+                          >
+                            <Sparkles size={13} />
+                            <span>
+                              Claim Final +₨ {formatNumber(remCoins)} &amp; +{remGems} Diamonds
+                            </span>
+                          </button>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -583,8 +635,8 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
                     </h2>
                     <p>{def.desc || 'National strategic construction project.'}</p>
                     <div className="bmeta">
-                      <span>Cost ₨ {formatNumber(check.cost)}</span>
-                      <span>Time {formatDuration(check.durSec * 1000)}</span>
+                      <span>Stage 1: ₨ {formatNumber(check.cost)} ({formatDuration(check.durSec * 1000)})</span>
+                      <span>Total ({PROJECT_STAGES} Stages): ₨ {formatNumber(check.totalCost)} · {formatDuration(check.totalDurSec * 1000)}</span>
                       {def.reqRank && <span>Rank {def.reqRank}+</span>}
                       {def.minJobs && <span>{formatNumber(def.minJobs)} Jobs</span>}
                       {def.minEnergySupply && <span>{def.minEnergySupply} MW</span>}
@@ -599,7 +651,7 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
                     title={check.reason || `Launch ${def.n}`}
                     onClick={() => onStartLocalMegaProject?.(k)}
                   >
-                    {check.ok ? `Launch · ₨ ${formatNumber(check.cost)}` : check.reason || 'Locked'}
+                    {check.ok ? `Launch Stage 1 · ₨ ${formatNumber(check.cost)}` : check.reason || 'Locked'}
                   </button>
                 </div>
               );
@@ -1277,6 +1329,8 @@ export const GovtTab: React.FC<GovtTabProps> = memo(({
     prev.onUnlockTech !== next.onUnlockTech ||
     prev.onStartResearch !== next.onStartResearch ||
     prev.onStartLocalMegaProject !== next.onStartLocalMegaProject ||
+    prev.onAdvanceLocalMegaProjectStage !== next.onAdvanceLocalMegaProjectStage ||
+    prev.onClaimLocalMegaProjectStageMilestone !== next.onClaimLocalMegaProjectStageMilestone ||
     prev.onClaimLocalMegaProject !== next.onClaimLocalMegaProject ||
     prev.onStartTradeContract !== next.onStartTradeContract ||
     prev.onClaimTradeMilestone !== next.onClaimTradeMilestone ||

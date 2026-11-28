@@ -107,7 +107,7 @@ export function buildPublicMetricsFingerprint(
   const sub = getActiveSubscription(state, nowSrvMs);
   const subKey = sub ? `${sub.def.id}:${Math.floor(sub.exp / 1000)}` : 'none';
   const eq = getEquippedCosmetics(state);
-  const cosKey = `${eq.frame || ''},${eq.nameEffect || ''},${eq.badge || ''},${eq.anim || ''},${eq.lbAnim || ''}`;
+  const cosKey = `${eq.frame || ''},${eq.nameEffect || ''},${eq.badge || ''},${eq.anim || ''},${eq.lbAnim || ''},${state.eqStk || ''}`;
   return `${gdp}|${cash}|${gems}|${lvl}|${rank}|${bTotal}|${trades}|${subKey}|${cosKey}`;
 }
 
@@ -186,9 +186,14 @@ export function buildMeaningfulSaveFingerprint(state: GameState, nowSrvMs?: numb
         }
       : null,
     challenges: state.challenges,
-    megaProjects: state.megaProjects?.map((p) => `${p.id}:${p.paid}:${p.status}:${p.claimed ? 1 : 0}`),
+    megaProjects: state.megaProjects?.map(
+      (p) =>
+        `${p.id}:${p.paid}:${p.stage || 1}:${p.stagePaid || p.paid || 1}:${p.milestoneClaimedStage || 0}:${p.status}:${p.claimed ? 1 : 0}`,
+    ),
     cos: state.cos,
     cosEq: state.cosEq,
+    cosHistLen: state.cosHist?.length || 0,
+    eqStk: state.eqStk || '',
     theme: state.theme,
     dSlot: state.dSlot,
     dLastDay: state.dLastDay,

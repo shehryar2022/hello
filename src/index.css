@@ -5217,6 +5217,84 @@ body.update-locked {
   background: rgba(92, 203, 255, 0.18);
   color: var(--cy);
 }
+.stkcard.is-equipped {
+  background: linear-gradient(155deg, rgba(63, 224, 176, 0.16), var(--clay2));
+  box-shadow: 0 0 0 1.5px rgba(63, 224, 176, 0.85), var(--sm);
+}
+.stk-eq-pill {
+  font: 700 9.5px var(--d);
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(63, 224, 176, 0.22);
+  color: var(--mint);
+}
+.stk-acts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 2px;
+}
+.lb-stk-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 4px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  flex: none;
+}
+.dx-history-empty {
+  font-size: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.dx-history-list {
+  display: grid;
+  gap: 7px;
+}
+.dx-history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--well);
+  box-shadow: var(--dent);
+}
+.dx-history-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+.dx-history-kind {
+  font: 700 10px var(--d);
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(92, 203, 255, 0.15);
+  color: var(--cy);
+}
+.dx-history-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+}
+.dx-history-cost,
+.dx-history-coins {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 700;
+}
+.dx-history-cost { color: var(--cy); }
+.dx-history-coins { color: var(--gold); }
 
 /* Update 2.0 Building Details & Research/Trade Panels */
 .build-detail-card {

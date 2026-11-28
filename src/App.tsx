@@ -157,6 +157,7 @@ import {
 } from './game/graphics';
 import {
   applyActivateGemBoost,
+  applyAdvanceLocalMegaProjectStage,
   applyBuyBooster,
   applyBuyBuilding,
   applyBuyCosmeticBundle,
@@ -175,6 +176,7 @@ import {
   applyDemolishBuilding,
   applyEnactNationalDecision,
   applyEquipCosmetic,
+  applyEquipSticker,
   applyFixInfra,
   applyOfflineEarnings,
   applySelectTheme,
@@ -192,6 +194,7 @@ import {
   canBuySubscription,
   claimChallenge,
   claimLocalMegaProject,
+  claimLocalMegaProjectStageMilestone,
   claimMilestone,
   claimSubscriptionDaily,
   claimTradeMilestone,
@@ -218,6 +221,7 @@ import {
   rollWeeklySubPromo,
   sanitizeCosmeticIdField,
   shouldRunOfflineEntryCheck,
+  targetApproval,
   targetHappiness,
   tickConstructionQueue,
   tickIntlTradeContracts,
@@ -340,7 +344,8 @@ function areChatListsEqual(a: ChatMessage[], b: ChatMessage[]): boolean {
       x.cosFrame !== y.cosFrame ||
       x.cosNameFx !== y.cosNameFx ||
       x.cosBadge !== y.cosBadge ||
-      x.cosAnim !== y.cosAnim
+      x.cosAnim !== y.cosAnim ||
+      x.eqStk !== y.eqStk
     ) {
       return false;
     }
@@ -1982,6 +1987,7 @@ export default function App() {
                 cosNameFx: sanitizeCosmeticIdField(x.cosNameFx),
                 cosBadge: sanitizeCosmeticIdField(x.cosBadge),
                 cosAnim: sanitizeCosmeticIdField(x.cosAnim),
+                eqStk: sanitizeCosmeticIdField(x.eqStk),
                 text: String(x.text || ''),
                 ms: timestampToMs(x.createdAt),
               };
@@ -2197,9 +2203,10 @@ export default function App() {
               : Math.min(1e13, Math.min(capPool, prevPool + inc.net))
             : Math.max(0, prevPool + inc.net);
 
-        const targHap = targetHappiness(prev);
+        const targHap = targetHappiness(prev, nowSrv);
         const nextHap = Math.max(0, Math.min(100, prev.hap + (targHap - prev.hap) * 0.04));
-        const nextAppr = Math.max(0, Math.min(100, prev.appr + (nextHap - prev.appr) * 0.02));
+        const targAppr = targetApproval(prev, nowSrv);
+        const nextAppr = Math.max(0, Math.min(100, prev.appr + (targAppr - prev.appr) * 0.02));
         const promoTick = rollWeeklySubPromo(prev, nowSrv);
         const nextSubPromo = promoTick.rolled ? promoTick.state.subPromo : prev.subPromo;
         const nextPop = Math.min(
@@ -3044,6 +3051,52 @@ export default function App() {
     [isGameplayBlocked, addToast, saveLocal, scheduleCloudSync],
   );
 
+  const handleAdvanceLocalMegaProjectStage = useCallback(
+    (projectId: string) => {
+      if (isGameplayBlocked()) return;
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const res = applyAdvanceLocalMegaProjectStage(stateRef.current, projectId, nowSrv);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('buy', !!res.state.set.sfx);
+      triggerBuzz(18, !!res.state.set.vib);
+      setState((prev) => {
+        const recheck = applyAdvanceLocalMegaProjectStage(prev, projectId, nowSrv);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      addToast(`Mega Project advanced to Stage ${res.nextStage}!`);
+    },
+    [isGameplayBlocked, addToast, saveLocal, scheduleCloudSync],
+  );
+
+  const handleClaimLocalMegaProjectStageMilestone = useCallback(
+    (projectId: string) => {
+      if (isGameplayBlocked()) return;
+      const nowSrv = Date.now() + serverOffsetMsRef.current;
+      const res = claimLocalMegaProjectStageMilestone(stateRef.current, projectId, nowSrv);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      playSfx('coin', !!res.state.set.sfx);
+      triggerBuzz(18, !!res.state.set.vib);
+      setState((prev) => {
+        const recheck = claimLocalMegaProjectStageMilestone(prev, projectId, nowSrv);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      addToast(`Stage ${res.stage} milestone claimed! +₨ ${formatNumber(res.coinsAdded)} & +${res.gemsAdded} Diamonds`);
+    },
+    [isGameplayBlocked, addToast, saveLocal, scheduleCloudSync],
+  );
+
   const handleStartTradeContract = useCallback(
     (goodId: TradeGoodId, partner: string, direction: 'export' | 'import', units: number) => {
       if (isGameplayBlocked()) return;
@@ -3468,6 +3521,7 @@ export default function App() {
             cosBadge: eq.badge || '',
             cosAnim: eq.anim || '',
             cosLbAnim: eq.lbAnim || '',
+            eqStk: nextState.eqStk || '',
           }
         : prev,
     );
@@ -3721,6 +3775,33 @@ export default function App() {
       addToast('Theme updated!');
     },
     [addToast, isGameplayBlocked, saveLocal, scheduleCloudSync],
+  );
+
+  const handleEquipSticker = useCallback(
+    (stickerId: string) => {
+      if (isGameplayBlocked()) return;
+      const res = applyEquipSticker(stateRef.current, stickerId);
+      if (!res.ok) {
+        if (res.reason) addToast(res.reason);
+        return;
+      }
+      stateRef.current = res.state;
+      saveLocal(res.state);
+      syncLocalPubCosmetics(res.state);
+      playSfx('buy', !!res.state.set.sfx);
+      setState((prev) => {
+        const recheck = applyEquipSticker(prev, stickerId);
+        return recheck.ok ? recheck.state : prev;
+      });
+      scheduleCloudSync(SYNC_IMMEDIATE_DELAY_MS);
+      if (res.equippedId) {
+        const def = STICKERS.find((x) => x.id === res.equippedId);
+        addToast(`${def?.n || 'Sticker'} equipped!`);
+      } else {
+        addToast('Sticker unequipped.');
+      }
+    },
+    [addToast, isGameplayBlocked, saveLocal, scheduleCloudSync, syncLocalPubCosmetics],
   );
 
   const handleClaimMilestone = useCallback(
@@ -4127,7 +4208,10 @@ export default function App() {
         const recheck = applyBuyRank(prev, rankId);
         return recheck.ok ? recheck.state : prev;
       });
-      addToast(`Promoted to ${rk.n}!`);
+      const rewardBits: string[] = [];
+      if (res.coinsAdded > 0) rewardBits.push(`+₨ ${formatNumber(res.coinsAdded)}`);
+      if (res.gemsAdded > 0) rewardBits.push(`+${res.gemsAdded} Diamonds`);
+      addToast(`Promoted to ${rk.n}!${rewardBits.length ? ` (${rewardBits.join(' & ')})` : ''}`);
       const currentUid = uidRef.current;
       const capturedSeq = authSeqRef.current;
       if (currentUid && cloudReadyRef.current && isOnlineRef.current) {
@@ -4147,11 +4231,19 @@ export default function App() {
               if (typeof srv.walletRev === 'number') {
                 walletRevRef.current = Math.max(walletRevRef.current, srv.walletRev);
               }
-              if (typeof srv.nextCash === 'number') {
-                const patched: GameState = { ...stateRef.current, cash: capValue(srv.nextCash, 1e13) };
+              if (typeof srv.nextCash === 'number' || typeof srv.nextGems === 'number') {
+                const patched: GameState = {
+                  ...stateRef.current,
+                  ...(typeof srv.nextCash === 'number' ? { cash: capValue(srv.nextCash, 1e13) } : {}),
+                  ...(typeof srv.nextGems === 'number' ? { gems: capValue(srv.nextGems, 1e9) } : {}),
+                };
                 stateRef.current = patched;
                 saveLocal(patched, currentUid);
-                setState((prev) => ({ ...prev, cash: capValue(srv.nextCash, 1e13) }));
+                setState((prev) => ({
+                  ...prev,
+                  ...(typeof srv.nextCash === 'number' ? { cash: capValue(srv.nextCash, 1e13) } : {}),
+                  ...(typeof srv.nextGems === 'number' ? { gems: capValue(srv.nextGems, 1e9) } : {}),
+                }));
               }
               const nowAfter = Date.now() + serverOffsetMsRef.current;
               lastSyncedAtRef.current = Date.now();
@@ -4541,6 +4633,7 @@ export default function App() {
         gems: cur.gems,
         level: playerLevel(cur),
         rank: cur.rank,
+        eqStk: cur.eqStk || '',
         subTier: liveSubTier,
         subExp: liveSubExp,
         stats: {
@@ -4699,6 +4792,7 @@ export default function App() {
           cosNameFx: eq.nameEffect,
           cosBadge: eq.badge,
           cosAnim: eq.anim,
+          eqStk: cur.eqStk || '',
         });
         return true;
       } catch (err) {
@@ -5284,6 +5378,8 @@ export default function App() {
                 onUnlockTech={handleUnlockTech}
                 onStartResearch={handleStartResearch}
                 onStartLocalMegaProject={handleStartLocalMegaProject}
+                onAdvanceLocalMegaProjectStage={handleAdvanceLocalMegaProjectStage}
+                onClaimLocalMegaProjectStageMilestone={handleClaimLocalMegaProjectStageMilestone}
                 onClaimLocalMegaProject={handleClaimLocalMegaProject}
                 onStartTradeContract={handleStartTradeContract}
                 onClaimTradeMilestone={handleClaimTradeMilestone}
@@ -5333,6 +5429,7 @@ export default function App() {
                 onFuseSticker={handleFuseSticker}
                 onBuyCrate={handleBuyStickerCrate}
                 onBuyStickerWithDiamonds={handleBuyStickerWithDiamonds}
+                onEquipSticker={handleEquipSticker}
               />
             )}
             {tab === 'trade' && (
@@ -5448,6 +5545,7 @@ export default function App() {
         isMe={!profileView || profileView.id === uid || profileView.id === 'offline'}
         uid={uid}
         ownCosmetics={equippedCosmetics}
+        ownEqStk={state.eqStk || ''}
         animationsEnabled={Boolean(state.set.anim)}
         onClose={handleCloseProfile}
         onGift={handleGiftFromProfile}

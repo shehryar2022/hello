@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  ACHIEVEMENTS,
   BOOSTERS,
   BUILDINGS,
   CRATE_COST_CASH,
   CRATE_COST_GEMS,
   DAILY_REWARDS,
+  MAX_BUILDING_LEVEL,
   MAX_RANK,
   MIN_RANK,
   RANKS,
@@ -22,8 +24,10 @@ import {
   applyBuyRank,
   applyBuySubscription,
   applyChangeGov,
+  applyChangePolicyStance,
   applyCollectTax,
   applyCommitFiscalReform,
+  applyEquipSticker,
   applyFixInfra,
   applyOfflineEarnings,
   applyUnlockTech,
@@ -67,6 +71,7 @@ import {
   rollWeeklySubPromo,
   sanitizeStats,
   shouldRunOfflineEntryCheck,
+  targetApproval,
   targetHappiness,
   taxInfo,
   totalBuildings,
@@ -153,22 +158,24 @@ test('building costs scale by costScale, bulkBuildingCost matches sum, and upkee
   assert.ok(inc.upkeep <= inc.gross * 0.46 + 0.001);
 });
 
-test('ranks 1..15 progress strictly in sequential order after meeting multi-factor requirements', () => {
+test('ranks 1..25 progress strictly in sequential order after meeting multi-factor requirements', () => {
   assert.equal(MIN_RANK, 1);
-  assert.equal(MAX_RANK, 15);
-  assert.equal(RANKS.length, 16);
+  assert.equal(MAX_RANK, 25);
+  assert.equal(RANKS.length, 26);
   assert.equal(RANKS[1].cost, 0);
   assert.equal(RANKS[2].cost, 25_000);
-  assert.equal(RANKS[6].cost, 15_000_000);
-  assert.equal(RANKS[10].cost, 3_500_000_000);
-  assert.equal(RANKS[15].cost, 280_000_000_000);
+  assert.equal(RANKS[6].cost, 3_500_000);
+  assert.equal(RANKS[10].cost, 220_000_000);
+  assert.equal(RANKS[15].cost, 22_000_000_000);
+  assert.equal(RANKS[25].cost, 9_800_000_000_000);
 
   let state = freshState();
-  state.cash = 1_500_000_000_000;
+  state.cash = 10_000_000_000_000;
   state.hap = 85;
+  state.pop = 5_000_000;
   for (const b of BUILDINGS) {
     state.b[b.id] = 45;
-    state.gx.lvl[b.id] = 5;
+    state.gx.lvl[b.id] = MAX_BUILDING_LEVEL;
   }
   for (const t of TECH_TREE) {
     state = applyUnlockTech(state, t.id).state;
@@ -179,13 +186,14 @@ test('ranks 1..15 progress strictly in sequential order after meeting multi-fact
   assert.equal(skip.ok, false);
 
   for (let r = 2; r <= MAX_RANK; r++) {
+    state = { ...state, cash: 10_000_000_000_000 };
     const res = applyBuyRank(state, r);
     assert.equal(res.ok, true, `Failed promoting to rank ${r}: ${res.reason}`);
     state = res.state;
   }
-  assert.equal(state.rank, 15);
+  assert.equal(state.rank, 25);
   const rankedSnap = calculateIncome(state);
-  assert.ok(Math.abs(rankedSnap.gross / baseSnap.gross - 1.55) < 0.001, 'Rank 15 gives +55% national income bonus');
+  assert.ok(Math.abs(rankedSnap.gross / baseSnap.gross - 1.8) < 0.001, 'Rank 25 gives +80% national income bonus');
   assert.ok(rankedSnap.net > baseSnap.net);
 });
 
@@ -477,8 +485,8 @@ test('government renovation depends strictly on 20% of building development (una
   assert.equal(gxRepairCost(state, 'parl', true), 0);
 });
 
-test('51 national buildings and 16 policies function cleanly', () => {
-  assert.equal(BUILDINGS.length, 51);
+test('107 national buildings and 16 policies function cleanly', () => {
+  assert.equal(BUILDINGS.length, 107);
   for (const id of ['farms', 'food_plant', 'steel_plants', 'wind_farms', 'railways', 'shopping_centers', 'tech_parks', 'data_centers', 'universities']) {
     assert.ok(BUILDINGS.some((b) => b.id === id), `Missing building ${id}`);
   }
@@ -555,7 +563,7 @@ test('National Research Lab doctrines unlock with building prerequisites and app
   let state = freshState();
   state.cash = 100_000_000;
   state.b.farms = 5;
-  assert.equal(TECH_TREE.length, 6);
+  assert.equal(TECH_TREE.length, 50);
 
   const blocked = applyUnlockTech(state, 'smart_grid');
   assert.equal(blocked.ok, false);
@@ -660,8 +668,9 @@ test('weekly random subscription discount locks per weekKey, expires after 72h, 
   assert.equal(r2.promo?.pct, 15);
 });
 
-test('36 stickers and smart recommendation highlights work accurately', () => {
-  assert.equal(STICKERS.length, 36);
+test('70 stickers across 10 collections and smart recommendation highlights work accurately', () => {
+  assert.equal(STICKERS.length, 70);
+  assert.equal(new Set(STICKERS.map((s) => s.collection)).size, 10);
   for (const id of ['turtle', 'dove', 'pegasus', 'sphinx', 'atlas', 'nebula']) {
     assert.ok(STICKERS.some((s) => s.id === id), `Missing sticker ${id}`);
   }
@@ -733,7 +742,7 @@ test('cleanSavePayload strips undefined/country/provinces fields and clamps all 
   assert.equal(cleaned.cash, 1e13);
   assert.equal(cleaned.gems, 1e9);
   assert.equal(cleaned.taxPool, 1e13);
-  assert.equal(cleaned.rank, 15);
+  assert.equal(cleaned.rank, 25);
   assert.equal(migrateState(cleaned as never).rank, MAX_RANK);
   assert.equal(cleaned.fused, 1_000_000);
   assert.equal(cleaned.streak, 10_000);
@@ -799,11 +808,11 @@ test('atomic gameplay updaters prevent double-click double-spend, double-collect
   assert.equal(f1.state.gx.cond.parl, 100);
   assert.equal(applyFixInfra(f1.state, 'parl', false, now).ok, false);
 
-  const upState = f1.state;
-  upState.gx.lvl.farms = 4;
+  const upState = { ...f1.state, cash: 10_000_000_000_000 };
+  upState.gx.lvl.farms = MAX_BUILDING_LEVEL - 1;
   const u1 = applyUpgradeBuilding(upState, 'farms', now);
   assert.equal(u1.ok, true);
-  assert.equal(u1.newLevel, 5);
+  assert.equal(u1.newLevel, MAX_BUILDING_LEVEL);
   assert.equal(applyUpgradeBuilding(u1.state, 'farms', now).ok, false);
 
   const gov1 = applyChangeGov(u1.state, 'tech', now);
@@ -848,9 +857,9 @@ test('cleanSavePayload clamps policy sliders and activeFx to Firestore rule boun
   assert.equal((cleaned.activeFx as { incomeBoostMult?: number } | undefined)?.incomeBoostMult, 1.6);
 });
 
-test('cleanSavePayload matches 47 ALLOWED_SAVE_KEYS and sanitizes nested edge cases', () => {
+test('cleanSavePayload matches 48 ALLOWED_SAVE_KEYS and sanitizes nested edge cases', () => {
   const freshCleaned = cleanSavePayload(freshState());
-  assert.equal(ALLOWED_SAVE_KEYS.size, 47);
+  assert.equal(ALLOWED_SAVE_KEYS.size, 48);
   assert.deepEqual(Object.keys(freshCleaned).sort(), [...ALLOWED_SAVE_KEYS].sort());
 
   const now = Date.now();
@@ -939,7 +948,7 @@ test('cleanSavePayload matches 47 ALLOWED_SAVE_KEYS and sanitizes nested edge ca
   assert.equal('shadowGx' in gxObj, false);
   assert.equal(gxObj.acc, 300);
   assert.equal(gxObj.blk, 1_000_000);
-  assert.equal(gxObj.pb, 0.25);
+  assert.equal(gxObj.pb, 0.4);
   assert.equal(Object.is(gxObj.ph, 0), true);
   const expObj = gxObj.exp as Record<string, unknown>;
   assert.equal('shadowExp' in expObj, false);
@@ -1137,3 +1146,60 @@ test('policy reforms and stances strictly enforce cooldown and treasury cost wit
   assert.equal(pRapidToggle.ok, false);
   assert.match(pRapidToggle.reason || '', /cooldown/i);
 });
+
+test('applyEquipSticker equips/unequips owned stickers, rejects unowned/invalid, survives v2 packing & clears on last fuse', () => {
+  const s0 = freshState();
+  s0.stk = { bee: 3, falcon: 1 };
+
+  assert.equal(applyEquipSticker(s0, 'unknown_stk').ok, false);
+  assert.equal(applyEquipSticker(s0, 'dove').ok, false);
+
+  const eq = applyEquipSticker(s0, 'falcon');
+  assert.equal(eq.ok, true);
+  assert.equal(eq.equippedId, 'falcon');
+  assert.equal(eq.state.eqStk, 'falcon');
+
+  // Round-trip via cleanSavePayload + migrateState preserves eqStk
+  const packed = cleanSavePayload(eq.state);
+  const restored = migrateState(packed as never);
+  assert.equal(restored.eqStk, 'falcon');
+
+  // Toggling same sticker unequips it
+  const unEq = applyEquipSticker(restored, 'falcon');
+  assert.equal(unEq.ok, true);
+  assert.equal(unEq.state.eqStk, '');
+
+  // Fusing all 3 copies of equipped 'bee' clears eqStk safely
+  const eqBee = applyEquipSticker(s0, 'bee').state;
+  const fused = fuseSticker(eqBee, 'bee', () => 0);
+  assert.equal(fused.ok, true);
+  assert.equal(fused.state.eqStk, '');
+});
+
+test('targetApproval reflects National Policy stances and ACHIEVEMENTS includes all 42 + 10-sector achievement', () => {
+  assert.equal(ACHIEVEMENTS.length, 42);
+  const ach10 = ACHIEVEMENTS.find((a) => a.id === 'ach_sectors_10');
+  assert.ok(ach10);
+
+  const s = freshState();
+  s.cash = 50_000_000;
+  s.b.farms = 5;
+  s.b.factories = 5;
+  const baseAppr = targetApproval(s);
+
+  let polState = applyChangePolicyStance(s, 'p_hlth', 2, 1_750_000_000_000).state;
+  polState = applyChangePolicyStance(polState, 'p_fin', 2, 1_750_000_000_000).state;
+  polState = applyChangePolicyStance(polState, 'p_dig', 1, 1_750_000_000_000).state;
+  polState = applyChangePolicyStance(polState, 'p_tou', 2, 1_750_000_000_000).state;
+  assert.ok(targetApproval(polState) > baseAppr);
+
+  const seenCats = new Set<string>();
+  for (const b of BUILDINGS) {
+    if (!seenCats.has(b.cat)) {
+      seenCats.add(b.cat);
+      s.b[b.id] = 1;
+    }
+  }
+  assert.equal(ach10!.f(s), 10);
+});
+

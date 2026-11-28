@@ -277,11 +277,16 @@ test('7. Fingerprinting eliminates idle writes (Spark efficiency) while catching
   assert.notEqual(buildPublicMetricsFingerprint(sRich, undefined, 0, 1_002_000), pub1);
 });
 
-test('8. Fingerprinting tracks rank, buildings, policy, and subscription state transitions', () => {
+test('8. Fingerprinting tracks rank, buildings, policy, equipped sticker, and subscription state transitions', () => {
   const s1 = freshState();
   const h1 = buildMeaningfulSaveFingerprint(s1);
+  const pub1 = buildPublicMetricsFingerprint(s1, undefined, 0, 1_000_000);
   const sPromoted = { ...s1, rank: 2, tech: { p_tax: 1 }, b: { ...s1.b, farms: 6 } };
   assert.notEqual(buildMeaningfulSaveFingerprint(sPromoted), h1);
+
+  const sStk = { ...s1, stk: { bee: 1 }, eqStk: 'bee' };
+  assert.notEqual(buildMeaningfulSaveFingerprint(sStk), h1);
+  assert.notEqual(buildPublicMetricsFingerprint(sStk, undefined, 0, 1_000_000), pub1);
 });
 
 test('9. Multi-player live leaderboard filter sorts accurately and error classifier handles offline/quota/perm cleanly', () => {
@@ -337,7 +342,7 @@ test('10. Existing player saves migrate & clean safely without resetting balance
   const cleaned = cleanSavePayload(migrated) as Partial<GameState>;
   assert.equal(cleaned.cash, 12_345_678 + 24_000);
   assert.equal(cleaned.gems, 42);
-  assert.equal(cleaned.rank, 4);
+  assert.equal(cleaned.rank, 5); // Legacy Rank 4 maps to Update 2.0 Rank 5 via LEGACY_RANK_V2_MAP
   assert.equal(cleaned.b?.farms, 10);
   assert.equal(cleaned.b?.tech_parks, 5);
   assert.equal(cleaned.sub?.tier, 'weekly');

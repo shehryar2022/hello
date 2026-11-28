@@ -16,6 +16,7 @@ import {
   MAX_BUILDING_LEVEL,
   MAX_CONSTRUCTION_QUEUE,
   MAX_RANK,
+  MAX_UPGRADE_QUEUE,
   MIN_RANK,
   NATIONAL_DECISIONS,
   NATIONAL_POLICIES,
@@ -66,7 +67,7 @@ export const QUEUE_FINISH_PREFIX = 'cq_';
 export const QUEUE_QTY_PREFIX = 'cb_';
 export const BOOSTER_ACTIVE_PREFIX = 'ba_';
 export const BOOSTER_DAILY_PREFIX = 'bc_';
-export const MAX_UPGRADE_QUEUE = 3;
+export { MAX_UPGRADE_QUEUE };
 export const MAX_CONCURRENT_LOCAL_PROJECTS = 2;
 
 export const POLICY_BOUNDS: Record<string, [number, number]> = {
@@ -646,8 +647,9 @@ export function getBuildSpeedMultiplier(s: GameState, nowMs = Date.now()): numbe
   const pInf = getPolicyStance(s, 'p_inf');
   if (pInf === 1) mult += 0.25;
   else if (pInf === 2) mult -= 0.1;
-  if (getPolicyStance(s, 'p_urb') === 2) mult += 0.12;
-  if (getPolicyStance(s, 'p_hou') === 2) mult += 0.1;
+  if (getPolicyStance(s, 'p_urb') === 1) mult += 0.1;
+  if (getPolicyStance(s, 'p_hou') === 2) mult += 0.15;
+  if (getPolicyStance(s, 'p_tou') === 2) mult -= 0.04;
   return Math.max(0.5, mult);
 }
 
@@ -923,6 +925,8 @@ export interface BuildingUpgradeQuote {
   count: number;
   curLevel: number;
   nextLevel: number;
+  curMult: number;
+  nextMult: number;
   isMax: boolean;
   tier: (typeof BUILDING_UPGRADE_TIERS)[number];
   cost: number;
@@ -966,11 +970,15 @@ export function getBuildingUpgradeQuote(
   const { cost, durSec } = isMax || count < 1 ? { cost: 0, durSec: 0 } : getBuildingUpgradeCostAndDur(s, def, curLevel, count, nowMs);
   const curStats = statsForLevel(def, Math.max(1, count), curLevel);
   const nextStats = statsForLevel(def, Math.max(1, count), nextLevel);
+  const curMult = getBuildingLevelMultiplier(curLevel);
+  const nextMult = getBuildingLevelMultiplier(nextLevel);
   return {
     def,
     count,
     curLevel,
     nextLevel,
+    curMult,
+    nextMult,
     isMax,
     tier,
     cost,
@@ -1020,7 +1028,7 @@ export function applyStartBuildingUpgrade(
   s: GameState,
   buildingId: string,
   nowMs = Date.now(),
-): { ok: boolean; state: GameState; cost: number; durSec: number; targetLevel: number; reason?: string } {
+): { ok: boolean; state: GameState; cost: number; durSec: number; targetLevel: number; slot?: UpgradeQueueSlot; reason?: string } {
   const check = canStartBuildingUpgrade(s, buildingId, nowMs);
   if (!check.ok) {
     return { ok: false, state: s, cost: check.cost, durSec: check.durSec, targetLevel: check.targetLevel, reason: check.reason };
@@ -1038,6 +1046,7 @@ export function applyStartBuildingUpgrade(
     cost: check.cost,
     durSec: check.durSec,
     targetLevel: check.targetLevel,
+    slot,
     state: {
       ...s,
       cash: Math.max(0, s.cash - check.cost),
@@ -1437,13 +1446,14 @@ export function getIntlTradeCapacity(s: GameState): {
   const portInfra =
     (b.ports || 0) +
     (b.airports || 0) +
-    (b.container_port || 0) +
-    (b.freight_hub || 0) +
+    (b.deep_sea_port || 0) +
+    (b.intl_airport_terminal || 0) +
     (b.logistics_center || 0) +
     (b.trade_center || 0);
+  const resCapMult = getPolicyStance(s, 'p_res') === 1 ? 1.1 : 1;
   const maxConcurrent = Math.min(4, 1 + Math.floor(portInfra / 4) + (hasTech(s, 'auto_customs') ? 1 : 0));
-  const maxUnitsPerOrder = Math.min(50, 8 + portInfra * 2 + Math.floor((s.rank || 1) * 1.5));
-  const dailyVolumeCap = Math.min(600, 80 + portInfra * 25 + (s.rank || 1) * 15);
+  const maxUnitsPerOrder = Math.min(55, Math.round((8 + portInfra * 2 + Math.floor((s.rank || 1) * 1.5)) * resCapMult));
+  const dailyVolumeCap = Math.min(660, Math.round((80 + portInfra * 25 + (s.rank || 1) * 15) * resCapMult));
   const dailyVolumeUsed = Math.max(0, Math.floor(s.intlTrade?.dailyVolumeUsed || 0));
   return { maxConcurrent, maxUnitsPerOrder, dailyVolumeCap, dailyVolumeUsed };
 }
@@ -1460,11 +1470,16 @@ export function getTradeGoodQuote(
   const wave = Math.sin(seed * 0.73); // -1 .. +1
   const demandTrendPct = Math.round(wave * 14); // -14% .. +14%
 
-  const tradeBoost = getTechTradeBonus(s) + (getPolicyStance(s, 'p_mar') === 1 ? 0.1 : 0) + (getPolicyStance(s, 'p_trd') === 1 ? 0.08 : 0);
-  const cappedExportMult = Math.min(1.25, 1 + tradeBoost * 0.4);
+  const tradeBoost =
+    getTechTradeBonus(s) +
+    (getPolicyStance(s, 'p_mar') === 1 ? 0.18 : 0) +
+    (getPolicyStance(s, 'p_trd') === 1 ? 0.16 : 0) +
+    (getPolicyStance(s, 'p_env') === 2 ? 0.04 : 0);
+  const cappedExportMult = Math.min(1.28, 1 + tradeBoost * 0.4);
   const exportPrice = Math.max(10, Math.round(good.baseExportPrice * (1 + demandTrendPct / 100) * cappedExportMult));
+  const importDisc = getPolicyStance(s, 'p_mar') === 2 ? 0.88 : 1;
   // Strict anti-arbitrage spread: importPrice is ALWAYS >= 1.55 * exportPrice
-  const rawImport = Math.round(good.baseImportPrice * (1 - demandTrendPct * 0.005));
+  const rawImport = Math.round(good.baseImportPrice * (1 - demandTrendPct * 0.005) * importDisc);
   const importPrice = Math.max(Math.ceil(exportPrice * 1.55), rawImport);
 
   return {
@@ -1660,38 +1675,70 @@ export function claimTradeMilestone(
 
 // ---------- Local Mega Projects & Long-Term Challenges ----------
 
+export const PROJECT_STAGES = 3;
+const MEGA_PROJECT_STAGE_WEIGHTS = [0.3, 0.35, 0.35] as const;
+
+function getMegaProjectTotalCostAndDur(
+  s: GameState,
+  type: ProjectType,
+  nowMs = Date.now(),
+): { totalCost: number; totalDurSec: number } {
+  const def = GX_PROJECT_TYPES[type];
+  if (!def) return { totalCost: 0, totalDurSec: 0 };
+  const disc = getDevelopmentDiscount(s, nowMs);
+  const totalCost = Math.max(100, Math.ceil(def.cost * (1 - disc)));
+  const speed = 1 + (hasTech(s, 'civil_corps') ? 0.15 : 0);
+  const totalDurSec = Math.max(20, Math.ceil(def.dur / 1000 / speed));
+  return { totalCost, totalDurSec };
+}
+
+function getStageMilestones(type: ProjectType): {
+  s1Coins: number;
+  s1Gems: number;
+  s2Coins: number;
+  s2Gems: number;
+} {
+  const def = GX_PROJECT_TYPES[type];
+  const rCoins = Math.max(0, def?.rewardCoins || 0);
+  const rGems = Math.max(0, def?.rewardGems || 0);
+  const s1Coins = Math.floor(rCoins * 0.25);
+  const s1Gems = Math.floor(rGems * 0.25);
+  const s2Coins = Math.floor(rCoins * 0.3);
+  const s2Gems = Math.floor(rGems * 0.3);
+  return { s1Coins, s1Gems, s2Coins, s2Gems };
+}
+
 export function canStartLocalMegaProject(
   s: GameState,
   type: ProjectType,
   nowMs = Date.now(),
-): { ok: boolean; reason?: string; cost: number; durSec: number } {
+): { ok: boolean; reason?: string; cost: number; durSec: number; totalCost: number; totalDurSec: number } {
   const def = GX_PROJECT_TYPES[type];
-  if (!def) return { ok: false, reason: 'Unknown mega project', cost: 0, durSec: 0 };
+  if (!def) return { ok: false, reason: 'Unknown mega project', cost: 0, durSec: 0, totalCost: 0, totalDurSec: 0 };
+  const { totalCost, totalDurSec } = getMegaProjectTotalCostAndDur(s, type, nowMs);
+  const stage1Cost = Math.max(50, Math.ceil(totalCost * MEGA_PROJECT_STAGE_WEIGHTS[0]));
+  const stage1DurSec = Math.max(8, Math.ceil(totalDurSec * MEGA_PROJECT_STAGE_WEIGHTS[0]));
   const active = (s.megaProjects || []).filter((p) => !p.claimed);
   if (active.some((p) => p.type === type)) {
-    return { ok: false, reason: 'Project already active or awaiting claim', cost: def.cost, durSec: Math.round(def.dur / 1000) };
+    return { ok: false, reason: 'Project already active or awaiting claim', cost: stage1Cost, durSec: stage1DurSec, totalCost, totalDurSec };
   }
   if (active.length >= MAX_CONCURRENT_LOCAL_PROJECTS) {
-    return { ok: false, reason: `Max ${MAX_CONCURRENT_LOCAL_PROJECTS} active Mega Projects`, cost: def.cost, durSec: Math.round(def.dur / 1000) };
+    return { ok: false, reason: `Max ${MAX_CONCURRENT_LOCAL_PROJECTS} active Mega Projects`, cost: stage1Cost, durSec: stage1DurSec, totalCost, totalDurSec };
   }
   if (def.reqRank && (s.rank || MIN_RANK) < def.reqRank) {
-    return { ok: false, reason: `Requires Rank ${def.reqRank}`, cost: def.cost, durSec: Math.round(def.dur / 1000) };
+    return { ok: false, reason: `Requires Rank ${def.reqRank}`, cost: stage1Cost, durSec: stage1DurSec, totalCost, totalDurSec };
   }
   const snap = computeEconomySnapshot(s, { nowMs, ignoreTempBoosters: true });
   if (def.minJobs && snap.jobsCreated < def.minJobs) {
-    return { ok: false, reason: `Requires ${def.minJobs} active jobs`, cost: def.cost, durSec: Math.round(def.dur / 1000) };
+    return { ok: false, reason: `Requires ${def.minJobs} active jobs`, cost: stage1Cost, durSec: stage1DurSec, totalCost, totalDurSec };
   }
   if (def.minEnergySupply && snap.energySupply < def.minEnergySupply) {
-    return { ok: false, reason: `Requires ${def.minEnergySupply} MW grid capacity`, cost: def.cost, durSec: Math.round(def.dur / 1000) };
+    return { ok: false, reason: `Requires ${def.minEnergySupply} MW grid capacity`, cost: stage1Cost, durSec: stage1DurSec, totalCost, totalDurSec };
   }
-  const disc = getDevelopmentDiscount(s, nowMs);
-  const cost = Math.max(100, Math.ceil(def.cost * (1 - disc)));
-  const speed = 1 + (hasTech(s, 'civil_corps') ? 0.15 : 0);
-  const durSec = Math.max(20, Math.ceil(def.dur / 1000 / speed));
-  if (!Number.isFinite(s.cash) || s.cash < cost) {
-    return { ok: false, reason: 'Not enough Coins', cost, durSec };
+  if (!Number.isFinite(s.cash) || s.cash < stage1Cost) {
+    return { ok: false, reason: 'Not enough Coins', cost: stage1Cost, durSec: stage1DurSec, totalCost, totalDurSec };
   }
-  return { ok: true, cost, durSec };
+  return { ok: true, cost: stage1Cost, durSec: stage1DurSec, totalCost, totalDurSec };
 }
 
 export function applyStartLocalMegaProject(
@@ -1710,6 +1757,10 @@ export function applyStartLocalMegaProject(
     totalSec: check.durSec,
     status: 'active',
     claimed: false,
+    stage: 1,
+    totalStages: PROJECT_STAGES,
+    stagePaid: 1,
+    milestoneClaimedStage: 0,
   };
   return {
     ok: true,
@@ -1718,6 +1769,151 @@ export function applyStartLocalMegaProject(
       ...s,
       cash: Math.max(0, s.cash - check.cost),
       megaProjects: [...(s.megaProjects || []), slot],
+    },
+  };
+}
+
+export function getLocalMegaProjectStageQuote(
+  s: GameState,
+  slot: LocalMegaProjectSlot,
+  nowMs = Date.now(),
+): {
+  currentStage: number;
+  totalStages: number;
+  nextStage: number | null;
+  nextCost: number;
+  nextDurSec: number;
+  currentMilestoneCoins: number;
+  currentMilestoneGems: number;
+  stageFinished: boolean;
+} {
+  const totalStages = Math.max(1, slot.totalStages ?? 1);
+  const currentStage = Math.max(1, Math.min(totalStages, slot.stage ?? 1));
+  const stageFinished = slot.finishAt <= nowMs || slot.status === 'done';
+  const nextStage = currentStage < totalStages ? currentStage + 1 : null;
+  const { totalCost, totalDurSec } = getMegaProjectTotalCostAndDur(s, slot.type, nowMs);
+  const nextWeight = nextStage ? (MEGA_PROJECT_STAGE_WEIGHTS[nextStage - 1] ?? 0.35) : 0;
+  const nextCost = nextStage ? Math.max(50, Math.ceil(totalCost * nextWeight)) : 0;
+  const nextDurSec = nextStage ? Math.max(8, Math.ceil(totalDurSec * nextWeight)) : 0;
+  const ms = getStageMilestones(slot.type);
+  const currentMilestoneCoins = currentStage === 1 ? ms.s1Coins : currentStage === 2 ? ms.s2Coins : 0;
+  const currentMilestoneGems = currentStage === 1 ? ms.s1Gems : currentStage === 2 ? ms.s2Gems : 0;
+  return {
+    currentStage,
+    totalStages,
+    nextStage,
+    nextCost,
+    nextDurSec,
+    currentMilestoneCoins,
+    currentMilestoneGems,
+    stageFinished,
+  };
+}
+
+export function canClaimLocalMegaProjectStageMilestone(
+  s: GameState,
+  projectId: string,
+  nowMs = Date.now(),
+): { ok: boolean; reason?: string; stage: number; coinsAdded: number; gemsAdded: number } {
+  const slot = (s.megaProjects || []).find((p) => p.id === projectId);
+  if (!slot) return { ok: false, reason: 'Project not found', stage: 0, coinsAdded: 0, gemsAdded: 0 };
+  if (slot.claimed) return { ok: false, reason: 'Already claimed', stage: slot.stage ?? 1, coinsAdded: 0, gemsAdded: 0 };
+  const quote = getLocalMegaProjectStageQuote(s, slot, nowMs);
+  if (quote.currentStage >= quote.totalStages) {
+    return { ok: false, reason: 'Use final project claim on final stage', stage: quote.currentStage, coinsAdded: 0, gemsAdded: 0 };
+  }
+  if (!quote.stageFinished) {
+    return { ok: false, reason: `Stage ${quote.currentStage} still under construction`, stage: quote.currentStage, coinsAdded: 0, gemsAdded: 0 };
+  }
+  if ((slot.milestoneClaimedStage ?? 0) >= quote.currentStage) {
+    return { ok: false, reason: `Stage ${quote.currentStage} milestone already claimed`, stage: quote.currentStage, coinsAdded: 0, gemsAdded: 0 };
+  }
+  return {
+    ok: true,
+    stage: quote.currentStage,
+    coinsAdded: quote.currentMilestoneCoins,
+    gemsAdded: quote.currentMilestoneGems,
+  };
+}
+
+export function claimLocalMegaProjectStageMilestone(
+  s: GameState,
+  projectId: string,
+  nowMs = Date.now(),
+): { ok: boolean; state: GameState; stage: number; coinsAdded: number; gemsAdded: number; reason?: string } {
+  const check = canClaimLocalMegaProjectStageMilestone(s, projectId, nowMs);
+  if (!check.ok) {
+    return { ok: false, state: s, stage: check.stage, coinsAdded: 0, gemsAdded: 0, reason: check.reason };
+  }
+  const nextList = (s.megaProjects || []).map((p) =>
+    p.id === projectId ? { ...p, milestoneClaimedStage: check.stage } : p,
+  );
+  return {
+    ok: true,
+    stage: check.stage,
+    coinsAdded: check.coinsAdded,
+    gemsAdded: check.gemsAdded,
+    state: {
+      ...s,
+      cash: Math.min(1e13, (s.cash || 0) + check.coinsAdded),
+      gems: Math.min(1e9, Math.floor((s.gems || 0) + check.gemsAdded)),
+      megaProjects: nextList,
+    },
+  };
+}
+
+export function canAdvanceLocalMegaProjectStage(
+  s: GameState,
+  projectId: string,
+  nowMs = Date.now(),
+): { ok: boolean; reason?: string; nextStage: number; cost: number; durSec: number } {
+  const slot = (s.megaProjects || []).find((p) => p.id === projectId);
+  if (!slot) return { ok: false, reason: 'Project not found', nextStage: 1, cost: 0, durSec: 0 };
+  if (slot.claimed) return { ok: false, reason: 'Already claimed', nextStage: slot.stage ?? 1, cost: 0, durSec: 0 };
+  const quote = getLocalMegaProjectStageQuote(s, slot, nowMs);
+  if (quote.nextStage === null) {
+    return { ok: false, reason: 'Final stage already reached', nextStage: quote.currentStage, cost: 0, durSec: 0 };
+  }
+  if (!quote.stageFinished) {
+    return { ok: false, reason: `Stage ${quote.currentStage} still under construction`, nextStage: quote.nextStage, cost: quote.nextCost, durSec: quote.nextDurSec };
+  }
+  if (!Number.isFinite(s.cash) || s.cash < quote.nextCost) {
+    return { ok: false, reason: 'Not enough Coins', nextStage: quote.nextStage, cost: quote.nextCost, durSec: quote.nextDurSec };
+  }
+  return { ok: true, nextStage: quote.nextStage, cost: quote.nextCost, durSec: quote.nextDurSec };
+}
+
+export function applyAdvanceLocalMegaProjectStage(
+  s: GameState,
+  projectId: string,
+  nowMs = Date.now(),
+): { ok: boolean; state: GameState; nextStage: number; cost: number; durSec: number; reason?: string } {
+  const check = canAdvanceLocalMegaProjectStage(s, projectId, nowMs);
+  if (!check.ok) {
+    return { ok: false, state: s, nextStage: check.nextStage, cost: check.cost, durSec: check.durSec, reason: check.reason };
+  }
+  const nextList = (s.megaProjects || []).map((p) =>
+    p.id === projectId
+      ? {
+          ...p,
+          paid: (p.paid || 0) + check.cost,
+          finishAt: Math.floor(nowMs + check.durSec * 1000),
+          totalSec: check.durSec,
+          status: 'active' as const,
+          stage: check.nextStage,
+          stagePaid: check.nextStage,
+        }
+      : p,
+  );
+  return {
+    ok: true,
+    nextStage: check.nextStage,
+    cost: check.cost,
+    durSec: check.durSec,
+    state: {
+      ...s,
+      cash: Math.max(0, s.cash - check.cost),
+      megaProjects: nextList,
     },
   };
 }
@@ -1731,7 +1927,9 @@ export function tickLocalMegaProjects(
   const finishedTypes: ProjectType[] = [];
   let changed = false;
   const nextList = list.map((p) => {
-    if (p.status === 'active' && p.finishAt <= nowMs) {
+    const totalStages = p.totalStages ?? 1;
+    const stagePaid = p.stagePaid ?? 1;
+    if (p.status === 'active' && p.finishAt <= nowMs && stagePaid >= totalStages) {
       changed = true;
       finishedTypes.push(p.type);
       return { ...p, status: 'done' as const };
@@ -1752,10 +1950,19 @@ export function claimLocalMegaProject(
   const target = list.find((p) => p.id === projectId);
   if (!target) return { ok: false, state: ticked, coinsAdded: 0, gemsAdded: 0, reason: 'Project not found' };
   if (target.claimed) return { ok: false, state: ticked, coinsAdded: 0, gemsAdded: 0, reason: 'Already claimed' };
+  const totalStages = target.totalStages ?? 1;
+  const stagePaid = target.stagePaid ?? 1;
+  if (stagePaid < totalStages) {
+    return { ok: false, state: ticked, coinsAdded: 0, gemsAdded: 0, reason: `Complete Stage ${stagePaid}/${totalStages} first` };
+  }
   if (target.status !== 'done') return { ok: false, state: ticked, coinsAdded: 0, gemsAdded: 0, reason: 'Project still under construction' };
   const def = GX_PROJECT_TYPES[target.type];
-  const coinsAdded = def?.rewardCoins || 0;
-  const gemsAdded = def?.rewardGems || 0;
+  const ms = getStageMilestones(target.type);
+  const claimedStage = target.milestoneClaimedStage ?? 0;
+  const alreadyCoins = (claimedStage >= 1 ? ms.s1Coins : 0) + (claimedStage >= 2 ? ms.s2Coins : 0);
+  const alreadyGems = (claimedStage >= 1 ? ms.s1Gems : 0) + (claimedStage >= 2 ? ms.s2Gems : 0);
+  const coinsAdded = Math.max(0, (def?.rewardCoins || 0) - alreadyCoins);
+  const gemsAdded = Math.max(0, (def?.rewardGems || 0) - alreadyGems);
   const pbAdd = def?.pb || 0.01;
   const phAdd = def?.ph || 1;
   const nextList = list.map((p) => (p.id === projectId ? { ...p, claimed: true } : p));
@@ -1818,34 +2025,39 @@ export function taxInfo(s: GameState) {
   const dg = s.digital || 0;
   const w = s.wealth || 0;
 
+  const pTax = getPolicyStance(s, 'p_tax');
+  const pEmp = getPolicyStance(s, 'p_emp');
+  const pSci = getPolicyStance(s, 'p_sci');
+  const pMar = getPolicyStance(s, 'p_mar');
+  const pDig = getPolicyStance(s, 'p_dig');
+
+  const corpPatentMult = pSci === 2 ? 0.95 : 1;
+  const customsDutyMult = pMar === 2 ? 0.95 : 1;
+
   const b = s.b || {};
   const raw =
     0.45 +
     t / 50 +
     c / 100 +
     l / 120 +
-    (co / 150) * (1 + (b.business_districts || 0) * 0.05) +
+    (co / 150) * corpPatentMult * (1 + (b.business_districts || 0) * 0.05) +
     (g / 70) * (1 + (b.shopping_centers || 0) * 0.04) +
     (p / 60) * Math.max(0.6, Math.min(2, (s.pop || 48) / 50)) +
-    (d / 90) * (1 + ((b.ports || 0) + (b.airports || 0)) * 0.06) +
-    (tr / 85) * (1 + ((b.airports || 0) + (b.shopping_centers || 0)) * 0.05) +
+    (d / 90) * customsDutyMult * (1 + ((b.ports || 0) + (b.airports || 0) + (b.deep_sea_port || 0) + (b.intl_airport_terminal || 0)) * 0.06) +
+    (tr / 85) * (1 + ((b.airports || 0) + (b.shopping_centers || 0) + (b.intl_hotel || 0)) * 0.05) +
     (dg / 90) * (1 + ((b.tech_parks || 0) + (b.data_centers || 0)) * 0.05) +
     (w / 105) * (1 + (b.business_districts || 0) * 0.04);
 
   const burden =
     t + co * 0.8 + g + p + d * 0.6 + c * 0.7 + l * 0.5 + f * 0.4 + tr * 0.4 + dg * 0.5 + w * 0.35;
 
-  const pTax = getPolicyStance(s, 'p_tax');
-  const pEmp = getPolicyStance(s, 'p_emp');
-  const pFin = getPolicyStance(s, 'p_fin');
   const evBase = Math.max(0, Math.min(0.75, (burden - 30) / 70 + Math.max(0, 50 - (s.appr ?? 50)) / 400));
-  const ev = pTax === 1 ? evBase * 0.75 : pFin === 2 ? evBase * 0.85 : evBase;
+  const ev = evBase * (pTax === 1 ? 0.75 : 1) * (pDig === 2 ? 0.85 : 1);
 
   let policyTaxMult = 1;
   if (pTax === 1) policyTaxMult *= 0.9;
   else if (pTax === 2) policyTaxMult *= 1.14;
   if (pEmp === 1) policyTaxMult *= 0.94;
-  if (pFin === 1) policyTaxMult *= 1.05;
 
   return { mult: raw * (1 - ev) * policyTaxMult, raw, burden, ev };
 }
@@ -1865,16 +2077,15 @@ export function getResearchCostMult(s: GameState, nowMs = Date.now()): number {
   let mult = 1;
   if (isBoosterActive(s, 'research_boost', nowMs)) mult *= 0.8;
   if (getPolicyStance(s, 'p_edu') === 2) mult *= 0.88;
-  if (getPolicyStance(s, 'p_sci') === 1) mult *= 0.9;
+  if (getPolicyStance(s, 'p_sci') === 1) mult *= 0.92;
   return Math.max(0.5, mult);
 }
 
 export function getResearchSpeedMult(s: GameState, nowMs = Date.now()): number {
   let mult = 1 + getTechResearchSpeedBonus(s);
   if (isBoosterActive(s, 'research_boost', nowMs)) mult += 0.25;
-  if (getPolicyStance(s, 'p_edu') === 1) mult += 0.14;
-  if (getPolicyStance(s, 'p_ai') === 1) mult += 0.12;
-  if (getPolicyStance(s, 'p_sci') === 2) mult += 0.15;
+  if (getPolicyStance(s, 'p_sci') === 1) mult += 0.18;
+  if (getPolicyStance(s, 'p_ai') === 1) mult += 0.1;
   return Math.max(0.6, mult);
 }
 
@@ -1949,90 +2160,149 @@ export function computeEconomySnapshot(
 
     capitalEquity += d.cost * count * (1 + Math.pow(lvl - 1, 0.72) * 0.42) * 1.15;
 
+    const isCleanEnergy =
+      d.id === 'solar_plants' ||
+      d.id === 'wind_farms' ||
+      d.id === 'offshore_wind' ||
+      d.id === 'adv_solar_station' ||
+      d.id === 'hydro_plant' ||
+      d.id === 'geothermal_plant' ||
+      d.id === 'battery_mega_facility';
+    const isHeavyInd =
+      d.id === 'steel_plants' ||
+      d.id === 'steel_complex' ||
+      d.id === 'heavy_industry' ||
+      d.id === 'factories';
+    const isRawExtract =
+      d.id === 'farms' ||
+      d.id === 'grain_mega_complex' ||
+      d.id === 'steel_plants' ||
+      d.id === 'steel_complex';
+
     let catIncomeMult = 1;
     if (d.cat === 'agriculture') {
-      if (pAgr === 1) catIncomeMult *= 1.18;
-      else if (pAgr === 2 && (d.id === 'food_plant' || d.id === 'dairy_plant')) catIncomeMult *= 1.12;
-      if (pRes === 1) catIncomeMult *= 1.08;
-    } else if (d.cat === 'industry') {
-      if (pInd === 1) catIncomeMult *= 1.16;
-      else if (pInd === 2) catIncomeMult *= 1.09;
-      if (pTrd === 2) catIncomeMult *= 1.14;
-      else if (pTrd === 1) catIncomeMult *= 0.94;
-      if (pRes === 2) catIncomeMult *= 1.08;
-    } else if (d.cat === 'energy') {
-      if (pNrg === 1 && (d.id === 'solar_plants' || d.id === 'wind_farms' || d.id === 'offshore_wind' || d.id === 'adv_solar_station' || d.id === 'hydro_plant' || d.id === 'geothermal_plant' || d.id === 'battery_mega_facility')) {
-        catIncomeMult *= 1.16;
+      if (pAgr === 1) catIncomeMult *= 1.2;
+      else if (pAgr === 2 && (d.id === 'food_plant' || d.id === 'dairy_plant' || d.id === 'grain_mega_complex')) {
+        catIncomeMult *= 1.12;
       }
-      if (pEnv === 1) catIncomeMult *= 1.08;
+      if (pSci === 2) catIncomeMult *= 1.08;
+      if (pRes === 2 && isRawExtract) catIncomeMult *= 0.95;
+    } else if (d.cat === 'industry') {
+      if (pInd === 1) catIncomeMult *= 1.18;
+      else if (pInd === 2) catIncomeMult *= 1.1;
+      if (pTrd === 2) catIncomeMult *= 1.15;
+      else if (pTrd === 1) catIncomeMult *= 0.94;
+      if (pDef === 2) catIncomeMult *= 1.04;
+      if (pEnv === 2 && isHeavyInd) catIncomeMult *= 0.96;
+      if (pRes === 2 && isRawExtract) catIncomeMult *= 0.95;
+    } else if (d.cat === 'energy') {
+      if (pNrg === 1 && isCleanEnergy) catIncomeMult *= 1.18;
+      if (pEnv === 2 && isCleanEnergy) catIncomeMult *= 1.1;
     } else if (d.cat === 'infrastructure') {
       if (pInf === 1) catIncomeMult *= 1.1;
-      if (pTrd === 1) catIncomeMult *= 1.14;
-      else if (pTrd === 2 && (d.id === 'ports' || d.id === 'airports' || d.id === 'logistics_center' || d.id === 'deep_sea_port' || d.id === 'intl_airport_terminal')) {
+      if (pTrd === 1) catIncomeMult *= 1.16;
+      else if (
+        pTrd === 2 &&
+        (d.id === 'ports' ||
+          d.id === 'airports' ||
+          d.id === 'logistics_center' ||
+          d.id === 'deep_sea_port' ||
+          d.id === 'intl_airport_terminal' ||
+          d.id === 'trade_center')
+      ) {
         catIncomeMult *= 0.92;
       }
-      if (pMar === 1) catIncomeMult *= 1.09;
+      if (pMar === 1) catIncomeMult *= 1.1;
     } else if (d.cat === 'commercial') {
       if (pEmp === 2) catIncomeMult *= 1.08;
       if (pHlth === 2) catIncomeMult *= 0.97;
-      if (pTrd === 1) catIncomeMult *= 1.14;
-      if (pFin === 1) catIncomeMult *= 1.08;
-      if (pTou === 1) catIncomeMult *= 1.07;
+      if (pTrd === 1) catIncomeMult *= 1.16;
+      if (pFin === 1) catIncomeMult *= 1.12;
+      else if (pFin === 2) catIncomeMult *= 0.95;
+      if (pMar === 2) catIncomeMult *= 1.08;
+      if (pDig === 1) catIncomeMult *= 1.12;
+      if (pTou === 1 && (d.id === 'intl_hotel' || d.id === 'luxury_boulevard')) catIncomeMult *= 1.14;
     } else if (d.cat === 'technology') {
-      if (pEdu === 1) catIncomeMult *= 1.12;
-      if (pAi === 1) catIncomeMult *= 1.12;
-      if (pDig === 1) catIncomeMult *= 1.09;
-      if (pSci === 2) catIncomeMult *= 1.08;
+      if (pEdu === 1) catIncomeMult *= 1.14;
+      if (pAi === 1) catIncomeMult *= 1.14;
+      if (pDig === 1) catIncomeMult *= 1.12;
+      else if (pDig === 2) catIncomeMult *= 0.96;
       if (researchBoostActive) catIncomeMult *= 1.2;
     } else if (d.cat === 'healthcare_edu') {
-      if (pEdu === 1) catIncomeMult *= 1.12;
-    } else if (d.cat === 'public_services' || d.cat === 'residential') {
-      if (pHlth === 1) catIncomeMult *= 1.05;
-      if (d.cat === 'residential' && pHou === 1) catIncomeMult *= 1.06;
-    } else if (d.cat === 'special') {
-      if (pTou === 1) catIncomeMult *= 1.1;
+      if (pEdu === 1) catIncomeMult *= 1.14;
       if (pSci === 2) catIncomeMult *= 1.08;
+    } else if (d.cat === 'public_services') {
+      if (pDef === 1) catIncomeMult *= 1.12;
+    } else if (d.cat === 'residential') {
+      if (pUrb === 1) catIncomeMult *= 1.12;
+      else if (pUrb === 2) catIncomeMult *= 0.94;
+      if (pHou === 2) catIncomeMult *= 1.1;
+    } else if (d.cat === 'special') {
+      if (pFin === 1) catIncomeMult *= 1.12;
+      if (pTou === 1) catIncomeMult *= 1.14;
+    }
+
+    if (pAi === 2 && bPol.id === 'automated_floor') {
+      catIncomeMult *= 0.94;
     }
 
     const baseOut = d.inc * count * lvlMult * catIncomeMult * bPol.incomeMult;
     sectorRaw[d.cat] += baseOut;
 
     if (d.cat === 'residential' && d.capacity) {
-      const houMult = pHou === 1 ? 1.14 : pHou === 2 ? 1.08 : 1;
-      housingCapacity += d.capacity * count * (1 + Math.pow(lvl - 1, 0.7) * 0.1) * houMult;
+      const urbCapMult = pUrb === 1 ? 1.12 : 1;
+      housingCapacity += d.capacity * count * (1 + Math.pow(lvl - 1, 0.7) * 0.1) * urbCapMult;
     }
     if (d.cat === 'public_services') {
-      const defBonus = pDef === 2 ? 1.15 : 1;
-      safetyPoints += count * (d.id === 'police_hq' || d.id === 'public_safety_hq' ? 4.5 : d.id === 'fire_dept' || d.id === 'emergency_response_center' ? 3.5 : 2.5) * defBonus;
+      safetyPoints +=
+        count *
+        (d.id === 'police_hq' || d.id === 'public_safety_hq'
+          ? 4.5
+          : d.id === 'fire_dept' || d.id === 'emergency_response_center'
+            ? 3.5
+            : 2.5);
     }
     if (d.hapDelta < 0) {
-      const envCut = pEnv === 1 ? 0.72 : 1;
-      pollutionRaw += Math.abs(d.hapDelta) * count * envCut * (bPol.id === 'eco_operation' ? 0.55 : bPol.id === 'overtime_shift' ? 1.2 : 1);
-    } else if (d.id === 'solar_plants' || d.id === 'wind_farms' || d.id === 'offshore_wind' || d.id === 'adv_solar_station' || d.id === 'hydro_plant' || d.id === 'geothermal_plant' || d.id === 'battery_mega_facility' || d.id === 'water_plant' || d.id === 'smart_housing' || d.id === 'eco_homes') {
+      const envCut = pEnv === 1 ? 0.75 : 1;
+      pollutionRaw +=
+        Math.abs(d.hapDelta) *
+        count *
+        envCut *
+        (bPol.id === 'eco_operation' ? 0.55 : bPol.id === 'overtime_shift' ? 1.2 : 1);
+    } else if (
+      isCleanEnergy ||
+      d.id === 'water_plant' ||
+      d.id === 'smart_housing' ||
+      d.id === 'eco_homes'
+    ) {
       cleanPoints += count * 1.4;
     }
 
     if (d.energy > 0) {
       let gen = d.energy * count * (1 + Math.pow(lvl - 1, 0.72) * 0.12) * techEnergyMult;
-      if (pNrg === 1 && (d.id === 'solar_plants' || d.id === 'wind_farms' || d.id === 'offshore_wind' || d.id === 'adv_solar_station' || d.id === 'hydro_plant' || d.id === 'geothermal_plant')) gen *= 1.18;
+      if (pNrg === 1 && isCleanEnergy) gen *= 1.18;
       if (pNrg === 2) gen *= 1.14;
       energySupply += gen;
     } else if (d.energy < 0) {
       let dem = Math.abs(d.energy) * count * (1 + Math.pow(lvl - 1, 0.65) * 0.06) * bPol.energyMult;
       if (d.cat === 'industry' && pInd === 2) dem *= 1.1;
-      if (pEnv === 1) dem *= 0.94;
+      if (pAi === 1) dem *= 1.1;
+      if (pDig === 1) dem *= 1.1;
+      if (pUrb === 2) dem *= 0.92;
       energyDemand += dem;
     }
 
     let j = d.jobs * count * (1 + (lvl - 1) * 0.04) * bPol.jobsMult;
     if (d.cat === 'industry' && pInd === 2) j *= 0.92;
     if (pEmp === 1) j *= 1.12;
-    if (pAi === 1 && d.cat === 'industry') j *= 0.94;
-    if (pUrb === 1) j *= 1.06;
     jobsCreated += j;
 
     let m = d.maint * count * (1 + Math.pow(lvl - 1, 0.85) * 0.14) * techMaintMult * bPol.maintMult;
-    if (d.cat === 'industry' && pInd === 1) m *= 1.12;
+    if (d.cat === 'industry') {
+      if (pInd === 1) m *= 1.12;
+      if (pEnv === 1) m *= 1.1;
+      if (pRes === 2) m *= 0.88;
+    }
     if (d.cat === 'agriculture' && pAgr === 1) m *= 1.15;
     if (d.cat === 'healthcare_edu') {
       if (pEdu === 1) m *= 1.12;
@@ -2042,9 +2312,16 @@ export function computeEconomySnapshot(
     }
     if (d.id === 'power_stations' && pNrg === 1) m *= 1.12;
     if (d.cat === 'energy' && pNrg === 2) m *= 0.92;
-    if (d.cat === 'infrastructure' && pInf === 1) m *= 1.15;
+    if (d.cat === 'infrastructure') {
+      if (pInf === 1) m *= 1.15;
+      if (pMar === 1) m *= 1.14;
+      if (pRes === 1) m *= 1.1;
+    }
+    if (d.cat === 'technology' && pSci === 1) m *= 1.15;
+    if (d.cat === 'public_services' && pDef === 1) m *= 1.14;
+    if (d.cat === 'special' && pTou === 1) m *= 1.12;
+    if (d.cat === 'residential' && pHou === 1) m *= 1.12;
     if (pInf === 2) m *= 0.9;
-    if (pDef === 2) m *= 1.06;
     maintCostRaw += m;
   }
 
@@ -2065,8 +2342,10 @@ export function computeEconomySnapshot(
     (0.86 + 0.24 * employmentRate) *
     (empBoostActive ? 1.2 : 1) *
     (pEdu === 1 ? 1.06 : 1) *
-    (pHlth === 1 ? 1.04 : 1);
-  empFactor = Math.max(0.75, Math.min(1.45, empFactor));
+    (pHlth === 1 ? 1.04 : 1) *
+    (pAi === 2 ? 1.06 : 1) *
+    (pHou === 1 ? 1.1 : 1);
+  empFactor = Math.max(0.75, Math.min(1.5, empFactor));
 
   const popNow = Math.max(1, Number(s.pop) || 48);
   const housingRatio = Number((housingCapacity / popNow).toFixed(2));
@@ -2117,7 +2396,9 @@ export function computeEconomySnapshot(
   if (pAgr === 2) baseTradeExportBonus += 0.12;
   if (pTrd === 1) baseTradeExportBonus += 0.16;
   if (pTrd === 2) baseTradeExportBonus -= 0.08;
-  if (pMar === 1) baseTradeExportBonus += 0.1;
+  if (pFin === 1) baseTradeExportBonus += 0.06;
+  if (pEnv === 2) baseTradeExportBonus += 0.04;
+  if (pMar === 1) baseTradeExportBonus += 0.18;
   baseTradeExportBonus += assetBonuses.tradeBonus;
   baseTradeExportBonus = Math.max(-0.08, Math.min(0.85, baseTradeExportBonus));
   const tradeExportBonus = Math.max(
@@ -2137,7 +2418,9 @@ export function computeEconomySnapshot(
   if (pTrd === 1) inflationRate -= 1.0;
   else if (pTrd === 2) inflationRate += 1.2;
   if (pNrg === 1) inflationRate -= 0.4;
-  if (pFin === 2) inflationRate -= 0.7;
+  if (pFin === 1) inflationRate += 0.6;
+  else if (pFin === 2) inflationRate -= 1.2;
+  if (pRes === 1) inflationRate -= 0.8;
   inflationRate = Math.max(0.5, Math.min(18, Number(inflationRate.toFixed(2))));
   const inflationDrag = Math.max(0.78, Math.min(1.02, 1 - Math.max(0, inflationRate - 2.8) * 0.014));
 

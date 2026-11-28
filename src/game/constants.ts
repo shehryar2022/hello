@@ -61,6 +61,7 @@ export const POLICY_CATEGORY_CD_MS = 300_000; // 5 minutes per category
 export const FISCAL_COMMIT_CD_MS = 45_000; // 45s cooldown between tax/spending commits
 export const FISCAL_COMMIT_BASE_COST = 500;
 export const MAX_CONSTRUCTION_QUEUE = 5;
+export const MAX_UPGRADE_QUEUE = 3;
 export const PROJECT_STAGES = 3;
 
 export const CRATE_COST_CASH = 100_000;
@@ -1602,32 +1603,32 @@ export const LEGACY_RANK_V2_MAP: Record<number, number> = {
 };
 
 export const RANKS: RankDef[] = [
-  { id: 0, n: 'Beginner', e: '🌱', c: '#a79fd0', cost: 0, minGdp: 0, minBuildings: 0, minHap: 0, minTech: 0, incomeBonusPct: 0, d: 'Starting national charter' },
-  { id: 1, n: 'Beginner', e: '🌱', c: '#94a3b8', cost: 0, minGdp: 0, minBuildings: 0, minHap: 0, minTech: 0, incomeBonusPct: 0, d: 'Foundation stage of your national economy' },
-  { id: 2, n: 'Citizen', e: '🪪', c: '#38bdf8', cost: 25_000, minGdp: 40_000, minBuildings: 6, minHap: 50, minTech: 0, incomeBonusPct: 2, d: 'Established civic presence with basic markets & farms' },
-  { id: 3, n: 'Town Founder', e: '🏘️', c: '#2dd4bf', cost: 72_000, minGdp: 110_000, minBuildings: 10, minHap: 51, minTech: 0, incomeBonusPct: 3, d: 'Structured municipal charter with affordable homes & clinics' },
-  { id: 4, n: 'Entrepreneur', e: '💼', c: '#34d399', cost: 185_000, minGdp: 280_000, minBuildings: 16, minHap: 52, minTech: 0, incomeBonusPct: 5, d: 'Active domestic enterprise & commercial momentum' },
-  { id: 5, n: 'Business Owner', e: '🏬', c: '#a78bfa', cost: 750_000, minGdp: 1_200_000, minBuildings: 24, minHap: 55, minTech: 1, incomeBonusPct: 7, d: 'Multi-sector portfolio backed by researched doctrine' },
-  { id: 6, n: 'Industrialist', e: '🏭', c: '#fb923c', cost: 3_500_000, minGdp: 6_000_000, minBuildings: 36, minHap: 56, minTech: 2, incomeBonusPct: 9, d: 'Heavy production capacity & grid power surplus' },
-  { id: 7, n: 'Regional Magnate', e: '🚄', c: '#60a5fa', cost: 8_200_000, minGdp: 14_500_000, minBuildings: 44, minHap: 57, minTech: 3, incomeBonusPct: 11, d: 'High-speed rail, maritime corridors & industrial zones' },
-  { id: 8, n: 'Millionaire', e: '💵', c: '#fbbf24', cost: 18_000_000, minGdp: 32_000_000, minBuildings: 56, minHap: 58, minTech: 4, incomeBonusPct: 14, d: 'Deep capital reserves & maritime trade corridors' },
-  { id: 9, n: 'Tycoon', e: '🏛️', c: '#e879f9', cost: 60_000_000, minGdp: 110_000_000, minBuildings: 72, minHap: 60, minTech: 6, incomeBonusPct: 17, d: 'National conglomerate spanning aviation, retail & tech' },
-  { id: 10, n: 'Billionaire', e: '💎', c: '#67e8f9', cost: 220_000_000, minGdp: 420_000_000, minBuildings: 92, minHap: 62, minTech: 8, incomeBonusPct: 20, d: 'Global financial & hyperscale technology powerhouse' },
-  { id: 11, n: 'Trillionaire Strategist', e: '📊', c: '#f43f5e', cost: 520_000_000, minGdp: 980_000_000, minBuildings: 110, minHap: 64, minTech: 10, incomeBonusPct: 23, d: 'Sovereign macro-planner guiding luxury & export districts' },
-  { id: 12, n: 'Economic Leader', e: '⚜️', c: '#f472b6', cost: 1_100_000_000, minGdp: 2_100_000_000, minBuildings: 130, minHap: 65, minTech: 12, incomeBonusPct: 26, d: 'Top-tier sovereign economy setting world benchmarks' },
-  { id: 13, n: 'National Legend', e: '👑', c: '#ffc23d', cost: 3_500_000_000, minGdp: 7_500_000_000, minBuildings: 155, minHap: 68, minTech: 15, incomeBonusPct: 30, d: 'Pinnacle economic stewardship & full industrial mastery' },
-  { id: 14, n: 'Continental Powerhouse', e: '🗺️', c: '#a855f7', cost: 9_000_000_000, minGdp: 16_000_000_000, minBuildings: 185, minHap: 70, minTech: 18, incomeBonusPct: 34, d: 'Continental trade, banking & advanced high-tech supremacy' },
-  { id: 15, n: 'Global Magnate', e: '🌐', c: '#38bdf8', cost: 22_000_000_000, minGdp: 36_000_000_000, minBuildings: 220, minHap: 72, minTech: 21, incomeBonusPct: 38, d: 'Dominant international exchange, logistics & capital flows' },
-  { id: 16, n: 'Sovereign Architect', e: '🚀', c: '#818cf8', cost: 55_000_000_000, minGdp: 80_000_000_000, minBuildings: 260, minHap: 74, minTech: 24, incomeBonusPct: 42, d: 'Orbital aerospace, fusion-grade grid & futuristic urban planning' },
-  { id: 17, n: 'World Superpower', e: '⭐', c: '#f59e0b', cost: 120_000_000_000, minGdp: 175_000_000_000, minBuildings: 305, minHap: 76, minTech: 28, incomeBonusPct: 47, d: 'Global reserve currency & unmatched multidimensional economy' },
-  { id: 18, n: 'Eternal Chancellor', e: '🏆', c: '#fde047', cost: 260_000_000_000, minGdp: 360_000_000_000, minBuildings: 350, minHap: 78, minTech: 32, incomeBonusPct: 52, d: 'Classic apex civilization — golden era of prosperity and science' },
-  { id: 19, n: 'Planetary Economist', e: '🌍', c: '#10b981', cost: 480_000_000_000, minGdp: 680_000_000_000, minBuildings: 400, minHap: 79, minTech: 35, incomeBonusPct: 56, d: 'Worldwide trade clearing and renewable baseload grid supremacy' },
-  { id: 20, n: 'Orbital Industrialist', e: '🛰️', c: '#06b6d4', cost: 850_000_000_000, minGdp: 1_200_000_000_000, minBuildings: 455, minHap: 80, minTech: 38, incomeBonusPct: 60, d: 'Reusable launch fleets & orbital precision manufacturing' },
-  { id: 21, n: 'Stellar Hegemon', e: '🌠', c: '#8b5cf6', cost: 1_450_000_000_000, minGdp: 2_100_000_000_000, minBuildings: 515, minHap: 81, minTech: 41, incomeBonusPct: 64, d: 'Cryptographic intelligence & sub-nanometer silicon dominance' },
-  { id: 22, n: 'Galactic Sovereign', e: '🌌', c: '#ec4899', cost: 2_400_000_000_000, minGdp: 3_500_000_000_000, minBuildings: 580, minHap: 82, minTech: 44, incomeBonusPct: 68, d: 'Intercontinental canals & frontier research mastery' },
-  { id: 23, n: 'Quantum Architect', e: '🔮', c: '#c084fc', cost: 3_900_000_000_000, minGdp: 5_600_000_000_000, minBuildings: 650, minHap: 83, minTech: 46, incomeBonusPct: 72, d: 'Macroeconomic AI & cryogenic quantum computing civilization' },
-  { id: 24, n: 'Cosmic Chancellor', e: '✨', c: '#fbbf24', cost: 6_200_000_000_000, minGdp: 8_800_000_000_000, minBuildings: 725, minHap: 84, minTech: 48, incomeBonusPct: 76, d: 'Orbital microwave energy & peak human flourishing' },
-  { id: 25, n: 'Eternal Sovereign', e: '👑', c: '#ffe875', cost: 9_800_000_000_000, minGdp: 14_000_000_000_000, minBuildings: 800, minHap: 85, minTech: 50, incomeBonusPct: 80, d: 'Ultimate Rank 25 civilization — timeless economic pinnacle' },
+  { id: 0, n: 'Beginner', e: '🌱', c: '#a79fd0', cost: 0, minGdp: 0, minBuildings: 0, minHap: 0, minTech: 0, incomeBonusPct: 0, rewardCoins: 0, rewardGems: 0, d: 'Starting national charter' },
+  { id: 1, n: 'Beginner', e: '🌱', c: '#94a3b8', cost: 0, minGdp: 0, minBuildings: 0, minHap: 0, minTech: 0, incomeBonusPct: 0, rewardCoins: 0, rewardGems: 0, d: 'Foundation stage of your national economy' },
+  { id: 2, n: 'Citizen', e: '🪪', c: '#38bdf8', cost: 25_000, minGdp: 40_000, minBuildings: 6, minHap: 50, minTech: 0, incomeBonusPct: 2, rewardCoins: 2_500, rewardGems: 1, d: 'Established civic presence with basic markets & farms' },
+  { id: 3, n: 'Town Founder', e: '🏘️', c: '#2dd4bf', cost: 72_000, minGdp: 110_000, minBuildings: 10, minHap: 51, minTech: 0, incomeBonusPct: 3, rewardCoins: 7_500, rewardGems: 2, d: 'Structured municipal charter with affordable homes & clinics' },
+  { id: 4, n: 'Entrepreneur', e: '💼', c: '#34d399', cost: 185_000, minGdp: 280_000, minBuildings: 16, minHap: 52, minTech: 0, incomeBonusPct: 5, rewardCoins: 18_500, rewardGems: 2, d: 'Active domestic enterprise & commercial momentum' },
+  { id: 5, n: 'Business Owner', e: '🏬', c: '#a78bfa', cost: 750_000, minGdp: 1_200_000, minBuildings: 24, minHap: 55, minTech: 1, incomeBonusPct: 7, rewardCoins: 75_000, rewardGems: 3, d: 'Multi-sector portfolio backed by researched doctrine' },
+  { id: 6, n: 'Industrialist', e: '🏭', c: '#fb923c', cost: 3_500_000, minGdp: 6_000_000, minBuildings: 36, minHap: 56, minTech: 2, incomeBonusPct: 9, rewardCoins: 350_000, rewardGems: 4, d: 'Heavy production capacity & grid power surplus' },
+  { id: 7, n: 'Regional Magnate', e: '🚄', c: '#60a5fa', cost: 8_200_000, minGdp: 14_500_000, minBuildings: 44, minHap: 57, minTech: 3, incomeBonusPct: 11, rewardCoins: 820_000, rewardGems: 4, d: 'High-speed rail, maritime corridors & industrial zones' },
+  { id: 8, n: 'Millionaire', e: '💵', c: '#fbbf24', cost: 18_000_000, minGdp: 32_000_000, minBuildings: 56, minHap: 58, minTech: 4, incomeBonusPct: 14, rewardCoins: 1_800_000, rewardGems: 5, d: 'Deep capital reserves & maritime trade corridors' },
+  { id: 9, n: 'Tycoon', e: '🏛️', c: '#e879f9', cost: 60_000_000, minGdp: 110_000_000, minBuildings: 72, minHap: 60, minTech: 6, incomeBonusPct: 17, rewardCoins: 6_000_000, rewardGems: 6, d: 'National conglomerate spanning aviation, retail & tech' },
+  { id: 10, n: 'Billionaire', e: '💎', c: '#67e8f9', cost: 220_000_000, minGdp: 420_000_000, minBuildings: 92, minHap: 62, minTech: 8, incomeBonusPct: 20, rewardCoins: 22_000_000, rewardGems: 7, d: 'Global financial & hyperscale technology powerhouse' },
+  { id: 11, n: 'Trillionaire Strategist', e: '📊', c: '#f43f5e', cost: 520_000_000, minGdp: 980_000_000, minBuildings: 110, minHap: 64, minTech: 10, incomeBonusPct: 23, rewardCoins: 52_000_000, rewardGems: 8, d: 'Sovereign macro-planner guiding luxury & export districts' },
+  { id: 12, n: 'Economic Leader', e: '⚜️', c: '#f472b6', cost: 1_100_000_000, minGdp: 2_100_000_000, minBuildings: 130, minHap: 65, minTech: 12, incomeBonusPct: 26, rewardCoins: 110_000_000, rewardGems: 9, d: 'Top-tier sovereign economy setting world benchmarks' },
+  { id: 13, n: 'National Legend', e: '👑', c: '#ffc23d', cost: 3_500_000_000, minGdp: 7_500_000_000, minBuildings: 155, minHap: 68, minTech: 15, incomeBonusPct: 30, rewardCoins: 350_000_000, rewardGems: 10, d: 'Pinnacle economic stewardship & full industrial mastery' },
+  { id: 14, n: 'Continental Powerhouse', e: '🗺️', c: '#a855f7', cost: 9_000_000_000, minGdp: 16_000_000_000, minBuildings: 185, minHap: 70, minTech: 18, incomeBonusPct: 34, rewardCoins: 900_000_000, rewardGems: 11, d: 'Continental trade, banking & advanced high-tech supremacy' },
+  { id: 15, n: 'Global Magnate', e: '🌐', c: '#38bdf8', cost: 22_000_000_000, minGdp: 36_000_000_000, minBuildings: 220, minHap: 72, minTech: 21, incomeBonusPct: 38, rewardCoins: 2_200_000_000, rewardGems: 12, d: 'Dominant international exchange, logistics & capital flows' },
+  { id: 16, n: 'Sovereign Architect', e: '🚀', c: '#818cf8', cost: 55_000_000_000, minGdp: 80_000_000_000, minBuildings: 260, minHap: 74, minTech: 24, incomeBonusPct: 42, rewardCoins: 5_500_000_000, rewardGems: 13, d: 'Orbital aerospace, fusion-grade grid & futuristic urban planning' },
+  { id: 17, n: 'World Superpower', e: '⭐', c: '#f59e0b', cost: 120_000_000_000, minGdp: 175_000_000_000, minBuildings: 305, minHap: 76, minTech: 28, incomeBonusPct: 47, rewardCoins: 12_000_000_000, rewardGems: 14, d: 'Global reserve currency & unmatched multidimensional economy' },
+  { id: 18, n: 'Eternal Chancellor', e: '🏆', c: '#fde047', cost: 260_000_000_000, minGdp: 360_000_000_000, minBuildings: 350, minHap: 78, minTech: 32, incomeBonusPct: 52, rewardCoins: 26_000_000_000, rewardGems: 15, d: 'Classic apex civilization — golden era of prosperity and science' },
+  { id: 19, n: 'Planetary Economist', e: '🌍', c: '#10b981', cost: 480_000_000_000, minGdp: 680_000_000_000, minBuildings: 400, minHap: 79, minTech: 35, incomeBonusPct: 56, rewardCoins: 48_000_000_000, rewardGems: 16, d: 'Worldwide trade clearing and renewable baseload grid supremacy' },
+  { id: 20, n: 'Orbital Industrialist', e: '🛰️', c: '#06b6d4', cost: 850_000_000_000, minGdp: 1_200_000_000_000, minBuildings: 455, minHap: 80, minTech: 38, incomeBonusPct: 60, rewardCoins: 85_000_000_000, rewardGems: 17, d: 'Reusable launch fleets & orbital precision manufacturing' },
+  { id: 21, n: 'Stellar Hegemon', e: '🌠', c: '#8b5cf6', cost: 1_450_000_000_000, minGdp: 2_100_000_000_000, minBuildings: 515, minHap: 81, minTech: 41, incomeBonusPct: 64, rewardCoins: 145_000_000_000, rewardGems: 18, d: 'Cryptographic intelligence & sub-nanometer silicon dominance' },
+  { id: 22, n: 'Galactic Sovereign', e: '🌌', c: '#ec4899', cost: 2_400_000_000_000, minGdp: 3_500_000_000_000, minBuildings: 580, minHap: 82, minTech: 44, incomeBonusPct: 68, rewardCoins: 240_000_000_000, rewardGems: 20, d: 'Intercontinental canals & frontier research mastery' },
+  { id: 23, n: 'Quantum Architect', e: '🔮', c: '#c084fc', cost: 3_900_000_000_000, minGdp: 5_600_000_000_000, minBuildings: 650, minHap: 83, minTech: 46, incomeBonusPct: 72, rewardCoins: 390_000_000_000, rewardGems: 22, d: 'Macroeconomic AI & cryogenic quantum computing civilization' },
+  { id: 24, n: 'Cosmic Chancellor', e: '✨', c: '#fbbf24', cost: 6_200_000_000_000, minGdp: 8_800_000_000_000, minBuildings: 725, minHap: 84, minTech: 48, incomeBonusPct: 76, rewardCoins: 620_000_000_000, rewardGems: 24, d: 'Orbital microwave energy & peak human flourishing' },
+  { id: 25, n: 'Eternal Sovereign', e: '👑', c: '#ffe875', cost: 9_800_000_000_000, minGdp: 9_800_000_000_000, minBuildings: 800, minHap: 85, minTech: 50, incomeBonusPct: 80, rewardCoins: 980_000_000_000, rewardGems: 25, d: 'Ultimate Rank 25 civilization — timeless economic pinnacle' },
 ];
 
 export const WEEKLY_MISSIONS: QuestDef[] = [
@@ -1772,10 +1773,10 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   },
   {
     id: 'ach_rank_5',
-    n: 'Industrialist Crest',
+    n: 'Business Owner Crest',
     tier: 'Silver',
     cat: 'economy',
-    desc: 'Achieve National Rank 5 (Industrialist).',
+    desc: 'Achieve National Rank 5 (Business Owner).',
     f: (s) => Math.floor(s.rank || 1),
     goal: 5,
     rewardGems: 3,
@@ -1783,10 +1784,10 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   },
   {
     id: 'ach_rank_15',
-    n: 'Eternal Chancellor',
+    n: 'Global Magnate',
     tier: 'Diamond',
     cat: 'economy',
-    desc: 'Ascend all the way to National Rank 15.',
+    desc: 'Ascend to National Rank 15 (Global Magnate).',
     f: (s) => Math.floor(s.rank || 1),
     goal: 15,
     rewardGems: 10,
@@ -2122,7 +2123,7 @@ export const COUNTRIES: CountryTuple[] = [
   ['LK', 'Sri Lanka', 80],
 ];
 
-export const STICKERS: StickerDef[] = [
+export const STICKERS: StickerDef[] = ([
   { id: 'bee', n: 'Worker Bee', e: '🐝', r: 1 },
   { id: 'ram', n: 'Chart Ram', e: '🐏', r: 1 },
   { id: 'crab', n: 'Sideways Crab', e: '🦀', r: 1 },
@@ -2160,7 +2161,7 @@ export const STICKERS: StickerDef[] = [
   { id: 'atlas', n: 'Golden Atlas', e: '🌍', r: 3 },
   { id: 'nebula', n: 'Nebula Sovereign', e: '🌌', r: 3 },
   ...NEW_STICKERS_2_0,
-].map((s) => ({
+] as StickerDef[]).map((s) => ({
   ...s,
   collection: s.collection || LEGACY_STICKER_COLLECTION_MAP[s.id] || 'National Pride',
 }));
@@ -2213,6 +2214,7 @@ export const GX_ROADS: Array<[string, string, string, number]> = [
 export const MAX_BUILDING_LEVEL = 50;
 
 export const BUILDING_UPGRADE_TIERS: ReadonlyArray<{
+  tier: number;
   minLvl: number;
   maxLvl: number;
   label: string;
@@ -2220,11 +2222,11 @@ export const BUILDING_UPGRADE_TIERS: ReadonlyArray<{
   baseDurSec: number;
   color: string;
 }> = [
-  { minLvl: 1, maxLvl: 10, label: 'Tier I · Affordable', costFactor: 1.18, baseDurSec: 8, color: '#3fe0b0' },
-  { minLvl: 11, maxLvl: 20, label: 'Tier II · Moderate', costFactor: 1.24, baseDurSec: 22, color: '#5ccbff' },
-  { minLvl: 21, maxLvl: 30, label: 'Tier III · Advanced', costFactor: 1.29, baseDurSec: 45, color: '#a78bfa' },
-  { minLvl: 31, maxLvl: 40, label: 'Tier IV · Expensive', costFactor: 1.34, baseDurSec: 78, color: '#ffc23d' },
-  { minLvl: 41, maxLvl: 50, label: 'Tier V · Endgame', costFactor: 1.39, baseDurSec: 120, color: '#fb7185' },
+  { tier: 1, minLvl: 1, maxLvl: 10, label: 'Tier I · Affordable', costFactor: 1.18, baseDurSec: 8, color: '#3fe0b0' },
+  { tier: 2, minLvl: 11, maxLvl: 20, label: 'Tier II · Moderate', costFactor: 1.24, baseDurSec: 22, color: '#5ccbff' },
+  { tier: 3, minLvl: 21, maxLvl: 30, label: 'Tier III · Advanced', costFactor: 1.29, baseDurSec: 45, color: '#a78bfa' },
+  { tier: 4, minLvl: 31, maxLvl: 40, label: 'Tier IV · Expensive', costFactor: 1.34, baseDurSec: 78, color: '#ffc23d' },
+  { tier: 5, minLvl: 41, maxLvl: 50, label: 'Tier V · Endgame', costFactor: 1.39, baseDurSec: 120, color: '#fb7185' },
 ];
 
 export function getBuildingLevelMultiplier(lvl: number): number {

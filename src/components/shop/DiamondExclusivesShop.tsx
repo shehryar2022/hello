@@ -339,7 +339,7 @@ export const DiamondExclusivesShop = memo(function DiamondExclusivesShop({
                 <option value="all">All Prices</option>
                 <option value="diamonds_only">Diamonds Only</option>
                 <option value="dual_currency">Dual Currency</option>
-                <option value="under_50">Under 50 Diamonds</option>
+                <option value="under_100">Under 100 Diamonds</option>
                 <option value="under_200">Under 200 Diamonds</option>
               </select>
 
@@ -892,6 +892,48 @@ export const DiamondExclusivesShop = memo(function DiamondExclusivesShop({
               )}
             </section>
           )}
+
+          {/* 9B. PURCHASE HISTORY */}
+          <section className="dx-sec-block" data-testid="dx-purchase-history">
+            <div className="dx-sec-head">
+              <h3>
+                <GemDiamondIcon size={15} />
+                <span>Purchase History</span>
+              </h3>
+              <span className="dim">
+                {(state.cosHist || []).length} recent transaction{(state.cosHist || []).length === 1 ? '' : 's'}
+              </span>
+            </div>
+            {(state.cosHist || []).length === 0 ? (
+              <div className="dx-history-empty dim">
+                No Diamond Marketplace purchases recorded yet. Unlocked exclusives and collections appear here.
+              </div>
+            ) : (
+              <div className="dx-history-list">
+                {(state.cosHist || []).slice(0, 25).map((entry) => (
+                  <div key={`${entry.itemId}_${entry.atMs}`} className="dx-history-row">
+                    <div className="dx-history-main">
+                      <b>{entry.name}</b>
+                      <span className="dx-history-kind">
+                        {entry.kind === 'bundle' ? 'Collection' : 'Exclusive'}
+                      </span>
+                    </div>
+                    <div className="dx-history-meta">
+                      <span className="dx-history-cost">
+                        <GemDiamondIcon size={12} /> {entry.diamondsPaid.toLocaleString('en-US')}
+                      </span>
+                      {typeof entry.coinsPaid === 'number' && entry.coinsPaid > 0 && (
+                        <span className="dx-history-coins">
+                          <CashCoinIcon size={11} /> {formatCoinPrice(entry.coinsPaid)}
+                        </span>
+                      )}
+                      <small className="dim">{new Date(entry.atMs).toLocaleString()}</small>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
         </div>
       </div>
 

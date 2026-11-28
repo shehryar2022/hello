@@ -15,36 +15,38 @@ interface ServerRankRule {
   minBuildings: number;
   minHap: number;
   minTech: number;
+  rewardCoins: number;
+  rewardGems: number;
 }
 
 const MAX_RANK = 25;
 const MAX_BUILDING_LEVEL = 50;
 
 const RANK_RULES: Record<number, ServerRankRule> = {
-  2: { id: 2, name: 'Citizen', cost: 25_000, minGdp: 40_000, minBuildings: 6, minHap: 50, minTech: 0 },
-  3: { id: 3, name: 'Town Founder', cost: 72_000, minGdp: 110_000, minBuildings: 10, minHap: 51, minTech: 0 },
-  4: { id: 4, name: 'Entrepreneur', cost: 185_000, minGdp: 280_000, minBuildings: 16, minHap: 52, minTech: 0 },
-  5: { id: 5, name: 'Business Owner', cost: 750_000, minGdp: 1_200_000, minBuildings: 24, minHap: 55, minTech: 1 },
-  6: { id: 6, name: 'Industrialist', cost: 3_500_000, minGdp: 6_000_000, minBuildings: 36, minHap: 56, minTech: 2 },
-  7: { id: 7, name: 'Regional Magnate', cost: 8_200_000, minGdp: 14_500_000, minBuildings: 44, minHap: 57, minTech: 3 },
-  8: { id: 8, name: 'Millionaire', cost: 18_000_000, minGdp: 32_000_000, minBuildings: 56, minHap: 58, minTech: 4 },
-  9: { id: 9, name: 'Tycoon', cost: 60_000_000, minGdp: 110_000_000, minBuildings: 72, minHap: 60, minTech: 6 },
-  10: { id: 10, name: 'Billionaire', cost: 220_000_000, minGdp: 420_000_000, minBuildings: 92, minHap: 62, minTech: 8 },
-  11: { id: 11, name: 'Trillionaire Strategist', cost: 520_000_000, minGdp: 980_000_000, minBuildings: 110, minHap: 64, minTech: 10 },
-  12: { id: 12, name: 'Economic Leader', cost: 1_100_000_000, minGdp: 2_100_000_000, minBuildings: 130, minHap: 65, minTech: 12 },
-  13: { id: 13, name: 'National Legend', cost: 3_500_000_000, minGdp: 7_500_000_000, minBuildings: 155, minHap: 68, minTech: 15 },
-  14: { id: 14, name: 'Continental Powerhouse', cost: 9_000_000_000, minGdp: 16_000_000_000, minBuildings: 185, minHap: 70, minTech: 18 },
-  15: { id: 15, name: 'Global Magnate', cost: 22_000_000_000, minGdp: 36_000_000_000, minBuildings: 220, minHap: 72, minTech: 21 },
-  16: { id: 16, name: 'Sovereign Architect', cost: 55_000_000_000, minGdp: 80_000_000_000, minBuildings: 260, minHap: 74, minTech: 24 },
-  17: { id: 17, name: 'World Superpower', cost: 120_000_000_000, minGdp: 175_000_000_000, minBuildings: 305, minHap: 76, minTech: 28 },
-  18: { id: 18, name: 'Eternal Chancellor', cost: 260_000_000_000, minGdp: 360_000_000_000, minBuildings: 350, minHap: 78, minTech: 32 },
-  19: { id: 19, name: 'Planetary Economist', cost: 480_000_000_000, minGdp: 680_000_000_000, minBuildings: 400, minHap: 79, minTech: 35 },
-  20: { id: 20, name: 'Orbital Industrialist', cost: 850_000_000_000, minGdp: 1_200_000_000_000, minBuildings: 455, minHap: 80, minTech: 38 },
-  21: { id: 21, name: 'Stellar Hegemon', cost: 1_450_000_000_000, minGdp: 2_100_000_000_000, minBuildings: 515, minHap: 81, minTech: 41 },
-  22: { id: 22, name: 'Galactic Sovereign', cost: 2_400_000_000_000, minGdp: 3_500_000_000_000, minBuildings: 580, minHap: 82, minTech: 44 },
-  23: { id: 23, name: 'Quantum Architect', cost: 3_900_000_000_000, minGdp: 5_600_000_000_000, minBuildings: 650, minHap: 83, minTech: 46 },
-  24: { id: 24, name: 'Cosmic Chancellor', cost: 6_200_000_000_000, minGdp: 8_800_000_000_000, minBuildings: 725, minHap: 84, minTech: 48 },
-  25: { id: 25, name: 'Eternal Sovereign', cost: 9_800_000_000_000, minGdp: 14_000_000_000_000, minBuildings: 800, minHap: 85, minTech: 50 },
+  2: { id: 2, name: 'Citizen', cost: 25_000, minGdp: 40_000, minBuildings: 6, minHap: 50, minTech: 0, rewardCoins: 2_500, rewardGems: 1 },
+  3: { id: 3, name: 'Town Founder', cost: 72_000, minGdp: 110_000, minBuildings: 10, minHap: 51, minTech: 0, rewardCoins: 7_500, rewardGems: 2 },
+  4: { id: 4, name: 'Entrepreneur', cost: 185_000, minGdp: 280_000, minBuildings: 16, minHap: 52, minTech: 0, rewardCoins: 18_500, rewardGems: 2 },
+  5: { id: 5, name: 'Business Owner', cost: 750_000, minGdp: 1_200_000, minBuildings: 24, minHap: 55, minTech: 1, rewardCoins: 75_000, rewardGems: 3 },
+  6: { id: 6, name: 'Industrialist', cost: 3_500_000, minGdp: 6_000_000, minBuildings: 36, minHap: 56, minTech: 2, rewardCoins: 350_000, rewardGems: 4 },
+  7: { id: 7, name: 'Regional Magnate', cost: 8_200_000, minGdp: 14_500_000, minBuildings: 44, minHap: 57, minTech: 3, rewardCoins: 820_000, rewardGems: 4 },
+  8: { id: 8, name: 'Millionaire', cost: 18_000_000, minGdp: 32_000_000, minBuildings: 56, minHap: 58, minTech: 4, rewardCoins: 1_800_000, rewardGems: 5 },
+  9: { id: 9, name: 'Tycoon', cost: 60_000_000, minGdp: 110_000_000, minBuildings: 72, minHap: 60, minTech: 6, rewardCoins: 6_000_000, rewardGems: 6 },
+  10: { id: 10, name: 'Billionaire', cost: 220_000_000, minGdp: 420_000_000, minBuildings: 92, minHap: 62, minTech: 8, rewardCoins: 22_000_000, rewardGems: 7 },
+  11: { id: 11, name: 'Trillionaire Strategist', cost: 520_000_000, minGdp: 980_000_000, minBuildings: 110, minHap: 64, minTech: 10, rewardCoins: 52_000_000, rewardGems: 8 },
+  12: { id: 12, name: 'Economic Leader', cost: 1_100_000_000, minGdp: 2_100_000_000, minBuildings: 130, minHap: 65, minTech: 12, rewardCoins: 110_000_000, rewardGems: 9 },
+  13: { id: 13, name: 'National Legend', cost: 3_500_000_000, minGdp: 7_500_000_000, minBuildings: 155, minHap: 68, minTech: 15, rewardCoins: 350_000_000, rewardGems: 10 },
+  14: { id: 14, name: 'Continental Powerhouse', cost: 9_000_000_000, minGdp: 16_000_000_000, minBuildings: 185, minHap: 70, minTech: 18, rewardCoins: 900_000_000, rewardGems: 11 },
+  15: { id: 15, name: 'Global Magnate', cost: 22_000_000_000, minGdp: 36_000_000_000, minBuildings: 220, minHap: 72, minTech: 21, rewardCoins: 2_200_000_000, rewardGems: 12 },
+  16: { id: 16, name: 'Sovereign Architect', cost: 55_000_000_000, minGdp: 80_000_000_000, minBuildings: 260, minHap: 74, minTech: 24, rewardCoins: 5_500_000_000, rewardGems: 13 },
+  17: { id: 17, name: 'World Superpower', cost: 120_000_000_000, minGdp: 175_000_000_000, minBuildings: 305, minHap: 76, minTech: 28, rewardCoins: 12_000_000_000, rewardGems: 14 },
+  18: { id: 18, name: 'Eternal Chancellor', cost: 260_000_000_000, minGdp: 360_000_000_000, minBuildings: 350, minHap: 78, minTech: 32, rewardCoins: 26_000_000_000, rewardGems: 15 },
+  19: { id: 19, name: 'Planetary Economist', cost: 480_000_000_000, minGdp: 680_000_000_000, minBuildings: 400, minHap: 79, minTech: 35, rewardCoins: 48_000_000_000, rewardGems: 16 },
+  20: { id: 20, name: 'Orbital Industrialist', cost: 850_000_000_000, minGdp: 1_200_000_000_000, minBuildings: 455, minHap: 80, minTech: 38, rewardCoins: 85_000_000_000, rewardGems: 17 },
+  21: { id: 21, name: 'Stellar Hegemon', cost: 1_450_000_000_000, minGdp: 2_100_000_000_000, minBuildings: 515, minHap: 81, minTech: 41, rewardCoins: 145_000_000_000, rewardGems: 18 },
+  22: { id: 22, name: 'Galactic Sovereign', cost: 2_400_000_000_000, minGdp: 3_500_000_000_000, minBuildings: 580, minHap: 82, minTech: 44, rewardCoins: 240_000_000_000, rewardGems: 20 },
+  23: { id: 23, name: 'Quantum Architect', cost: 3_900_000_000_000, minGdp: 5_600_000_000_000, minBuildings: 650, minHap: 83, minTech: 46, rewardCoins: 390_000_000_000, rewardGems: 22 },
+  24: { id: 24, name: 'Cosmic Chancellor', cost: 6_200_000_000_000, minGdp: 8_800_000_000_000, minBuildings: 725, minHap: 84, minTech: 48, rewardCoins: 620_000_000_000, rewardGems: 24 },
+  25: { id: 25, name: 'Eternal Sovereign', cost: 9_800_000_000_000, minGdp: 14_000_000_000_000, minBuildings: 800, minHap: 85, minTech: 50, rewardCoins: 980_000_000_000, rewardGems: 25 },
 };
 
 const BUILDING_COSTS: Record<string, { cost: number; inc: number; jobs: number }> = {
@@ -160,25 +162,25 @@ const BUILDING_COSTS: Record<string, { cost: number; inc: number; jobs: number }
 
 const SERVER_COSMETICS: Record<string, { diamonds: number; coins: number; reqRank: number }> = {
   // Frames
-  frame_neon: { diamonds: 12, coins: 0, reqRank: 1 },
-  frame_rainbow: { diamonds: 18, coins: 0, reqRank: 1 },
-  frame_galaxy: { diamonds: 22, coins: 0, reqRank: 1 },
-  frame_aurora: { diamonds: 24, coins: 0, reqRank: 1 },
-  frame_lightning: { diamonds: 34, coins: 0, reqRank: 3 },
-  frame_royal_gold: { diamonds: 38, coins: 250_000, reqRank: 4 },
-  frame_holographic: { diamonds: 42, coins: 0, reqRank: 1 },
-  frame_diamond_crystal: { diamonds: 46, coins: 400_000, reqRank: 4 },
-  frame_legendary: { diamonds: 62, coins: 1_000_000, reqRank: 5 },
-  frame_seasonal: { diamonds: 54, coins: 0, reqRank: 1 },
+  frame_neon: { diamonds: 50, coins: 0, reqRank: 1 },
+  frame_rainbow: { diamonds: 56, coins: 0, reqRank: 1 },
+  frame_galaxy: { diamonds: 64, coins: 0, reqRank: 1 },
+  frame_aurora: { diamonds: 72, coins: 0, reqRank: 1 },
+  frame_lightning: { diamonds: 82, coins: 0, reqRank: 3 },
+  frame_royal_gold: { diamonds: 92, coins: 250_000, reqRank: 4 },
+  frame_holographic: { diamonds: 108, coins: 0, reqRank: 1 },
+  frame_diamond_crystal: { diamonds: 125, coins: 400_000, reqRank: 4 },
+  frame_legendary: { diamonds: 175, coins: 1_000_000, reqRank: 5 },
+  frame_seasonal: { diamonds: 145, coins: 0, reqRank: 1 },
   // Name effects
-  nfx_animated_grad: { diamonds: 12, coins: 0, reqRank: 1 },
-  nfx_rainbow: { diamonds: 16, coins: 0, reqRank: 1 },
-  nfx_neon: { diamonds: 18, coins: 0, reqRank: 1 },
-  nfx_electric: { diamonds: 24, coins: 0, reqRank: 1 },
-  nfx_royal_gold: { diamonds: 30, coins: 200_000, reqRank: 3 },
-  nfx_holographic: { diamonds: 36, coins: 0, reqRank: 1 },
-  nfx_diamond: { diamonds: 42, coins: 350_000, reqRank: 4 },
-  nfx_legendary: { diamonds: 56, coins: 900_000, reqRank: 5 },
+  nfx_animated_grad: { diamonds: 50, coins: 0, reqRank: 1 },
+  nfx_rainbow: { diamonds: 52, coins: 0, reqRank: 1 },
+  nfx_neon: { diamonds: 54, coins: 0, reqRank: 1 },
+  nfx_electric: { diamonds: 56, coins: 0, reqRank: 1 },
+  nfx_royal_gold: { diamonds: 58, coins: 200_000, reqRank: 3 },
+  nfx_holographic: { diamonds: 60, coins: 0, reqRank: 1 },
+  nfx_diamond: { diamonds: 62, coins: 350_000, reqRank: 4 },
+  nfx_legendary: { diamonds: 64, coins: 900_000, reqRank: 5 },
   nfx_crimson_blaze: { diamonds: 65, coins: 0, reqRank: 1 },
   nfx_emerald_pulse: { diamonds: 80, coins: 0, reqRank: 1 },
   nfx_amber_ledger: { diamonds: 95, coins: 0, reqRank: 1 },
@@ -212,15 +214,15 @@ const SERVER_COSMETICS: Record<string, { diamonds: number; coins: number; reqRan
   lb_nova_aura: { diamonds: 595, coins: 0, reqRank: 12 },
   // Themes
   theme_midnight_galaxy: { diamonds: 0, coins: 0, reqRank: 1 },
-  theme_ocean_blue: { diamonds: 14, coins: 0, reqRank: 1 },
-  theme_cyber_neon: { diamonds: 16, coins: 0, reqRank: 1 },
-  theme_dark_luxury: { diamonds: 22, coins: 0, reqRank: 1 },
-  theme_aurora_nights: { diamonds: 24, coins: 0, reqRank: 1 },
-  theme_emerald_kingdom: { diamonds: 25, coins: 0, reqRank: 1 },
-  theme_crimson_empire: { diamonds: 26, coins: 0, reqRank: 1 },
-  theme_sunset_paradise: { diamonds: 28, coins: 0, reqRank: 1 },
-  theme_royal_gold: { diamonds: 34, coins: 300_000, reqRank: 1 },
-  theme_diamond_crystal: { diamonds: 38, coins: 450_000, reqRank: 1 },
+  theme_ocean_blue: { diamonds: 52, coins: 0, reqRank: 1 },
+  theme_cyber_neon: { diamonds: 58, coins: 0, reqRank: 1 },
+  theme_dark_luxury: { diamonds: 68, coins: 0, reqRank: 1 },
+  theme_aurora_nights: { diamonds: 76, coins: 0, reqRank: 1 },
+  theme_emerald_kingdom: { diamonds: 86, coins: 0, reqRank: 1 },
+  theme_crimson_empire: { diamonds: 95, coins: 0, reqRank: 1 },
+  theme_sunset_paradise: { diamonds: 105, coins: 0, reqRank: 1 },
+  theme_royal_gold: { diamonds: 118, coins: 300_000, reqRank: 1 },
+  theme_diamond_crystal: { diamonds: 135, coins: 450_000, reqRank: 1 },
   theme_imperial_obsidian: { diamonds: 145, coins: 0, reqRank: 1 },
   theme_sapphire_monarch: { diamonds: 220, coins: 0, reqRank: 1 },
   theme_jade_dynasty: { diamonds: 265, coins: 0, reqRank: 1 },
@@ -244,12 +246,12 @@ const SERVER_COSMETICS: Record<string, { diamonds: number; coins: number; reqRan
   anim_quantum_ripple: { diamonds: 495, coins: 0, reqRank: 7 },
   anim_apex_crown: { diamonds: 599, coins: 0, reqRank: 10 },
   // Exclusive Badges
-  badge_diamond_member: { diamonds: 15, coins: 0, reqRank: 1 },
-  badge_royal_member: { diamonds: 24, coins: 0, reqRank: 1 },
-  badge_legendary_builder: { diamonds: 26, coins: 0, reqRank: 3 },
-  badge_elite_governor: { diamonds: 34, coins: 0, reqRank: 4 },
-  badge_galaxy_explorer: { diamonds: 38, coins: 0, reqRank: 1 },
-  badge_premium_founder: { diamonds: 58, coins: 800_000, reqRank: 6 },
+  badge_diamond_member: { diamonds: 50, coins: 0, reqRank: 1 },
+  badge_royal_member: { diamonds: 52, coins: 0, reqRank: 1 },
+  badge_legendary_builder: { diamonds: 55, coins: 0, reqRank: 3 },
+  badge_elite_governor: { diamonds: 58, coins: 0, reqRank: 4 },
+  badge_galaxy_explorer: { diamonds: 62, coins: 0, reqRank: 1 },
+  badge_premium_founder: { diamonds: 66, coins: 800_000, reqRank: 6 },
   badge_civic_architect: { diamonds: 70, coins: 0, reqRank: 1 },
   badge_trade_envoy: { diamonds: 130, coins: 0, reqRank: 1 },
   badge_quantum_pioneer: { diamonds: 240, coins: 0, reqRank: 4 },
@@ -271,10 +273,10 @@ const SERVER_COSMETICS: Record<string, { diamonds: number; coins: number; reqRan
   pvfx_nebula_depth: { diamonds: 490, coins: 0, reqRank: 9 },
   pvfx_sovereign_radiance: { diamonds: 590, coins: 0, reqRank: 12 },
   // Diamond Landmarks
-  asset_aurora_obelisk: { diamonds: 26, coins: 120_000, reqRank: 1 },
-  asset_royal_fleet: { diamonds: 32, coins: 220_000, reqRank: 1 },
-  asset_diamond_spire: { diamonds: 45, coins: 500_000, reqRank: 3 },
-  asset_crystal_vault: { diamonds: 56, coins: 1_200_000, reqRank: 5 },
+  asset_aurora_obelisk: { diamonds: 55, coins: 120_000, reqRank: 1 },
+  asset_royal_fleet: { diamonds: 72, coins: 220_000, reqRank: 1 },
+  asset_diamond_spire: { diamonds: 88, coins: 500_000, reqRank: 3 },
+  asset_crystal_vault: { diamonds: 105, coins: 1_200_000, reqRank: 5 },
   asset_solar_monolith: { diamonds: 120, coins: 350_000, reqRank: 1 },
   asset_quantum_spire: { diamonds: 225, coins: 900_000, reqRank: 4 },
   asset_imperial_pavilion: { diamonds: 340, coins: 2_500_000, reqRank: 6 },
@@ -330,6 +332,16 @@ const SERVER_REWARD_CAPS = {
     ach_stk_50: { gems: 10, cash: 10_000_000 },
     ach_pop_200: { gems: 6, cash: 4_000_000 },
     ach_hap_95: { gems: 8, cash: 5_000_000 },
+    ach_mega_1: { gems: 3, cash: 250_000 },
+    ach_mega_5: { gems: 8, cash: 15_000_000 },
+    ach_fuse_5: { gems: 3, cash: 400_000 },
+    ach_stk_70: { gems: 16, cash: 30_000_000 },
+    ach_cos_5: { gems: 4, cash: 500_000 },
+    ach_upg_sum_150: { gems: 7, cash: 8_000_000 },
+    ach_jobs_5000: { gems: 5, cash: 2_000_000 },
+    ach_energy_surplus_500: { gems: 5, cash: 1_800_000 },
+    ach_streak_30: { gems: 10, cash: 10_000_000 },
+    ach_trade_50: { gems: 12, cash: 25_000_000 },
   } as Record<string, { gems: number; cash: number }>,
   milestones: {
     m_first_bldg: 1,
@@ -610,13 +622,16 @@ export const verifyNationalRankPromotion = onRequest(async (req, res) => {
       if (metrics.techCount < rule.minTech) throw new Error('INSUFFICIENT_TECHS');
       if (walletCash < rule.cost) throw new Error('INSUFFICIENT_CASH');
 
-      const nextCash = walletCash - rule.cost;
+      const wGems = Math.max(0, Math.floor(Number(walletSnap.data()?.gems || 0)));
+      const nextCash = Math.min(1e13, Math.max(0, walletCash - rule.cost + rule.rewardCoins));
+      const nextGems = Math.min(1e9, wGems + rule.rewardGems);
       const prevRev = Math.max(1, Math.floor(Number(walletSnap.data()?.rev || 1)));
       const nextRev = Math.min(1e9, prevRev + 1);
       const nextMetrics = computeServerNationalMetrics(saveData, nextCash);
 
       tx.update(walletRef, {
         cash: nextCash,
+        gems: nextGems,
         rev: nextRev,
         sid: sid || walletSnap.data()?.sid || 'fn',
         t: FieldValue.serverTimestamp(),
@@ -624,6 +639,7 @@ export const verifyNationalRankPromotion = onRequest(async (req, res) => {
 
       tx.update(playerRef, {
         cash: nextCash,
+        gems: nextGems,
         gdp: nextMetrics.realGdp,
         rank: targetRank,
         lastSeen: FieldValue.serverTimestamp(),
@@ -631,6 +647,7 @@ export const verifyNationalRankPromotion = onRequest(async (req, res) => {
 
       tx.update(saveRef, {
         'save.cash': nextCash,
+        'save.gems': nextGems,
         'save.rank': targetRank,
         'save.t': Date.now(),
       });
@@ -639,6 +656,9 @@ export const verifyNationalRankPromotion = onRequest(async (req, res) => {
         rank: targetRank,
         rankName: rule.name,
         nextCash,
+        nextGems,
+        coinsAdded: rule.rewardCoins,
+        gemsAdded: rule.rewardGems,
         walletRev: nextRev,
         gdp: nextMetrics.realGdp,
       };

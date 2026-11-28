@@ -6,8 +6,12 @@ import {
   BUILDINGS,
   CLOUD_MAX_RANK,
   FISCAL_COMMIT_CD_MS,
+  getBuildingLevelMultiplier,
+  GX_PROJECT_TYPES,
+  MAX_BUILDING_LEVEL,
   MAX_CONSTRUCTION_QUEUE,
   MAX_RANK,
+  MAX_UPGRADE_QUEUE,
   MIN_RANK,
   NATIONAL_DECISIONS,
   NATIONAL_POLICIES,
@@ -16,7 +20,9 @@ import {
   SUBSCRIPTIONS,
   TECH_TREE,
 } from './constants';
+import { CITY_PLOTS, PLOT_BY_ID } from '../city3d/cityLayout';
 import {
+  applyAdvanceLocalMegaProjectStage,
   applyBuyBooster,
   applyBuyBuilding,
   applyBuyRank,
@@ -27,22 +33,31 @@ import {
   applyDemolishBuilding,
   applyEnactNationalDecision,
   applySetBuildingPolicy,
+  applyStartBuildingUpgrade,
+  applyStartLocalMegaProject,
   applyUnlockTech,
   calculateGdp,
   calculateIncome,
+  claimLocalMegaProject,
+  claimLocalMegaProjectStageMilestone,
   cleanSavePayload,
   computeEconomySnapshot,
   extractFiscalDraft,
   freshState,
   getBoosterActivationInfo,
+  getBuildingUpgradeQuote,
   getBuildSpeedMultiplier,
   getConstructionQueue,
   getDemolishRefund,
   getRankEligibility,
+  getUpgradeQueue,
   karachiDateInt,
   migrateState,
   presetToFiscalDraft,
+  PROJECT_STAGES,
   tickConstructionQueue,
+  tickLocalMegaProjects,
+  tickUpgradeQueue,
   totalBuildings,
 } from './rules';
 
@@ -109,8 +124,12 @@ test('1. Idempotent legacy migration consolidates provinces & 24 old buildings w
   assert.equal(Object.keys(cleaned.b as Record<string, unknown>).length, 35);
 });
 
-test('2. 51 buildings across 10 categories, unlock gates, timed construction queue (max 5), and completion', () => {
-  assert.equal(BUILDINGS.length, 51);
+test('2. 107 buildings across 10 categories & 107 3D city plots, unlock gates, timed construction queue (max 5), and completion', () => {
+  assert.equal(BUILDINGS.length, 107);
+  assert.equal(CITY_PLOTS.length, 107);
+  for (const def of BUILDINGS) {
+    assert.ok(PLOT_BY_ID[def.id], `Missing 3D city plot for building ${def.id}`);
+  }
   const cats = new Set(BUILDINGS.map((b) => b.cat));
   assert.deepEqual(
     [...cats].sort(),
@@ -176,14 +195,14 @@ test('2. 51 buildings across 10 categories, unlock gates, timed construction que
   assert.equal(getConstructionQueue(after.state, finishMarketsAt + 10).length, 4);
 });
 
-test('3. 9 National Policies have pros/cons, enforce 5-minute cooldown per category, and cleanSavePayload preserves caps', () => {
-  assert.equal(NATIONAL_POLICIES.length, 9);
+test('3. 20 National Policies have pros/cons, enforce 5-minute cooldown per category, and cleanSavePayload preserves caps', () => {
+  assert.equal(NATIONAL_POLICIES.length, 20);
   const now = 1_750_000_000_000;
   let state = freshState();
   state.cash = 1_000_000;
   state.b.factories = 4;
 
-  // All 9 policy categories fit cleanly inside tech (6 doctrines + 9 policies = 15 <= 16 Firestore limit)
+  // All 20 policy categories fit via v2: packing while staying within top-level tech <= 16 Firestore limit
   for (const cat of NATIONAL_POLICIES) {
     assert.equal(cat.options.length, 3);
     assert.ok(cat.options[1].pros.length > 0 && cat.options[1].cons.length > 0);
@@ -294,11 +313,11 @@ test('5. 7 Boosters enforce daily Karachi limits, cooldowns, mutual exclusion, c
   assert.equal(applyBuyBooster(capState, taxDef, nextDayMs).ok, true);
 });
 
-test('6. Multi-factor Rank 1..15 progression gates & Real GDP stability on cash spend', () => {
+test('6. Multi-factor Rank 1..25 progression gates, promotion rewards, & Real GDP stability on cash spend', () => {
   assert.equal(MIN_RANK, 1);
-  assert.equal(CLOUD_MAX_RANK, 15);
-  assert.equal(MAX_RANK, 15);
-  assert.equal(RANKS.length, 16);
+  assert.equal(CLOUD_MAX_RANK, 25);
+  assert.equal(MAX_RANK, 25);
+  assert.equal(RANKS.length, 26);
 
   let state = freshState();
   state.cash = 100_000;
@@ -312,13 +331,15 @@ test('6. Multi-factor Rank 1..15 progression gates & Real GDP stability on cash 
   state.b.farms = 6;
   state.hap = 60;
   state.cash = 150_000;
+  const gemsBefore = state.gems;
   const ready2 = getRankEligibility(state, 2);
   assert.equal(ready2.eligible, true);
 
   const promoted2 = applyBuyRank(state, 2);
   assert.equal(promoted2.ok, true);
   assert.equal(promoted2.state.rank, 2);
-  assert.equal(promoted2.state.cash, 150_000 - RANKS[2].cost);
+  assert.equal(promoted2.state.cash, 150_000 - RANKS[2].cost + RANKS[2].rewardCoins);
+  assert.equal(promoted2.state.gems, gemsBefore + RANKS[2].rewardGems);
 
   // Buying a building invests cash into capital equity -> Real GDP stays resilient rather than crashing to 0
   const rich = { ...freshState(), cash: 50_000, b: { ...freshState().b, farms: 10, solar_plants: 2 } };
@@ -410,15 +431,15 @@ test('8. Building demolition refunds 45%, per-building policies enforce exclusio
   assert.equal(applyEnactNationalDecision(decRes.state, dec.id, now + 5000).ok, false);
 });
 
-test('9. Lossless v2 packing preserves Rank 15, all 51 active buildings, policies & achievements through Firestore rule cap', () => {
+test('9. Lossless v2 packing preserves Rank 25, all 107 active buildings, policies & achievements through Firestore rule cap', () => {
   const rich = freshState();
-  rich.rank = 15;
+  rich.rank = 25;
   for (const d of BUILDINGS) {
     rich.b[d.id] = 5;
     rich.gx.lvl[d.id] = 3;
   }
   rich.bPolicies = { farms: 'eco_operation', space_center: 'premium_service' };
-  rich.achievements = { ach_city_15: 1, ach_rank_15: 1 };
+  rich.achievements = { ach_city_15: 1, ach_rank_15: 1, ach_sectors_10: 1 };
   rich.weeklyDay = '2026-W48';
   rich.weeklyClaimed = { wk_build_60: 1 };
   rich.cityTimeMode = 'night';
@@ -427,17 +448,17 @@ test('9. Lossless v2 packing preserves Rank 15, all 51 active buildings, policie
   const packed = cleanSavePayload(rich);
   assert.ok(Object.keys(packed.b as Record<string, unknown>).length <= 60);
   assert.ok(Object.keys((packed.gx as Record<string, unknown>).lvl as Record<string, unknown>).length <= 60);
-  assert.equal(packed.rank, 15);
+  assert.equal(packed.rank, 25);
   assert.ok(Array.isArray(packed.provBudgetLog));
-  assert.ok((packed.provBudgetLog as string[]).length <= 30);
+  assert.ok((packed.provBudgetLog as string[]).length <= 50);
 
   const restored = migrateState(packed as never);
-  assert.equal(restored.rank, 15);
+  assert.equal(restored.rank, 25);
   assert.equal(totalBuildings(restored), BUILDINGS.length * 5);
   assert.equal(restored.b.space_center, 5);
   assert.equal(restored.gx.lvl.space_center, 3);
   assert.equal(restored.bPolicies?.space_center, 'premium_service');
-  assert.equal(restored.achievements?.ach_rank_15, 1);
+  assert.equal(restored.achievements?.ach_sectors_10, 1);
   assert.equal(restored.weeklyDay, '2026-W48');
   assert.equal(restored.weeklyClaimed?.wk_build_60, 1);
   assert.equal(restored.cityTimeMode, 'night');
@@ -475,4 +496,100 @@ test('10. Weekly missions rotate per ISO week, achievements grant idempotent rew
   assert.equal(sortLeaderboardProfiles([pA, pB], 'overall')[0].id, 'b');
   assert.equal(sortLeaderboardProfiles([pA, pB], 'buildingDev')[0].id, 'a');
 });
+
+test('11. Building Levels 1..50 enforce 5 progression tiers, diminishing returns, queue cap (3), and Lv 50 max cap', () => {
+  assert.equal(MAX_BUILDING_LEVEL, 50);
+  const m1 = getBuildingLevelMultiplier(1);
+  const m10 = getBuildingLevelMultiplier(10);
+  const m25 = getBuildingLevelMultiplier(25);
+  const m50 = getBuildingLevelMultiplier(50);
+  assert.equal(m1, 1);
+  assert.ok(m10 > m1 && m25 > m10 && m50 > m25);
+  // Diminishing marginal gain per level: (m50 - m25)/25 < (m10 - m1)/9
+  assert.ok((m50 - m25) / 25 < (m10 - m1) / 9);
+
+  const now = 1_750_000_000_000;
+  let state = freshState();
+  state.cash = 10_000_000;
+  state.b.farms = 3;
+  state.b.markets = 2;
+  state.b.solar_plants = 2;
+  state.b.roads = 2;
+
+  const qQuote = getBuildingUpgradeQuote(state, 'farms', now);
+  assert.ok(qQuote && !qQuote.isMax && qQuote.cost > 0 && qQuote.durSec >= 3);
+
+  const u1 = applyStartBuildingUpgrade(state, 'farms', now);
+  assert.equal(u1.ok, true);
+  assert.equal(u1.targetLevel, 2);
+  state = u1.state;
+  assert.equal(applyStartBuildingUpgrade(state, 'farms', now + 1000).ok, false); // Duplicate blocked
+
+  state = applyStartBuildingUpgrade(state, 'markets', now).state;
+  state = applyStartBuildingUpgrade(state, 'solar_plants', now).state;
+  assert.equal(getUpgradeQueue(state).length, MAX_UPGRADE_QUEUE);
+  assert.equal(applyStartBuildingUpgrade(state, 'roads', now).ok, false); // Queue cap 3
+
+  const finishAt = getUpgradeQueue(state)[0].finishAt;
+  const completed = tickUpgradeQueue(state, finishAt + 5000);
+  assert.ok(completed.completed.length >= 1);
+  assert.equal(completed.state.gx.lvl.farms, 2);
+
+  const maxed = { ...completed.state, upgQueue: [], gx: { ...completed.state.gx, lvl: { ...completed.state.gx.lvl, farms: MAX_BUILDING_LEVEL } } };
+  const maxQuote = getBuildingUpgradeQuote(maxed, 'farms', now);
+  assert.equal(maxQuote?.isMax, true);
+  assert.equal(applyStartBuildingUpgrade(maxed, 'farms', now).ok, false);
+});
+
+test('12. 3-stage Mega Projects enforce milestone payouts once per stage and deduct milestone payouts on final completion', () => {
+  assert.equal(PROJECT_STAGES, 3);
+  const now = 1_750_000_000_000;
+  let state = freshState();
+  state.cash = 10_000_000;
+  state.gems = 10;
+  const def = GX_PROJECT_TYPES.school;
+
+  const s1 = applyStartLocalMegaProject(state, 'school', now);
+  assert.equal(s1.ok, true);
+  assert.equal(s1.project?.stage, 1);
+  assert.equal(s1.project?.totalStages, 3);
+  const projId = s1.project!.id;
+  state = s1.state;
+
+  // Stage 1 finish must NOT mark overall project done before Stage 2 & 3 advance
+  const s1DoneAt = s1.project!.finishAt + 100;
+  const earlyTick = tickLocalMegaProjects(state, s1DoneAt);
+  assert.equal(earlyTick.finishedTypes.length, 0);
+  assert.equal(claimLocalMegaProject(state, projId, s1DoneAt).ok, false);
+
+  // Claim Stage 1 milestone once
+  const ms1 = claimLocalMegaProjectStageMilestone(state, projId, s1DoneAt);
+  assert.equal(ms1.ok, true);
+  assert.equal(ms1.stage, 1);
+  state = ms1.state;
+  assert.equal(claimLocalMegaProjectStageMilestone(state, projId, s1DoneAt + 100).ok, false);
+
+  // Advance Stage 1 -> Stage 2 -> wait -> Claim Stage 2 milestone -> Advance Stage 3 -> wait -> Final claim
+  const adv2 = applyAdvanceLocalMegaProjectStage(state, projId, s1DoneAt + 200);
+  assert.equal(adv2.ok, true);
+  assert.equal(adv2.nextStage, 2);
+  state = adv2.state;
+  const s2DoneAt = state.megaProjects!.find((p) => p.id === projId)!.finishAt + 100;
+  const ms2 = claimLocalMegaProjectStageMilestone(state, projId, s2DoneAt);
+  assert.equal(ms2.ok, true);
+  state = ms2.state;
+
+  const adv3 = applyAdvanceLocalMegaProjectStage(state, projId, s2DoneAt + 200);
+  assert.equal(adv3.ok, true);
+  assert.equal(adv3.nextStage, 3);
+  state = adv3.state;
+  const s3DoneAt = state.megaProjects!.find((p) => p.id === projId)!.finishAt + 100;
+
+  const fin = claimLocalMegaProject(state, projId, s3DoneAt);
+  assert.equal(fin.ok, true);
+  assert.equal(ms1.coinsAdded + ms2.coinsAdded + fin.coinsAdded, def.rewardCoins);
+  assert.equal(ms1.gemsAdded + ms2.gemsAdded + fin.gemsAdded, def.rewardGems);
+  assert.equal(claimLocalMegaProject(fin.state, projId, s3DoneAt + 100).ok, false);
+});
+
 

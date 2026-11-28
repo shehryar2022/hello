@@ -28,6 +28,7 @@ import {
   MessageSquare,
   RankEmblem,
   Search,
+  StickerArt,
   SubIcon,
   TrendingUp,
 } from '../GameIcons';
@@ -131,6 +132,11 @@ const LeaderboardRow: React.FC<LeaderboardRowProps> = memo(({
             <CosmeticName name={p.username} nameEffectId={p.cosNameFx} />
           </span>
           {p.cosBadge && <CosmeticBadgeChip badgeId={p.cosBadge} />}
+          {p.eqStk && (
+            <span className="lb-stk-badge" title="Equipped Sticker">
+              <StickerArt id={p.eqStk} size={16} />
+            </span>
+          )}
           {rk.id > 0 && (
             <span className="rank-badge" style={{ '--c': rk.c } as React.CSSProperties} title={rk.n}>
               <RankEmblem rank={rk.id} size={18} />
@@ -415,6 +421,7 @@ export const PlayersTab: React.FC<PlayersTabProps> = memo(({
                 const frameId = m.cosFrame || senderProfile?.cosFrame;
                 const nameFxId = m.cosNameFx || senderProfile?.cosNameFx;
                 const badgeId = m.cosBadge || senderProfile?.cosBadge;
+                const stkId = m.eqStk || senderProfile?.eqStk;
                 return (
                   <div key={m.id} className={`cm ${m.uid === uid ? 'me' : ''} ${subTier ? `sub-card sub-card--${subTier}` : ''}`}>
                     <div className="cmh">
@@ -429,6 +436,11 @@ export const PlayersTab: React.FC<PlayersTabProps> = memo(({
                         <CosmeticName name={m.name || 'Player'} nameEffectId={nameFxId} />
                       </button>
                       {badgeId && <CosmeticBadgeChip badgeId={badgeId} />}
+                      {stkId && (
+                        <span className="lb-stk-badge" title="Equipped Sticker">
+                          <StickerArt id={stkId} size={14} />
+                        </span>
+                      )}
                       {rk.id > 0 && <RankEmblem rank={rk.id} size={15} />}
                       {subTier && (
                         <span className={`sub-crest sub-crest--${subTier}`}>
@@ -590,7 +602,8 @@ export const PlayersTab: React.FC<PlayersTabProps> = memo(({
     p.b !== n.b ||
     p.tech !== n.tech ||
     p.gx?.lvl !== n.gx?.lvl ||
-    p.sub !== n.sub
+    p.sub !== n.sub ||
+    p.eqStk !== n.eqStk
   ) {
     return false;
   }

@@ -14,6 +14,7 @@ import {
   Landmark,
   Lock,
   SlidersHorizontal,
+  StickerArt,
   TabIcon,
 } from './GameIcons';
 
@@ -111,6 +112,11 @@ export const TopBar = React.memo<TopBarProps>(({
         </button>
         <button type="button" className="btn sm" id="login" onClick={onOpenAuth}>
           {uid ? <Cloud size={15} strokeWidth={2.2} /> : <Lock size={14} strokeWidth={2.2} />}
+          {state.eqStk && (
+            <span className="lb-stk-badge" title="Equipped Sticker">
+              <StickerArt id={state.eqStk} size={14} />
+            </span>
+          )}
           {uid && pubProfile ? (
             <CosmeticName name={pubProfile.username} nameEffectId={activeNameFx} />
           ) : (

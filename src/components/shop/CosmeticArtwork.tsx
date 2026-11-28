@@ -11,6 +11,7 @@ export const RarityCrestGem = memo(function RarityCrestGem({
   size?: number;
 }) {
   const palette: Record<CosmeticRarity, { fill: string; hi: string; stroke: string }> = {
+    Common: { fill: '#94a3b8', hi: '#e2e8f0', stroke: '#475569' },
     Basic: { fill: '#94a3b8', hi: '#e2e8f0', stroke: '#475569' },
     Uncommon: { fill: '#34d399', hi: '#d1fae5', stroke: '#047857' },
     Rare: { fill: '#38bdf8', hi: '#bae6fd', stroke: '#0369a1' },

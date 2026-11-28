@@ -45,20 +45,36 @@ import {
 
 test('Diamond Exclusives catalog contains complete categories and balanced items', () => {
   assert.equal(PROFILE_FRAMES.length, 10);
-  assert.equal(NAME_EFFECTS.length, 8);
-  assert.equal(THEME_ITEMS.length, 10);
-  assert.equal(PREMIUM_ANIMATIONS.length, 10);
-  assert.equal(EXCLUSIVE_BADGES.length, 6);
-  assert.equal(DIAMOND_ASSETS.length, 4);
-  assert.equal(COSMETIC_BUNDLES.length, 4);
+  assert.ok(NAME_EFFECTS.length >= 20 && NAME_EFFECTS.length === 22);
+  assert.equal(THEME_ITEMS.length, 15);
+  assert.ok(PREMIUM_ANIMATIONS.length >= 15 && PREMIUM_ANIMATIONS.length === 16);
+  assert.equal(EXCLUSIVE_BADGES.length, 12);
+  assert.equal(DIAMOND_ASSETS.length, 9);
+  assert.equal(COSMETIC_BUNDLES.length, 6);
 
-  // Verify Part 1 Diamond Animation pricing & 7 rarity tiers (50-599 Diamonds, all unique prices)
-  const animPrices = new Set<number>();
+  const counts = getCosmeticCategoryCounts();
+  assert.ok(counts.leaderboard_anim >= 15 && counts.leaderboard_anim === 16);
+  assert.equal(counts.achievement_fx, 6);
+  assert.equal(counts.premium_vfx, 6);
+  assert.equal(counts.all, 112);
+
+  // Verify every paid cosmetic item & bundle strictly obeys 50..599 Diamond pricing
+  for (const item of ALL_COSMETIC_ITEMS) {
+    if (item.isDefaultFree) {
+      assert.equal(item.diamondsCost, 0, `${item.id} free default must cost 0`);
+    } else {
+      assert.ok(item.diamondsCost >= 50 && item.diamondsCost <= 599, `${item.id} (${item.diamondsCost}) out of 50..599 range`);
+    }
+  }
+  for (const bundle of COSMETIC_BUNDLES) {
+    assert.ok(bundle.diamondsCost >= 50 && bundle.diamondsCost <= 599, `${bundle.id} (${bundle.diamondsCost}) out of 50..599 range`);
+    const summary = getBundleValueSummary(freshState(), bundle.id);
+    assert.ok(bundle.diamondsCost < summary.individualDiamondsTotal, `${bundle.id} must discount individual total (${bundle.diamondsCost} vs ${summary.individualDiamondsTotal})`);
+  }
+
+  // Verify Diamond Animation 7 rarity tiers
   const animRarities = new Set<string>();
   for (const anim of PREMIUM_ANIMATIONS) {
-    assert.ok(anim.diamondsCost >= 50 && anim.diamondsCost <= 599, `${anim.id} out of 50..599 range`);
-    assert.ok(!animPrices.has(anim.diamondsCost), `Duplicate animation price ${anim.diamondsCost}`);
-    animPrices.add(anim.diamondsCost);
     animRarities.add(anim.rarity);
     const stars = getRarityStars(anim.rarity);
     assert.ok(stars >= 1 && stars <= 7);
@@ -100,18 +116,22 @@ test('Purchasing cosmetic item deducts currency, prevents duplicates, checks ran
   assert.equal(rankBlocked.ok, false);
   assert.match(rankBlocked.reason || '', /Rank 4/);
 
-  // Purchase Neon Glow Frame (12 Diamonds)
-  const res1 = applyBuyCosmeticItem(s, 'frame_neon');
+  // Purchase Neon Glow Frame (50 Diamonds)
+  const res1 = applyBuyCosmeticItem(s, 'frame_neon', true, 1_750_000_000_000);
   assert.equal(res1.ok, true);
   s = res1.state;
-  assert.equal(s.gems, 288);
+  assert.equal(s.gems, 250);
   assert.equal(isCosmeticOwned(s, 'frame_neon'), true);
   assert.equal(getEquippedCosmetics(s).frame, 'frame_neon');
+  assert.equal(s.cosHist?.length, 1);
+  assert.equal(s.cosHist?.[0].itemId, 'frame_neon');
+  assert.equal(s.cosHist?.[0].diamondsPaid, 50);
 
   // Duplicate purchase strictly blocked without deducting Diamonds
   const dup = applyBuyCosmeticItem(s, 'frame_neon');
   assert.equal(dup.ok, false);
-  assert.equal(dup.state.gems, 288);
+  assert.equal(dup.state.gems, 250);
+  assert.equal(dup.state.cosHist?.length, 1);
 
   // Unequip and re-equip works cleanly
   const unequip = applyEquipCosmetic(s, 'frame', null);
@@ -154,21 +174,21 @@ test('Bundles support pro-rated discount for partially owned items and block reb
 test('Dual-currency Diamond Landmarks stay bounded (anti-P2W caps) and boost economy/happiness', () => {
   let s = freshState();
   s.b.tech_parks = 4;
-  s.rank = 6;
-  s.gems = 500;
-  s.cash = 10_000_000;
+  s.rank = 12;
+  s.gems = 5000;
+  s.cash = 50_000_000;
 
   const baseInc = calculateIncome(s, { ignoreTempBoosters: true }).net;
   const baseHap = targetHappiness(s);
 
   for (const asset of DIAMOND_ASSETS) {
     const res = applyBuyCosmeticItem(s, asset.id);
-    assert.equal(res.ok, true, `Expected ${asset.id} purchase to succeed`);
+    assert.equal(res.ok, true, `Expected ${asset.id} purchase to succeed: ${res.reason}`);
     s = res.state;
   }
 
   const bonuses = getDiamondAssetBonuses(s);
-  assert.equal(bonuses.ownedAssetIds.length, 4);
+  assert.equal(bonuses.ownedAssetIds.length, 9);
   assert.ok(bonuses.incomeMult <= 1.08 + 1e-9, 'Income multiplier capped at +8%');
   assert.ok(bonuses.hapBonus <= 6, 'Happiness bonus capped at +6');
   assert.ok(bonuses.tradeBonus <= 0.1 + 1e-9, 'Trade bonus capped at +10%');
@@ -207,7 +227,11 @@ test('Cosmetic inventory, equipped slots, theme, and reward history round-trip v
     nameEffect: 'nfx_rainbow',
     badge: 'badge_diamond_member',
     anim: 'anim_sparkles',
+    lbAnim: undefined,
+    achFx: undefined,
+    premiumVfx: undefined,
   });
+  assert.equal(restored.cosHist?.length, 5);
 });
 
 test('sanitizeCosmeticIdField rejects tampered or oversized cosmetic IDs', () => {
@@ -256,10 +280,10 @@ test('Marketplace filters, sorting, category counts, bundle math, and coin forma
   s.gems = 50;
 
   const counts = getCosmeticCategoryCounts();
-  assert.equal(counts.all, 48);
-  assert.equal(counts.bundle, 4);
-  assert.equal(counts.diamond_asset, 4);
-  assert.equal(getAvailableExclusiveCount(s), 47); // midnight_galaxy default owned
+  assert.equal(counts.all, 112);
+  assert.equal(counts.bundle, 6);
+  assert.equal(counts.diamond_asset, 9);
+  assert.equal(getAvailableExclusiveCount(s), 111); // midnight_galaxy default owned
 
   const asc = filterAndSortCosmetics(s, ALL_COSMETIC_ITEMS, { sortBy: 'price_asc', ownership: 'unowned' });
   assert.ok(asc.length > 0);
@@ -267,13 +291,30 @@ test('Marketplace filters, sorting, category counts, bundle math, and coin forma
     assert.ok(asc[i].diamondsCost >= asc[i - 1].diamondsCost);
   }
 
+  const under100 = filterAndSortCosmetics(s, ALL_COSMETIC_ITEMS, { price: 'under_100' });
+  assert.ok(under100.length > 0);
+  assert.ok(under100.every((x) => x.diamondsCost > 0 && x.diamondsCost < 100));
+
   const dualLandmarks = filterAndSortCosmetics(s, DIAMOND_ASSETS, { price: 'dual_currency', ownership: 'available' });
   assert.ok(dualLandmarks.every((x) => (x.coinsCost || 0) > 0 && (!x.reqRank || x.reqRank <= s.rank)));
 
   const cyberBundle = getBundleValueSummary(s, 'bundle_cyber_horizon');
-  assert.equal(cyberBundle.individualDiamondsTotal, 12 + 18 + 16 + 175);
-  assert.equal(cyberBundle.savedDiamonds, 221 - 155);
-  assert.equal(cyberBundle.savingsPct, Math.round((66 / 221) * 100));
+  assert.equal(cyberBundle.individualDiamondsTotal, 50 + 54 + 58 + 175);
+  assert.equal(cyberBundle.bundleDiamondsPrice, 235);
+  assert.equal(cyberBundle.savedDiamonds, 337 - 235);
+  assert.equal(cyberBundle.savingsPct, Math.round((102 / 337) * 100));
+
+  // Verify cosHist caps cleanly at 25 entries newest-first
+  let histState = freshState();
+  histState.gems = 10_000;
+  histState.cash = 100_000_000;
+  histState.rank = 15;
+  for (let i = 0; i < 30; i += 1) {
+    const item = ALL_COSMETIC_ITEMS.find((x) => !x.isDefaultFree && !histState.cos?.includes(x.id));
+    if (!item) break;
+    histState = applyBuyCosmeticItem(histState, item.id, false, 1_750_000_000_000 + i).state;
+  }
+  assert.equal(histState.cosHist?.length, 25);
 
   assert.equal(formatDiamondPrice(26), '26 Diamonds');
   assert.equal(formatCoinPrice(250_000), '250K Coins');

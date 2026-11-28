@@ -69,6 +69,7 @@ function mergeProfileFields(prev: PlayerProfile | undefined, next: PlayerProfile
     cosBadge: resolveCos(next.cosBadge, prev.cosBadge),
     cosAnim: resolveCos(next.cosAnim, prev.cosAnim),
     cosLbAnim: resolveCos(next.cosLbAnim, prev.cosLbAnim),
+    eqStk: resolveCos(next.eqStk, prev.eqStk),
     seen: nextSeen > 0 ? nextSeen : prev.seen,
     stats: next.stats
       ? {
@@ -170,6 +171,7 @@ export function areLeaderboardListsEqual(a: PlayerProfile[], b: PlayerProfile[])
       (x.cosBadge || '') !== (y.cosBadge || '') ||
       (x.cosAnim || '') !== (y.cosAnim || '') ||
       (x.cosLbAnim || '') !== (y.cosLbAnim || '') ||
+      (x.eqStk || '') !== (y.eqStk || '') ||
       (x.stats?.buildings || 0) !== (y.stats?.buildings || 0) ||
       (x.stats?.completedTrades || 0) !== (y.stats?.completedTrades || 0)
     ) {

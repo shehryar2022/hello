@@ -42,6 +42,7 @@ import type {
   BuildingPolicyId,
   CityTimeMode,
   CityWeatherMode,
+  CosmeticPurchaseHistoryEntry,
   EquippedCosmetics,
   GameState,
   GameThemeId,
@@ -77,6 +78,7 @@ import {
   getDailyRewardsView,
 } from './rewards';
 import {
+  applyAdvanceLocalMegaProjectStage,
   applyBuyBoosterV2,
   applyChangePolicyStance,
   applyCommitFiscalReform,
@@ -92,8 +94,10 @@ import {
   BOOSTER_DAILY_PREFIX,
   buildingCost,
   bulkBuildingCost,
+  canAdvanceLocalMegaProjectStage,
   canBuyBoosterV2,
   canChangePolicyStance,
+  canClaimLocalMegaProjectStageMilestone,
   canCommitFiscalReform,
   canDemolishBuilding,
   canEnactNationalDecision,
@@ -105,6 +109,7 @@ import {
   canStartTradeContract,
   claimChallenge,
   claimLocalMegaProject,
+  claimLocalMegaProjectStageMilestone,
   claimTradeMilestone,
   computeEconomySnapshot,
   currentWorldEvent,
@@ -126,6 +131,7 @@ import {
   getFiscalCooldownLeftMs,
   getGovDefinition,
   getIntlTradeCapacity,
+  getLocalMegaProjectStageQuote,
   getNationalDecisionCooldownLeftSec,
   getPolicyCooldownLeftMs,
   getPolicyStance,
@@ -156,6 +162,7 @@ import {
   POLICY_COOLDOWN_PREFIX,
   policyCooldownKey,
   presetToFiscalDraft,
+  PROJECT_STAGES,
   QUEUE_FINISH_PREFIX,
   QUEUE_QTY_PREFIX,
   RANK_V2_MIGRATION_KEY,
@@ -280,6 +287,7 @@ export function freshState(): GameState {
     cityWeather: 'clear',
     cos: [],
     cosEq: {},
+    cosHist: [],
     theme: 'midnight_galaxy',
     dSlot: 0,
     dLastDay: '',
@@ -288,6 +296,7 @@ export function freshState(): GameState {
     wMilClaim: {},
     wHist: [],
     qHist: [],
+    eqStk: '',
     pol: {},
     upgQueue: [],
     upgHist: [],
@@ -411,7 +420,9 @@ interface PackedV2Extension {
   cw?: CityWeatherMode;
   co?: string[];
   ce?: EquippedCosmetics;
+  ch2?: CosmeticPurchaseHistoryEntry[];
   th?: GameThemeId;
+  es?: string;
   ds?: number;
   dl?: string;
   dh?: RewardHistoryEntry[];
@@ -814,6 +825,23 @@ export function migrateState(
   }
   s.cosEq = cleanEq;
 
+  const rawEqStk = typeof raw?.eqStk === 'string' ? raw.eqStk : (typeof v2Pack?.es === 'string' ? v2Pack.es : '');
+  s.eqStk = VALID_STICKER_ID_SET.has(rawEqStk) && (s.stk?.[rawEqStk] || 0) > 0 ? rawEqStk : '';
+
+  const rawCosHist = Array.isArray(raw?.cosHist) ? raw.cosHist : (Array.isArray(v2Pack?.ch2) ? v2Pack.ch2 : []);
+  s.cosHist = rawCosHist
+    .filter((entry): entry is CosmeticPurchaseHistoryEntry => Boolean(entry && typeof entry === 'object' && typeof entry.itemId === 'string'))
+    .slice(0, 25)
+    .map((entry, idx) => ({
+      id: typeof entry.id === 'string' && entry.id ? entry.id.slice(0, 48) : `ch_${idx}_${now}`,
+      itemId: String(entry.itemId).slice(0, 48),
+      name: String(entry.name || entry.itemId).slice(0, 64),
+      kind: entry.kind === 'bundle' ? 'bundle' : 'item',
+      diamondsPaid: Math.max(0, Math.min(100_000, Math.floor(Number(entry.diamondsPaid) || 0))),
+      coinsPaid: Math.max(0, Math.min(1e12, Math.floor(Number(entry.coinsPaid) || 0))),
+      atMs: Math.max(0, Math.min(1e13, Math.floor(Number(entry.atMs) || now))),
+    }));
+
   const rawTheme = (raw?.theme ?? v2Pack?.th) as GameThemeId | undefined;
   if (
     rawTheme &&
@@ -948,16 +976,35 @@ export function migrateState(
   s.megaProjects = rawMp
     .filter((p): p is LocalMegaProjectSlot => Boolean(p && typeof p === 'object' && p.type in GX_PROJECT_TYPES))
     .slice(0, 12)
-    .map((p) => ({
-      id: String(p.id || `mp_${p.type}`).slice(0, 40),
-      type: p.type as ProjectType,
-      paid: Math.max(0, Math.min(1e13, Math.floor(Number(p.paid) || 0))),
-      startedAt: Math.max(0, Math.min(1e13, Math.floor(Number(p.startedAt) || now))),
-      finishAt: Math.max(0, Math.min(1e13, Math.floor(Number(p.finishAt) || now))),
-      totalSec: Math.max(1, Math.min(86_400, Math.floor(Number(p.totalSec) || 60))),
-      status: p.status === 'done' ? 'done' : 'active',
-      claimed: Boolean(p.claimed),
-    }));
+    .map((p) => {
+      const totalStages = Number.isFinite(Number(p.totalStages)) && Number(p.totalStages) >= 1
+        ? Math.max(1, Math.min(PROJECT_STAGES, Math.floor(Number(p.totalStages))))
+        : undefined;
+      const stage = totalStages && Number.isFinite(Number(p.stage))
+        ? Math.max(1, Math.min(totalStages, Math.floor(Number(p.stage))))
+        : undefined;
+      const stagePaid = totalStages && Number.isFinite(Number(p.stagePaid))
+        ? Math.max(1, Math.min(totalStages, Math.floor(Number(p.stagePaid))))
+        : undefined;
+      const milestoneClaimedStage = totalStages && Number.isFinite(Number(p.milestoneClaimedStage))
+        ? Math.max(0, Math.min(totalStages - 1, Math.floor(Number(p.milestoneClaimedStage))))
+        : undefined;
+      const slot: LocalMegaProjectSlot = {
+        id: String(p.id || `mp_${p.type}`).slice(0, 40),
+        type: p.type as ProjectType,
+        paid: Math.max(0, Math.min(1e13, Math.floor(Number(p.paid) || 0))),
+        startedAt: Math.max(0, Math.min(1e13, Math.floor(Number(p.startedAt) || now))),
+        finishAt: Math.max(0, Math.min(1e13, Math.floor(Number(p.finishAt) || now))),
+        totalSec: Math.max(1, Math.min(86_400, Math.floor(Number(p.totalSec) || 60))),
+        status: p.status === 'done' ? 'done' : 'active',
+        claimed: Boolean(p.claimed),
+      };
+      if (totalStages !== undefined) slot.totalStages = totalStages;
+      if (stage !== undefined) slot.stage = stage;
+      if (stagePaid !== undefined) slot.stagePaid = stagePaid;
+      if (milestoneClaimedStage !== undefined) slot.milestoneClaimedStage = milestoneClaimedStage;
+      return slot;
+    });
 
   const rawMig = (raw?.mig && typeof raw.mig === 'object' ? raw.mig : v2Pack?.mg) as Record<string, unknown> | undefined;
   const cleanMig: Record<string, number> = {};
@@ -1010,7 +1057,7 @@ const CLOUD_TOP_LEVEL_KEYS = [
   'streak', 'lastDaily', 'set', 'fuel', 'carbon', 'luxury', 'corp', 'gst', 'prop',
   'duty', 'tourism', 'digital', 'wealth', 'rd', 'green', 'transitSub', 'questDay',
   'questIds', 'rank', 'activeFx', 'boosterCd', 'fused', 'gov', 'govT', 'gx',
-  'sub', 'subPromo', 'tech',
+  'sub', 'subPromo', 'tech', 'provBudgetLog',
 ] as const;
 
 export const ALLOWED_SAVE_KEYS = new Set<string>(CLOUD_TOP_LEVEL_KEYS);
@@ -1112,7 +1159,9 @@ export function cleanSavePayload(s: GameState, nowMs = Date.now()): Record<strin
   if (normalized.cityWeather && normalized.cityWeather !== 'clear') pack.cw = normalized.cityWeather;
   if (normalized.cos && normalized.cos.length > 0) pack.co = normalized.cos;
   if (normalized.cosEq && Object.keys(normalized.cosEq).length > 0) pack.ce = normalized.cosEq;
+  if (normalized.cosHist && normalized.cosHist.length > 0) pack.ch2 = normalized.cosHist.slice(0, 25);
   if (normalized.theme && normalized.theme !== 'midnight_galaxy') pack.th = normalized.theme;
+  if (normalized.eqStk) pack.es = normalized.eqStk;
   if ((normalized.dSlot || 0) > 0) pack.ds = normalized.dSlot;
   if (normalized.dLastDay) pack.dl = normalized.dLastDay;
   if (normalized.dHist && normalized.dHist.length > 0) pack.dh = normalized.dHist.slice(0, 5);
@@ -1160,6 +1209,7 @@ export function cleanSavePayload(s: GameState, nowMs = Date.now()): Record<strin
     const MAX_CHUNKS = 50;
     let json = JSON.stringify(pack);
     if (json.length > CHUNK_SIZE * MAX_CHUNKS) {
+      delete pack.ch2;
       delete pack.uh;
       delete pack.dh;
       delete pack.wh;
@@ -1223,7 +1273,7 @@ export function applyUnlockTech(
 export function getInfraDecayMult(s: GameState): number {
   let mult = hasTech(s, 'smart_grid') ? 0.8 : 1;
   if (getPolicyStance(s, 'p_inf') === 2) mult *= 0.75;
-  if (getPolicyStance(s, 'p_urb') === 1) mult *= 0.85;
+  if (getPolicyStance(s, 'p_def') === 2) mult *= 0.85;
   return mult;
 }
 
@@ -1354,10 +1404,22 @@ export function targetHappiness(s: GameState, nowMs = Date.now()): number {
   const pNrg = getPolicyStance(s, 'p_nrg');
   if (pNrg === 1) policyHap += 5;
   else if (pNrg === 2) policyHap -= 5;
-  if (getPolicyStance(s, 'p_env') === 1) policyHap += 4;
-  if (getPolicyStance(s, 'p_hou') === 1) policyHap += 4;
-  if (getPolicyStance(s, 'p_tou') === 1) policyHap += 2;
-  if (getPolicyStance(s, 'p_def') === 2) policyHap += 2;
+  if (getPolicyStance(s, 'p_ai') === 2) policyHap += 4;
+  const pDef = getPolicyStance(s, 'p_def');
+  if (pDef === 1) policyHap += 5;
+  else if (pDef === 2) policyHap -= 3;
+  if (getPolicyStance(s, 'p_env') === 1) policyHap += 6;
+  const pUrb = getPolicyStance(s, 'p_urb');
+  if (pUrb === 1) policyHap -= 3;
+  else if (pUrb === 2) policyHap += 5;
+  if (getPolicyStance(s, 'p_sci') === 2) policyHap += 3;
+  const pTou = getPolicyStance(s, 'p_tou');
+  if (pTou === 1) policyHap += 4;
+  else if (pTou === 2) policyHap += 5;
+  const pHou = getPolicyStance(s, 'p_hou');
+  if (pHou === 1) policyHap += 5;
+  else if (pHou === 2) policyHap -= 3;
+  if (getPolicyStance(s, 'p_res') === 2) policyHap += 4;
 
   const empBoostBonus = isBoosterActive(s, 'emp_boost', nowMs) ? 4 : 0;
   const assetHapBonus = getDiamondAssetBonuses(s).hapBonus;
@@ -1393,6 +1455,17 @@ export function targetHappiness(s: GameState, nowMs = Date.now()): number {
         bPolicyHap,
     ),
   );
+}
+
+export function targetApproval(s: GameState, nowMs = Date.now()): number {
+  const baseHap = targetHappiness(s, nowMs);
+  let policyAppr = 0;
+  if (getPolicyStance(s, 'p_hlth') === 2) policyAppr += 4;
+  if (getPolicyStance(s, 'p_fin') === 2) policyAppr += 3;
+  const pDig = getPolicyStance(s, 'p_dig');
+  if (pDig === 1 || pDig === 2) policyAppr += 4;
+  if (getPolicyStance(s, 'p_tou') === 2) policyAppr += 3;
+  return Math.max(5, Math.min(100, baseHap + policyAppr));
 }
 
 export function calculateTaxCollect(
@@ -1466,14 +1539,24 @@ export function canBuyRank(s: GameState, rankId: number): { ok: boolean; reason?
   return res.eligible ? { ok: true } : { ok: false, reason: res.reason };
 }
 
-export function applyBuyRank(s: GameState, rankId: number): { ok: boolean; state: GameState; reason?: string } {
+export function applyBuyRank(
+  s: GameState,
+  rankId: number,
+): { ok: boolean; state: GameState; coinsAdded: number; gemsAdded: number; reason?: string } {
   const res = getRankEligibility(s, rankId);
-  if (!res.eligible) return { ok: false, state: s, reason: res.reason };
+  if (!res.eligible) return { ok: false, state: s, coinsAdded: 0, gemsAdded: 0, reason: res.reason };
+  const coinsAdded = Math.max(0, Math.floor(Number(res.def.rewardCoins) || 0));
+  const gemsAdded = Math.max(0, Math.floor(Number(res.def.rewardGems) || 0));
+  const nextCash = Math.min(1e13, Math.max(0, s.cash - res.def.cost) + coinsAdded);
+  const nextGems = Math.min(1e9, Math.max(0, Math.floor(s.gems || 0)) + gemsAdded);
   return {
     ok: true,
+    coinsAdded,
+    gemsAdded,
     state: {
       ...s,
-      cash: Math.max(0, s.cash - res.def.cost),
+      cash: nextCash,
+      gems: nextGems,
       rank: rankId,
     },
   };
@@ -1758,6 +1841,7 @@ export function fuseSticker(
   const pool = STICKERS.filter((x) => x.r === targetRarity);
   const granted = pool[Math.floor(rng() * pool.length) % pool.length];
   nextStk[granted.id] = (nextStk[granted.id] || 0) + 1;
+  const nextEqStk = s.eqStk === stickerId && !nextStk[stickerId] ? '' : s.eqStk;
 
   return {
     ok: true,
@@ -1765,8 +1849,34 @@ export function fuseSticker(
     state: {
       ...s,
       stk: nextStk,
+      eqStk: nextEqStk,
       fused: Math.min(1_000_000, Math.floor(s.fused || 0) + 1),
     },
+  };
+}
+
+export function applyEquipSticker(
+  s: GameState,
+  stickerId: string,
+): { ok: boolean; state: GameState; equippedId: string; reason?: string } {
+  const trimmed = String(stickerId || '').trim();
+  if (!trimmed || s.eqStk === trimmed) {
+    return {
+      ok: true,
+      equippedId: '',
+      state: { ...s, eqStk: '' },
+    };
+  }
+  if (!VALID_STICKER_ID_SET.has(trimmed)) {
+    return { ok: false, state: s, equippedId: s.eqStk || '', reason: 'Unknown sticker' };
+  }
+  if ((s.stk?.[trimmed] || 0) <= 0) {
+    return { ok: false, state: s, equippedId: s.eqStk || '', reason: 'Sticker not owned yet' };
+  }
+  return {
+    ok: true,
+    equippedId: trimmed,
+    state: { ...s, eqStk: trimmed },
   };
 }
 
@@ -2624,6 +2734,7 @@ export function computeDailyAndOfflineChecks(
 }
 
 export {
+  applyAdvanceLocalMegaProjectStage,
   applyChangePolicyStance,
   applyCommitFiscalReform,
   applyDemolishBuilding,
@@ -2636,7 +2747,9 @@ export {
   applyStartTradeContract,
   buildingCost,
   bulkBuildingCost,
+  canAdvanceLocalMegaProjectStage,
   canChangePolicyStance,
+  canClaimLocalMegaProjectStageMilestone,
   canCommitFiscalReform,
   canDemolishBuilding,
   canEnactNationalDecision,
@@ -2648,6 +2761,7 @@ export {
   canStartTradeContract,
   claimChallenge,
   claimLocalMegaProject,
+  claimLocalMegaProjectStageMilestone,
   claimTradeMilestone,
   computeEconomySnapshot,
   currentWorldEvent,
@@ -2668,6 +2782,7 @@ export {
   getFiscalCooldownLeftMs,
   getGovDefinition,
   getIntlTradeCapacity,
+  getLocalMegaProjectStageQuote,
   getNationalDecisionCooldownLeftSec,
   getPolicyCooldownLeftMs,
   getPolicyStance,
@@ -2693,6 +2808,7 @@ export {
   isBuildingPolicyAllowedFor,
   migrateRanksV2OneTime,
   presetToFiscalDraft,
+  PROJECT_STAGES,
   stickerBonus,
   stickerUniqueCount,
   taxInfo,
